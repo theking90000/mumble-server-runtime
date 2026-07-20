@@ -8,7 +8,12 @@
 # phases, pas avant.
 [workspace]
 resolver = "3"
-members = []
+members = [
+    # Outil de Phase 0 : proxy d'enregistrement du corpus (livrable P0 #3).
+    # Ce n'est PAS un crate de domaine (voir R5) : c'est le binaire démontrable
+    # de la Phase 0, il vit sous tools/.
+    "tools/recording-proxy",
+]
 
 [workspace.package]
 version = "0.1.0"
