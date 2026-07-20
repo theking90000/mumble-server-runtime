@@ -1,0 +1,3 @@
+# Seuils clippy partagés. Les `disallowed-*` par-crate ne sont pas exprimables
+# ici (clippy.toml est global) ; ils vivent dans ci/gates.sh.
+avoid-breaking-exported-api = false

@@ -1,0 +1,34 @@
+# Workspace Voxloom — manifeste virtuel.
+#
+# Phase 0 : le workspace est VIDE (aucun membre). Conformément à la règle R5 de
+# la roadmap, un crate n'existe que lorsqu'une phase le remplit. Les crates de la
+# spec §7.1 (voxloom-protocol, voxloom-crypto, voxloom-transport, voxloom-session,
+# voxloom-auth, voxloom-state, voxloom-render, voxloom-reconcile, voxloom-audio,
+# voxloom-control, voxloom-observe, voxloom-testkit) seront ajoutés ici au fil des
+# phases, pas avant.
+[workspace]
+resolver = "3"
+members = []
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.93"
+license = "AGPL-3.0-or-later"
+repository = "https://github.com/theking90000/voxloom"
+authors = ["Voxloom contributors"]
+
+# Lints partagés — encodent une partie de R4 au niveau du compilateur. Chaque
+# crate futur les active via `[lints] workspace = true`. Le reste de R4 (règles
+# par-crate : Mutex/await dans voxloom-audio, imports interdits, etc.) est appliqué
+# par les gates grep de ci/gates.sh, car clippy ne peut pas les exprimer.
+[workspace.lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+unused_must_use = "deny"
+
+[workspace.lints.clippy]
+unwrap_used = "deny"
+# `expect_used` reste autorisé (message explicite) mais surveillé.
+expect_used = "warn"
+todo = "deny"
+unimplemented = "deny"
