@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-D warnings"
+
+jobs:
+  # Gates structurels R4 + frontière vérificateur R2. Actifs dès le jour 1,
+  # avant toute logique : sur un workspace vide ils passent trivialement.
+  gates:
+    name: Gates R2/R4
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Interdictions structurelles (R4)
+        run: ci/gates.sh
+      - name: Direction des dépendances (R4)
+        run: ci/dep-direction.sh
+      - name: Frontière implémenteur/vérificateur (R2)
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            ci/verifier-boundary.sh "origin/${{ github.base_ref }}"
+          else
+            ci/verifier-boundary.sh
+          fi
+
+  build:
+    name: fmt + clippy + test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.93.0
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: rustfmt
+        run: ci/cargo-gate.sh cargo fmt --all --check
+      - name: clippy
+        run: ci/cargo-gate.sh cargo clippy --workspace --all-targets --all-features
+      - name: test
+        run: ci/cargo-gate.sh cargo test --workspace --all-features
