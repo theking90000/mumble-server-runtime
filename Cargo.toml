@@ -15,6 +15,8 @@ members = [
     "tools/recording-proxy",
     # Phase 1 : codec pur (framing TCP, protobuf, enveloppes UDP).
     "voxloom-protocol",
+    # Phase 1 : crypto pure (OCB2-AES128, nonces, anti-rejeu).
+    "voxloom-crypto",
 ]
 
 [workspace.package]
