@@ -1,0 +1,16 @@
+{
+  "tool_version": "0.1.0",
+  "scenario": "06-permission-denied",
+  "listen": "0.0.0.0:64738",
+  "upstream": "192.168.129.87:64739",
+  "tls_name": "localhost",
+  "started_unix_micros": 1784623620303964,
+  "ended_unix_micros": 1784623644511573,
+  "records_total": 273,
+  "records_tcp": 17,
+  "records_udp": 256,
+  "bytes_c2s_tcp": 302,
+  "bytes_s2c_tcp": 469,
+  "bytes_c2s_udp": 26906,
+  "bytes_s2c_udp": 131
+}

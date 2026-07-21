@@ -1,0 +1,16 @@
+{
+  "tool_version": "0.1.0",
+  "scenario": "02-channel-join-leave",
+  "listen": "0.0.0.0:64738",
+  "upstream": "82.23.190.165:10001",
+  "tls_name": "localhost",
+  "started_unix_micros": 1784587752684008,
+  "ended_unix_micros": 1784587768865962,
+  "records_total": 214,
+  "records_tcp": 13,
+  "records_udp": 201,
+  "bytes_c2s_tcp": 168,
+  "bytes_s2c_tcp": 609,
+  "bytes_c2s_udp": 2303,
+  "bytes_s2c_udp": 14772
+}

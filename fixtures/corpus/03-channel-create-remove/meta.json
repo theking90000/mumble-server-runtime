@@ -1,0 +1,16 @@
+{
+  "tool_version": "0.1.0",
+  "scenario": "03-channel-create-remove",
+  "listen": "0.0.0.0:64738",
+  "upstream": "192.168.129.87:64739",
+  "tls_name": "localhost",
+  "started_unix_micros": 1784622846156722,
+  "ended_unix_micros": 1784622879188315,
+  "records_total": 409,
+  "records_tcp": 26,
+  "records_udp": 383,
+  "bytes_c2s_tcp": 467,
+  "bytes_s2c_tcp": 692,
+  "bytes_c2s_udp": 40096,
+  "bytes_s2c_udp": 242
+}

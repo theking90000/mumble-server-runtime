@@ -1,0 +1,16 @@
+{
+  "tool_version": "0.1.0",
+  "scenario": "07-disconnect",
+  "listen": "0.0.0.0:64738",
+  "upstream": "192.168.129.87:64739",
+  "tls_name": "localhost",
+  "started_unix_micros": 1784623668734931,
+  "ended_unix_micros": 1784623704876272,
+  "records_total": 211,
+  "records_tcp": 15,
+  "records_udp": 196,
+  "bytes_c2s_tcp": 325,
+  "bytes_s2c_tcp": 450,
+  "bytes_c2s_udp": 18432,
+  "bytes_s2c_udp": 331
+}

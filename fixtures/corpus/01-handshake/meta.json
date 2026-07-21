@@ -1,0 +1,16 @@
+{
+  "tool_version": "0.1.0",
+  "scenario": "01-handshake",
+  "listen": "0.0.0.0:64738",
+  "upstream": "82.23.190.165:10001",
+  "tls_name": "localhost",
+  "started_unix_micros": 1784587690682561,
+  "ended_unix_micros": 1784587706710085,
+  "records_total": 17,
+  "records_tcp": 6,
+  "records_udp": 11,
+  "bytes_c2s_tcp": 140,
+  "bytes_s2c_tcp": 572,
+  "bytes_c2s_udp": 67,
+  "bytes_s2c_udp": 89
+}

@@ -19,14 +19,14 @@ Chaque scénario est un sous-répertoire `NN-nom/` contenant :
 
 ## Scénarios requis (≥ 8 pour clore la Phase 0)
 
-- [ ] `01-handshake` — handshake complet (Version, Authenticate, CryptSetup,
+- [x] `01-handshake` — handshake complet (Version, Authenticate, CryptSetup,
       ServerSync, CodecVersion, ServerConfig).
-- [ ] `02-channel-join-leave` — join puis leave d'un canal.
-- [ ] `03-channel-create-remove` — création puis suppression d'un canal.
-- [ ] `04-two-clients-talking` — deux clients qui parlent (audio dans les 2 sens).
-- [ ] `05-whisper` — whisper / voice target.
-- [ ] `06-permission-denied` — action refusée par le serveur.
-- [ ] `07-disconnect` — déconnexion propre.
+- [x] `02-channel-join-leave` — join puis leave d'un canal.
+- [x] `03-channel-create-remove` — création puis suppression d'un canal.
+- [x] `04-two-clients-talking` — deux clients qui parlent (audio dans les 2 sens).
+- [-] `05-whisper` — whisper / voice target. : pas trouvé
+- [x] `06-permission-denied` — action refusée par le serveur. : pas réussi
+- [x] `07-disconnect` — déconnexion propre.
 - [ ] `08-crypto-resync` — resync OCB2 si provocable.
 - [ ] (`09-mumla-legacy-udp` — session client Android, **si** legacy UDP retenu,
       voir `docs/decisions/0001-legacy-udp.md`).
