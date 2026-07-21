@@ -95,8 +95,10 @@ voxloom-protocol -/->  tokio               voxloom-crypto   -/->  tokio
 
 `P0 corpus/refs → P1 codec → P2 proxy oracle → P3 serveur minimal → P4 hot path`,
 avec `P5 moteur de vues pur` parallélisable dès P2. Détail et critères de « done »
-dans `docs/voxloom-roadmap-agents-v0_1.md`. **Phase courante : P0 (infrastructure
-de vérité).**
+dans `docs/voxloom-roadmap-agents-v0_1.md`. **Phase courante : P1 (codec pur),
+quasi terminée** — tâches 1 à 6 faites (framing, protobuf, UDPTunnel, enveloppe
+UDP, OCB2, fuzzing) ; reste le binaire `corpus-decode` (critère de « done »).
+État détaillé et reprise : **`docs/STATUS.md`**.
 
 ## Points de contrôle humains
 
