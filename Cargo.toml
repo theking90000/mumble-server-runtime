@@ -13,6 +13,8 @@ members = [
     # Ce n'est PAS un crate de domaine (voir R5) : c'est le binaire démontrable
     # de la Phase 0, il vit sous tools/.
     "tools/recording-proxy",
+    # Phase 1 : codec pur (framing TCP, protobuf, enveloppes UDP).
+    "voxloom-protocol",
 ]
 
 [workspace.package]

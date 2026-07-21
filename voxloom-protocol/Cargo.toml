@@ -1,0 +1,19 @@
+[package]
+name = "voxloom-protocol"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Codec pur du protocole Mumble : framing TCP, messages protobuf, enveloppes UDP. Sans IO ni runtime (R4)."
+
+[lib]
+name = "voxloom_protocol"
+path = "src/voxloom_protocol.rs"
+
+[dependencies]
+thiserror = "2"
+
+[lints]
+workspace = true
