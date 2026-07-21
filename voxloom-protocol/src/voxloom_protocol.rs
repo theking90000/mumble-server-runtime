@@ -6,9 +6,11 @@
 //! des commentaires `// REF:` traçant chaque fait vers ces sources.
 #![forbid(unsafe_code)]
 
+pub mod control;
 pub mod framing;
 pub mod messages;
 
+pub use control::{ControlMessage, DecodeError, decode_control, decode_frame};
 pub use framing::{
     Frame, FramingError, HEADER_LEN, MAX_PAYLOAD_LEN, TcpMessageType, parse_frame, write_frame,
 };
