@@ -19,9 +19,11 @@ git clone https://github.com/mumble-voip/mumble references/mumble
 git -C references/mumble checkout "$(cat references/mumble.pin)"
 ```
 
-## À faire (Phase 0)
+## Fait (Phase 0)
 
-- [ ] Fixer le commit dans `references/mumble.pin` (**humain** : choisir une
-      release stable du dépôt mumble-voip).
-- [ ] Vendorer `Mumble.proto`, `MumbleUDP.proto` sous `references/vendored/`.
-- [ ] Extraire les vecteurs OCB2 sous `references/vendored/ocb2-vectors/`.
+- [x] Commit fixé dans `references/mumble.pin` : release stable `v1.5.915`
+      (`5fe5ec6e61b0c1cc414a8a8db548ec484eec6b90`).
+- [x] `Mumble.proto`, `MumbleUDP.proto` vendorés sous `references/vendored/`.
+- [x] Vecteurs OCB2 extraits sous `references/vendored/ocb2-vectors/`
+      (`TestCrypt.cpp` + implémentation de référence). Provenance détaillée :
+      `references/vendored/PROVENANCE.md`.
