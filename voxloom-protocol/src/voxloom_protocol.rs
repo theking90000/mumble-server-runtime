@@ -7,6 +7,7 @@
 #![forbid(unsafe_code)]
 
 pub mod framing;
+pub mod messages;
 
 pub use framing::{
     Frame, FramingError, HEADER_LEN, MAX_PAYLOAD_LEN, TcpMessageType, parse_frame, write_frame,
