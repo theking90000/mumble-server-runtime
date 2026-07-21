@@ -1,0 +1,54 @@
+# cargo-fuzz targets for the pure codec and crypto crates (Task 6).
+#
+# This is its own workspace (the `[workspace]` table below detaches it from the
+# root) because libfuzzer-sys needs a nightly toolchain and sanitizer
+# instrumentation that must not touch the stable workspace build. The root
+# `cargo test --workspace` therefore ignores it; run these with:
+#
+#   cargo +nightly fuzz run <target> -- -max_total_time=<seconds>
+#
+# or, for a short smoke over all targets, `ci/fuzz-smoke.sh`.
+[package]
+name = "voxloom-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+voxloom-protocol = { path = "../voxloom-protocol" }
+voxloom-crypto = { path = "../voxloom-crypto" }
+
+[[bin]]
+name = "framing"
+path = "fuzz_targets/framing.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "control"
+path = "fuzz_targets/control.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "udp"
+path = "fuzz_targets/udp.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "ocb2_decrypt"
+path = "fuzz_targets/ocb2_decrypt.rs"
+test = false
+doc = false
+bench = false
+
+# Detach from the root workspace: these targets are nightly-only.
+[workspace]
