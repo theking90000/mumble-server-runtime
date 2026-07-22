@@ -32,7 +32,10 @@ use std::path::Path;
 use anyhow::{Context, Result, anyhow, bail};
 
 use voxloom_crypto::{BLOCK_SIZE, CryptState, KEY_SIZE};
-use voxloom_protocol::{ControlMessage, UdpMessage, decode_control, decode_udp, parse_frame};
+use voxloom_protocol::{ControlMessage, decode_control, decode_udp, parse_frame};
+// Re-exported: `Decoded::Udp` wraps this, so a consumer matching on the
+// transcript needs the type without depending on voxloom-protocol directly.
+pub use voxloom_protocol::UdpMessage;
 
 /// Magic header of a `.voxcap` file, format version 01.
 /// REF: tools/recording-proxy/src/capture.rs : `MAGIC` (the format's authority).
@@ -235,7 +238,8 @@ pub enum Decoded {
     /// An unencrypted UDP connectivity ping (pre-crypt, legacy format).
     LegacyConnectivityPing(LegacyPing),
     /// A decrypted UDP packet whose plaintext is a protobuf envelope (Mumble
-    /// 1.5+). Not produced by the current corpus (its server is 1.3.4). Boxed
+    /// 1.5+). Produced by scenarios 03-07, whose server is 1.5.857 (scenarios
+    /// 01-02 hit a 1.3.4 server and yield `DecryptedLegacyUdp` instead). Boxed
     /// for the same reason as `Control`.
     Udp(Box<UdpMessage>),
     /// A decrypted UDP packet whose plaintext is the legacy wire format

@@ -6,7 +6,46 @@
 
 use std::path::PathBuf;
 
-use voxloom_corpus_decode::{decode_session, read_records};
+use voxloom_corpus_decode::{Decoded, UdpMessage, decode_session, read_records};
+
+/// Scenarios captured against the local Mumble 1.5.857 server: their voice plane
+/// is protobuf UDP, so they exercise `decode_udp`'s protobuf path on real traffic.
+const PROTOBUF_SERVER_SCENARIOS: &[&str] = &[
+    "03-channel-create-remove",
+    "04-two-clients-talking",
+    "05-whisper",
+    "06-permission-denied",
+    "07-disconnect",
+];
+
+/// Scenarios captured against a third-party Mumble 1.3.4 server: their voice plane
+/// is the legacy wire format, which ADR-0001 keeps out of `voxloom-protocol`.
+const LEGACY_SERVER_SCENARIOS: &[&str] = &["01-handshake", "02-channel-join-leave"];
+
+/// Count decoded protobuf Audio packets and decrypted legacy payloads in a
+/// scenario. Audio is the discriminating signal on the voice plane: a 1.5 client
+/// probes with a protobuf *ping* even against a 1.3.4 server, so ping presence
+/// alone does not prove the server speaks protobuf — a decoded Audio packet does.
+fn voice_plane_counts(scenario: &str) -> (usize, usize) {
+    let path = corpus_dir().join(scenario).join("session.voxcap");
+    let records =
+        read_records(&path).unwrap_or_else(|error| panic!("reading {scenario}: {error:#}"));
+    let transcript =
+        decode_session(&records).unwrap_or_else(|error| panic!("decoding {scenario}: {error:#}"));
+
+    let mut protobuf_audio = 0;
+    let mut decrypted_legacy = 0;
+    for event in &transcript.events {
+        match &event.decoded {
+            Decoded::Udp(message) if matches!(message.as_ref(), UdpMessage::Audio(_)) => {
+                protobuf_audio += 1;
+            }
+            Decoded::DecryptedLegacyUdp { .. } => decrypted_legacy += 1,
+            _ => {}
+        }
+    }
+    (protobuf_audio, decrypted_legacy)
+}
 
 /// All corpus scenarios, addressed relative to this crate's manifest.
 const SCENARIOS: &[&str] = &[
@@ -76,4 +115,40 @@ fn rekey_scenario_decrypts_all_voice() {
         transcript.udp_packets > 300,
         "sanity: 03 should carry the voice packets that exercised the re-key"
     );
+}
+
+/// The corpus is mixed: 03-07 hit a 1.5.857 server (protobuf voice), 01-02 hit a
+/// 1.3.4 server (legacy voice). This locks in that split so `decode_udp`'s
+/// protobuf path stays validated against real >=1.5 traffic, and guards against a
+/// regression that would silently reclassify protobuf Audio as legacy (or vice
+/// versa) — the exact confusion that once led the handoff to call the whole
+/// corpus 1.3.4.
+#[test]
+fn protobuf_server_scenarios_decode_real_protobuf_voice() {
+    for scenario in PROTOBUF_SERVER_SCENARIOS {
+        let (protobuf_audio, decrypted_legacy) = voice_plane_counts(scenario);
+        assert!(
+            protobuf_audio > 0,
+            "{scenario}: expected real protobuf Audio packets (1.5.857 server), found none"
+        );
+        assert_eq!(
+            decrypted_legacy, 0,
+            "{scenario}: a 1.5 server must not yield legacy-format voice ({decrypted_legacy} found)"
+        );
+    }
+}
+
+#[test]
+fn legacy_server_scenarios_stay_legacy() {
+    for scenario in LEGACY_SERVER_SCENARIOS {
+        let (protobuf_audio, decrypted_legacy) = voice_plane_counts(scenario);
+        assert!(
+            decrypted_legacy > 0,
+            "{scenario}: expected decrypted legacy voice (1.3.4 server), found none"
+        );
+        assert_eq!(
+            protobuf_audio, 0,
+            "{scenario}: a 1.3.4 server must not yield protobuf Audio ({protobuf_audio} found)"
+        );
+    }
 }
