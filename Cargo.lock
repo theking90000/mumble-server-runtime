@@ -976,6 +976,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "voxloom-mitm-proxy"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "rcgen",
+ "ring",
+ "rustls",
+ "thiserror 1.0.69",
+ "tokio",
+ "tokio-rustls",
+ "voxloom-crypto",
+ "voxloom-protocol",
+]
+
+[[package]]
 name = "voxloom-protocol"
 version = "0.1.0"
 dependencies = [

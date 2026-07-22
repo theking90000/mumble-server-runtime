@@ -1,0 +1,39 @@
+[package]
+name = "voxloom-mitm-proxy"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Proxy MITM oracle (Phase 2) : termine la TLS des deux côtés, décode/ré-encode chaque message de contrôle et ré-écrit l'échange de clés OCB2 vers un domaine crypto indépendant par bord."
+
+# lib + bin : la logique (state machine crypto, relais framé, TLS) vit dans la
+# lib pour être testable en intégration ; le bin n'est qu'un câblage CLI.
+[lib]
+name = "voxloom_mitm_proxy"
+path = "src/voxloom_mitm_proxy.rs"
+
+[[bin]]
+name = "voxloom-mitm-proxy"
+path = "src/main.rs"
+
+[dependencies]
+voxloom-protocol = { path = "../../voxloom-protocol" }
+voxloom-crypto = { path = "../../voxloom-crypto" }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "sync", "signal"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12", "logging"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+rcgen = { version = "0.13", default-features = false, features = ["crypto", "ring", "pem"] }
+# ring : source d'aléa (SystemRandom) pour la clé/les nonces OCB2 propres au proxy,
+# une par session. Déjà présent dans l'arbre via le provider rustls ; crate audité.
+ring = "0.17"
+anyhow = "1"
+thiserror = "1"
+clap = { version = "4", features = ["derive"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-util"] }
+
+[lints]
+workspace = true

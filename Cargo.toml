@@ -17,6 +17,11 @@ members = [
     # aucun octet inexpliqué). Binaire de vérification sous tools/ (R5), dépend
     # des crates purs sans jamais l'inverse (R4).
     "tools/corpus-decode",
+    # Phase 2 : proxy MITM oracle. Termine la TLS des deux côtés, décode/ré-encode
+    # chaque message de contrôle (le codec exercé sur du trafic vivant), et ré-écrit
+    # l'échange de clés OCB2 pour tenir un domaine crypto indépendant vers chaque
+    # bord. Outil sous tools/ (R5), dépend des crates purs.
+    "tools/mitm-proxy",
     # Phase 1 : codec pur (framing TCP, protobuf, enveloppes UDP).
     "voxloom-protocol",
     # Phase 1 : crypto pure (OCB2-AES128, nonces, anti-rejeu).
