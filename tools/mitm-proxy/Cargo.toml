@@ -34,6 +34,9 @@ clap = { version = "4", features = ["derive"] }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-util"] }
+# The T3 done-command replays the real captured corpus through the UDP
+# re-encryptor; this reuses the Phase 1 corpus reader/decoder (verification tool).
+voxloom-corpus-decode = { path = "../corpus-decode" }
 
 [lints]
 workspace = true

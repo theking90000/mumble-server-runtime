@@ -10,6 +10,8 @@
 pub mod relay;
 pub mod session;
 pub mod tls;
+pub mod udp;
 
 pub use relay::{Origin, pump_control, random_secrets, serve};
 pub use session::{Action, CryptChannels, ProxySecrets, Session, SessionError};
+pub use udp::{DropReason, UdpOutcome, reencrypt_from_client, reencrypt_from_server};

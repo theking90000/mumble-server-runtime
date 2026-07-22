@@ -987,6 +987,7 @@ dependencies = [
  "thiserror 1.0.69",
  "tokio",
  "tokio-rustls",
+ "voxloom-corpus-decode",
  "voxloom-crypto",
  "voxloom-protocol",
 ]
