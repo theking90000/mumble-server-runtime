@@ -13,6 +13,10 @@ members = [
     # Ce n'est PAS un crate de domaine (voir R5) : c'est le binaire démontrable
     # de la Phase 0, il vit sous tools/.
     "tools/recording-proxy",
+    # Phase 1 : critère de « done » — décodeur de corpus (transcript lisible,
+    # aucun octet inexpliqué). Binaire de vérification sous tools/ (R5), dépend
+    # des crates purs sans jamais l'inverse (R4).
+    "tools/corpus-decode",
     # Phase 1 : codec pur (framing TCP, protobuf, enveloppes UDP).
     "voxloom-protocol",
     # Phase 1 : crypto pure (OCB2-AES128, nonces, anti-rejeu).

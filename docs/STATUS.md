@@ -4,9 +4,21 @@
 > reprend doit savoir. Autorité : la spec et la roadmap (`docs/`) ; ce fichier ne
 > fait que pointer l'état courant. Mettre à jour à chaque fin de tâche.
 
-**Phase courante : P1 (codec pur) — tâches 1 à 6 terminées.** Reste le binaire
-`corpus-decode` (critère de « done » de P1). Les règles R1–R6 (`AGENT.md`) et la
-discipline de code restent la loi.
+**Phase courante : P1 (codec pur) — tâches 1 à 6 + `corpus-decode` terminées.**
+Le critère de « done » de P1 est atteint : les 7 captures se décodent
+intégralement (voir « Fait »). Reste optionnel : le job nightly cargo-fuzz en
+CI. Les règles R1–R6 (`AGENT.md`) et la discipline de code restent la loi.
+
+> **Découverte majeure (à trancher par un humain) :** les serveurs du corpus
+> sont **Mumble 1.3.4**, antérieur au format UDP protobuf (introduit en 1.5.0,
+> `PROTOBUF_INTRODUCTION_VERSION`). Le plan de voix UDP du corpus est donc en
+> **format legacy**, que l'ADR-0001 exclut *volontairement* de `voxloom-protocol`.
+> Conséquence : l'OCB2 déchiffre 100 % du trafic réel (crypto indépendante de la
+> version), mais `decode_udp` (protobuf only) rejette — correctement — les charges
+> legacy. Le décodeur protobuf UDP n'a donc **aucune validation sur trafic réel**
+> ; il ne tient que par ses vecteurs synthétiques 1.5 et son fuzzing. Pour le
+> valider contre du réel, il faudra capturer un scénario contre un serveur
+> ≥ 1.5.0 (tâche de capture P0, PR séparée R2). L'ADR-0001 n'est pas rediscuté ici.
 
 ---
 
@@ -43,6 +55,36 @@ workspace = true`) :
 
 Chaque fait protocolaire porte un `// REF:` vers `references/vendored/`.
 
+### Phase 1 — `corpus-decode` (critère de « done »)
+
+Crate `tools/corpus-decode` (binaire `corpus-decode` + lib testable). Rejoue
+chaque `.voxcap` à travers `voxloom-protocol` + `voxloom-crypto` et produit un
+transcript horodaté ; propriété tenue : **aucun octet inexpliqué** sur les 7
+scénarios (0 octet TCP résiduel, 0 paquet UDP rejeté).
+
+- **TCP** : par direction, réassemblage incrémental du flux (les enregistrements
+  sont des morceaux, pas des messages alignés), `parse_frame` + `decode_control`.
+  Tous les messages de contrôle des 7 captures se décodent.
+- **UDP** : trois classes réelles, toutes vérifiées en source vendorée (R1) :
+  1. **Pings de connectivité non chiffrés** (pré-crypt) : legacy 12 o (requête,
+     4 octets zéro + timestamp) / 24 o (réponse : version, timestamp, compteurs),
+     et ping **protobuf** (header `0x01`). Un client 1.5 émet les deux formes.
+  2. **UDP chiffré OCB2** : clé + nonces extraits du `CryptSetup`. Mapping
+     direction→IV vérifié dans `mumble/Messages.cpp` (`setKey(key, client_nonce,
+     server_nonce)` ⇒ C2S déchiffré avec `client_nonce`, S2C avec `server_nonce`)
+     et symétrie serveur dans `murmur/Messages.cpp`. **Re-key géré** : un
+     `CryptSetup` complet en cours de session reconstruit l'état (le scénario 03
+     en contient un ; sans ce traitement, 347/383 paquets échouaient).
+  3. Charge déchiffrée en **format legacy** (serveur 1.3.4) : signalée comme telle
+     (type via `(header>>5)&0x7`), non décodée structurellement (ADR-0001).
+- Un rejet OCB2 (rejeu / retard hors fenêtre / tag) est une issue *comptée et
+  expliquée* (le vrai Murmur les jette pareil), pas une panique — 0 sur le corpus.
+- Test d'intégration `tests/decode_corpus.rs` : décode les 7 scénarios, exige 0
+  octet résiduel et 0 rejet ; verrouille la régression du re-key (scénario 03).
+- Lecteur `.voxcap` **ré-implémenté** dans le crate (format figé `VOXCAP01`) plutôt
+  qu'extrait du proxy : garde le tool sans dépendance au crate binaire P0. `// REF:`
+  vers `capture.rs` comme autorité du format.
+
 **Vérifié** (tout sous `RUSTFLAGS="-D warnings"`) : `ci/gates.sh`,
 `ci/dep-direction.sh`, `cargo fmt --check`, `cargo clippy --workspace
 --all-targets`, `cargo test --workspace` — tous verts. cargo-fuzz local : aucun
@@ -56,41 +98,13 @@ Commits (sur `main`, sans `Co-Authored-By`) : `5fef92f` refs, `153a875` corpus,
 
 ## Reste à faire
 
-### 1. Binaire `corpus-decode` — critère de « done » de P1 (prioritaire)
+### 1. (optionnel, humain) Capturer un corpus contre un serveur ≥ 1.5.0
 
-**But :** relire chaque capture `fixtures/corpus/*/session.voxcap` et produire un
-transcript lisible complet, sans octet inexpliqué. C'est le smoke test ultime du
-codec contre le trafic réel.
-
-Ce qu'il doit faire :
-
-1. **Lire le `.voxcap`.** Le format (`VOXCAP01`, puis enregistrements
-   `[dir:u8][transport:u8][ts:i64 LE][len:u32 LE][data]`) et un lecteur
-   (`read_records`) existent déjà dans `tools/recording-proxy/src/capture.rs`,
-   mais **ne sont pas partagés**. Décider : extraire le lecteur `.voxcap` dans un
-   endroit réutilisable, ou le ré-implémenter dans le binaire. Ne pas rendre
-   `voxloom-protocol`/`voxloom-crypto` dépendants de l'IO (gate R4) : le binaire
-   vit sous `tools/` ou dans son propre crate, pas dans les crates purs.
-2. **TCP :** par direction (C2S et S2C sont deux flux distincts), concaténer les
-   `data` des enregistrements TCP, dérouler `parse_frame` en incrémental (les
-   enregistrements sont des morceaux de flux, pas des messages alignés), puis
-   `decode_control` chaque frame et imprimer type + champs.
-3. **UDP :** les datagrammes du corpus sont **chiffrés OCB2** (le proxy a relayé
-   l'UDP en aveugle). Pour les décoder :
-   - Extraire la clé et les nonces du message TCP **`CryptSetup`** (type 15,
-     `MumbleProto.CryptSetup` : `key`, `client_nonce`, `server_nonce`).
-   - Construire des `CryptState` (`voxloom-crypto`) pour déchiffrer, puis
-     `decode_udp` sur le clair.
-   - **Piège R1 :** le mapping direction → (encrypt_iv/decrypt_iv) et quel nonce
-     sert à quel sens **doit être vérifié dans la source vendorée**
-     (`CryptSetup` handling côté client/serveur), pas deviné. Si un détail manque,
-     s'arrêter et le signaler.
-4. **Sortie :** transcript lisible (horodatage, direction, transport, message
-   décodé). Propriété à tenir : décodage total du corpus, aucun octet inexpliqué.
-
-**Done attendu :** `cargo run -p <bin> -- fixtures/corpus/01-handshake` (et les 6
-autres) produit un transcript complet ; ajouter un test qui décode au moins un
-scénario de bout en bout sans erreur.
+Le corpus actuel (serveur 1.3.4) n'exerce **jamais** le chemin UDP protobuf de
+`decode_udp` : il n'a donc pas de validation sur trafic réel (voir la découverte
+en tête de doc). Capturer un scénario voix contre un Murmur ≥ 1.5.0 donnerait
+cette validation. Tâche de capture (P0), PR séparée (R2), point de contrôle
+humain. Ne pas rediscuter l'ADR-0001 sans décision produit explicite.
 
 ### 2. Job nightly cargo-fuzz en CI (différé, optionnel)
 
@@ -122,7 +136,15 @@ ci/fuzz-smoke.sh 30        # nightly + cargo-fuzz requis, sinon skip propre
   justification). Le proxy y échappe car il n'active pas les lints workspace.
 - **Code généré prost + clippy :** attention `needless_range_loop` sous
   `-D warnings` — préférer les boucles par itérateur.
-- **Lecteur `.voxcap`** confiné à `tools/recording-proxy` (voir corpus-decode).
+- **Lecteur `.voxcap`** : deux implémentations volontairement séparées
+  (`tools/recording-proxy/src/capture.rs`, autorité du format ; réimplémenté dans
+  `tools/corpus-decode`). Format figé `VOXCAP01` — si tu le changes, bouge le magic
+  et les DEUX lecteurs ensemble.
+- **Références vendorées** : `corpus-decode` a nécessité des extraits **au-delà**
+  de `references/vendored/` (handler `CryptSetup` client/serveur, `decodePing_legacy`,
+  chemin UDP du serveur). Ils viennent du clone pinné `references/mumble/` (non
+  commité, gitignore ; reproductible via `references/mumble.pin` + PROVENANCE.md).
+  Si un fait doit devenir permanent, le vendorer explicitement.
 - **Frontière vérificateur (R2, `ci/verifier-boundary.sh`) :** ne jamais toucher
   `fixtures/`, `conformance/` ou `voxloom-testkit/` dans le **même diff** qu'un
   `voxloom-*/src`. Les commits ont été séparés exprès ; en mode PR, la capture de
@@ -137,6 +159,7 @@ ci/fuzz-smoke.sh 30        # nightly + cargo-fuzz requis, sinon skip propre
 
 ```
 tools/recording-proxy/   binaire P0 (proxy d'enregistrement + lecteur .voxcap)
+tools/corpus-decode/      binaire P1 (décodeur de corpus, critère de « done »)
 voxloom-protocol/         framing, messages prost, control, udp   (pur)
 voxloom-crypto/           ocb2 (OCB2-AES128, CryptState)          (pur)
 fuzz/                     cibles cargo-fuzz (workspace détaché, nightly)

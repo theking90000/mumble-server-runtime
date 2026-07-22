@@ -1,0 +1,27 @@
+[package]
+name = "voxloom-corpus-decode"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Phase 1 done-criterion: decode every corpus .voxcap into a readable transcript using the pure codec (voxloom-protocol) and crypto (voxloom-crypto), leaving no unexplained byte."
+
+# A tools/ binary, not a domain crate (R5). It is allowed IO (std::fs) and depends
+# on the pure crates; the pure crates never depend back on it (R4 dependency
+# direction). Like the recording proxy, it does NOT activate the workspace lints:
+# it is a binary, so anyhow and pragmatic error handling are appropriate.
+
+[lib]
+name = "voxloom_corpus_decode"
+path = "src/voxloom_corpus_decode.rs"
+
+[[bin]]
+name = "corpus-decode"
+path = "src/main.rs"
+
+[dependencies]
+voxloom-protocol = { path = "../../voxloom-protocol" }
+voxloom-crypto = { path = "../../voxloom-crypto" }
+anyhow = "1"
