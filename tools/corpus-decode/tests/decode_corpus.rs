@@ -138,6 +138,52 @@ fn protobuf_server_scenarios_decode_real_protobuf_voice() {
     }
 }
 
+/// Re-encoding a decoded message and decoding it again must reproduce it exactly.
+/// This is the property the P2 MITM proxy relies on: it decodes each real message
+/// and forwards a freshly-encoded copy, which the peer must decode to the same
+/// value. Run over every control frame and UDP packet of all 7 captures, it
+/// exercises `encode_control`/`encode_udp` against all real message types.
+#[test]
+fn every_decoded_message_reencodes_to_an_equal_message() {
+    use voxloom_protocol::{decode_control, decode_udp, encode_control, encode_udp};
+
+    for scenario in SCENARIOS {
+        let path = corpus_dir().join(scenario).join("session.voxcap");
+        let records =
+            read_records(&path).unwrap_or_else(|error| panic!("reading {scenario}: {error:#}"));
+        let transcript = decode_session(&records)
+            .unwrap_or_else(|error| panic!("decoding {scenario}: {error:#}"));
+
+        for event in &transcript.events {
+            match &event.decoded {
+                Decoded::Control(message) => {
+                    let (message_type, payload) = encode_control(message);
+                    let redecoded = decode_control(message_type, &payload).unwrap_or_else(|error| {
+                        panic!("{scenario}: re-decode of our own control encoding failed: {error:#}")
+                    });
+                    assert_eq!(
+                        &redecoded,
+                        message.as_ref(),
+                        "{scenario}: control message changed across encode->decode"
+                    );
+                }
+                Decoded::Udp(message) => {
+                    let bytes = encode_udp(message);
+                    let redecoded = decode_udp(&bytes).unwrap_or_else(|error| {
+                        panic!("{scenario}: re-decode of our own UDP encoding failed: {error:#}")
+                    });
+                    assert_eq!(
+                        &redecoded,
+                        message.as_ref(),
+                        "{scenario}: UDP message changed across encode->decode"
+                    );
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
 #[test]
 fn legacy_server_scenarios_stay_legacy() {
     for scenario in LEGACY_SERVER_SCENARIOS {

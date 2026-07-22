@@ -44,6 +44,20 @@ doc = false
 bench = false
 
 [[bin]]
+name = "control_roundtrip"
+path = "fuzz_targets/control_roundtrip.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "udp_roundtrip"
+path = "fuzz_targets/udp_roundtrip.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "ocb2_decrypt"
 path = "fuzz_targets/ocb2_decrypt.rs"
 test = false

@@ -13,7 +13,7 @@
 use prost::Message;
 use thiserror::Error;
 
-use crate::framing::{Frame, FramingError, TcpMessageType};
+use crate::framing::{Frame, FramingError, TcpMessageType, write_frame};
 use crate::messages::tcp;
 
 /// A decoded TCP control-channel message.
@@ -138,6 +138,61 @@ pub fn decode_frame(frame: &Frame<'_>) -> Result<ControlMessage, DecodeError> {
     decode_control(frame.message_type, frame.payload)
 }
 
+/// Encode a control message to its wire type code and payload — the inverse of
+/// [`decode_control`], so `decode_control(encode_control(m)) == m`.
+///
+/// The `UdpTunnel` special case is preserved in reverse: its bytes are the raw
+/// tunneled audio, emitted verbatim, never wrapped in the (unused) `UDPTunnel`
+/// protobuf message.
+pub fn encode_control(message: &ControlMessage) -> (u16, Vec<u8>) {
+    match message {
+        // The load-bearing special case: raw audio, emitted as-is.
+        ControlMessage::UdpTunnel(bytes) => (u16::from(TcpMessageType::UdpTunnel), bytes.clone()),
+
+        ControlMessage::Version(m) => encode_pb(TcpMessageType::Version, m),
+        ControlMessage::Authenticate(m) => encode_pb(TcpMessageType::Authenticate, m),
+        ControlMessage::Ping(m) => encode_pb(TcpMessageType::Ping, m),
+        ControlMessage::Reject(m) => encode_pb(TcpMessageType::Reject, m),
+        ControlMessage::ServerSync(m) => encode_pb(TcpMessageType::ServerSync, m),
+        ControlMessage::ChannelRemove(m) => encode_pb(TcpMessageType::ChannelRemove, m),
+        ControlMessage::ChannelState(m) => encode_pb(TcpMessageType::ChannelState, m),
+        ControlMessage::UserRemove(m) => encode_pb(TcpMessageType::UserRemove, m),
+        ControlMessage::UserState(m) => encode_pb(TcpMessageType::UserState, m),
+        ControlMessage::BanList(m) => encode_pb(TcpMessageType::BanList, m),
+        ControlMessage::TextMessage(m) => encode_pb(TcpMessageType::TextMessage, m),
+        ControlMessage::PermissionDenied(m) => encode_pb(TcpMessageType::PermissionDenied, m),
+        ControlMessage::Acl(m) => encode_pb(TcpMessageType::Acl, m),
+        ControlMessage::QueryUsers(m) => encode_pb(TcpMessageType::QueryUsers, m),
+        ControlMessage::CryptSetup(m) => encode_pb(TcpMessageType::CryptSetup, m),
+        ControlMessage::ContextActionModify(m) => encode_pb(TcpMessageType::ContextActionModify, m),
+        ControlMessage::ContextAction(m) => encode_pb(TcpMessageType::ContextAction, m),
+        ControlMessage::UserList(m) => encode_pb(TcpMessageType::UserList, m),
+        ControlMessage::VoiceTarget(m) => encode_pb(TcpMessageType::VoiceTarget, m),
+        ControlMessage::PermissionQuery(m) => encode_pb(TcpMessageType::PermissionQuery, m),
+        ControlMessage::CodecVersion(m) => encode_pb(TcpMessageType::CodecVersion, m),
+        ControlMessage::UserStats(m) => encode_pb(TcpMessageType::UserStats, m),
+        ControlMessage::RequestBlob(m) => encode_pb(TcpMessageType::RequestBlob, m),
+        ControlMessage::ServerConfig(m) => encode_pb(TcpMessageType::ServerConfig, m),
+        ControlMessage::SuggestConfig(m) => encode_pb(TcpMessageType::SuggestConfig, m),
+        ControlMessage::PluginDataTransmission(m) => {
+            encode_pb(TcpMessageType::PluginDataTransmission, m)
+        }
+    }
+}
+
+/// Encode a control message as a complete TCP frame (6-byte header plus payload)
+/// appended to `out`. Composes [`encode_control`] with [`write_frame`], so
+/// `decode_frame(parse_frame(encode_frame(m))) == m`.
+pub fn encode_frame(message: &ControlMessage, out: &mut Vec<u8>) -> Result<(), FramingError> {
+    let (message_type, payload) = encode_control(message);
+    write_frame(message_type, &payload, out)
+}
+
+/// Prost-encode a message and tag it with its wire type code.
+fn encode_pb<M: Message>(message_type: TcpMessageType, message: &M) -> (u16, Vec<u8>) {
+    (u16::from(message_type), message.encode_to_vec())
+}
+
 /// Prost-decode a payload into a message, attaching the message type and length
 /// on failure so a decode error names what and where it went wrong.
 fn decode_pb<M: Message + Default>(
@@ -196,6 +251,50 @@ mod tests {
             Err(DecodeError::Framing(FramingError::UnknownMessageType(99))) => {}
             other => panic!("expected unknown-type error, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn encode_then_decode_roundtrips_a_protobuf_message() {
+        let message = ControlMessage::ServerSync(tcp::ServerSync {
+            session: Some(42),
+            max_bandwidth: Some(72_000),
+            welcome_text: Some("hi".to_string()),
+            permissions: Some(0),
+        });
+        let (message_type, payload) = encode_control(&message);
+        assert_eq!(
+            decode_control(message_type, &payload).expect("re-decode"),
+            message
+        );
+    }
+
+    #[test]
+    fn encode_preserves_udp_tunnel_raw_bytes() {
+        // The raw-audio special case must survive a round trip byte-for-byte and
+        // stay on type code 1, never become a protobuf-encoded UDPTunnel.
+        let raw_audio = vec![0x00u8, 0x18, 0x02, 0x20, 0xB0, 0x05, 0xDE, 0xAD];
+        let message = ControlMessage::UdpTunnel(raw_audio.clone());
+        let (message_type, payload) = encode_control(&message);
+        assert_eq!(message_type, u16::from(TcpMessageType::UdpTunnel));
+        assert_eq!(payload, raw_audio);
+        assert_eq!(
+            decode_control(message_type, &payload).expect("re-decode"),
+            message
+        );
+    }
+
+    #[test]
+    fn encode_frame_then_parse_roundtrips() {
+        let message = ControlMessage::Version(tcp::Version {
+            release: Some("voxloom".to_string()),
+            ..Default::default()
+        });
+        let mut framed = Vec::new();
+        encode_frame(&message, &mut framed).expect("encode frame");
+        let frame = crate::framing::parse_frame(&framed)
+            .expect("parse")
+            .expect("a complete frame");
+        assert_eq!(decode_frame(&frame).expect("decode frame"), message);
     }
 
     #[test]

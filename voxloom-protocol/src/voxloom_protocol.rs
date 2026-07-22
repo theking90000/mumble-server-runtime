@@ -11,8 +11,10 @@ pub mod framing;
 pub mod messages;
 pub mod udp;
 
-pub use control::{ControlMessage, DecodeError, decode_control, decode_frame};
+pub use control::{
+    ControlMessage, DecodeError, decode_control, decode_frame, encode_control, encode_frame,
+};
 pub use framing::{
     Frame, FramingError, HEADER_LEN, MAX_PAYLOAD_LEN, TcpMessageType, parse_frame, write_frame,
 };
-pub use udp::{UdpDecodeError, UdpMessage, UdpMessageType, decode_udp};
+pub use udp::{UdpDecodeError, UdpMessage, UdpMessageType, decode_udp, encode_udp};

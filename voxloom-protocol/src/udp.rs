@@ -91,6 +91,22 @@ pub fn decode_udp(packet: &[u8]) -> Result<UdpMessage, UdpDecodeError> {
     })
 }
 
+/// Encode a UDP voice-plane message to a decrypted packet (`[type][protobuf]`) —
+/// the inverse of [`decode_udp`], so `decode_udp(&encode_udp(m)) == Ok(m)`.
+///
+/// The result is plaintext; OCB2 encryption is the caller's job (`voxloom-crypto`).
+pub fn encode_udp(message: &UdpMessage) -> Vec<u8> {
+    let (message_type, body) = match message {
+        UdpMessage::Audio(audio) => (UdpMessageType::Audio, audio.encode_to_vec()),
+        UdpMessage::Ping(ping) => (UdpMessageType::Ping, ping.encode_to_vec()),
+    };
+    // body is our own freshly-encoded output, not a wire-derived length.
+    let mut packet = Vec::with_capacity(1 + body.len());
+    packet.push(u8::from(message_type));
+    packet.extend_from_slice(&body);
+    packet
+}
+
 /// Prost-decode a payload, tagging failures with the message type and length.
 fn decode_pb<M: Message + Default>(
     message_type: UdpMessageType,
@@ -149,6 +165,41 @@ mod tests {
             UdpMessage::Ping(decoded) => assert_eq!(decoded, ping),
             other => panic!("expected Ping, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn encode_then_decode_roundtrips_audio_and_ping() {
+        let audio = UdpMessage::Audio(udp::Audio {
+            header: Some(udp::audio::Header::Context(0)),
+            sender_session: 7,
+            frame_number: 690,
+            opus_data: vec![0xD8, 0xED, 0x5C],
+            positional_data: vec![],
+            volume_adjustment: 0.0,
+            is_terminator: false,
+        });
+        assert_eq!(
+            decode_udp(&encode_udp(&audio)).expect("re-decode audio"),
+            audio
+        );
+
+        let ping = UdpMessage::Ping(udp::Ping {
+            timestamp: 68_900,
+            ..Default::default()
+        });
+        assert_eq!(
+            decode_udp(&encode_udp(&ping)).expect("re-decode ping"),
+            ping
+        );
+    }
+
+    #[test]
+    fn encoded_header_byte_matches_message_type() {
+        let ping = UdpMessage::Ping(udp::Ping {
+            timestamp: 1,
+            ..Default::default()
+        });
+        assert_eq!(encode_udp(&ping)[0], u8::from(UdpMessageType::Ping));
     }
 
     #[test]
