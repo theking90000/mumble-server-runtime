@@ -9,16 +9,22 @@ Le critère de « done » de P1 est atteint : les 7 captures se décodent
 intégralement (voir « Fait »). Reste optionnel : le job nightly cargo-fuzz en
 CI. Les règles R1–R6 (`AGENT.md`) et la discipline de code restent la loi.
 
-> **Découverte majeure (à trancher par un humain) :** les serveurs du corpus
-> sont **Mumble 1.3.4**, antérieur au format UDP protobuf (introduit en 1.5.0,
-> `PROTOBUF_INTRODUCTION_VERSION`). Le plan de voix UDP du corpus est donc en
-> **format legacy**, que l'ADR-0001 exclut *volontairement* de `voxloom-protocol`.
-> Conséquence : l'OCB2 déchiffre 100 % du trafic réel (crypto indépendante de la
-> version), mais `decode_udp` (protobuf only) rejette — correctement — les charges
-> legacy. Le décodeur protobuf UDP n'a donc **aucune validation sur trafic réel**
-> ; il ne tient que par ses vecteurs synthétiques 1.5 et son fuzzing. Pour le
-> valider contre du réel, il faudra capturer un scénario contre un serveur
-> ≥ 1.5.0 (tâche de capture P0, PR séparée R2). L'ADR-0001 n'est pas rediscuté ici.
+> **Nature du corpus (corrigé le 2026-07-22, vérifié sur les octets décodés) :**
+> le corpus est **mixte**, pas uniformément 1.3.4 comme l'affirmait une version
+> antérieure de ce doc. Les scénarios **01–02** tapent un serveur public tiers en
+> **Mumble 1.3.4** (`82.23.190.165`, `release: "1.3.4-4"`) : plan voix en **format
+> legacy**, que l'ADR-0001 exclut *volontairement* de `voxloom-protocol` ;
+> `decode_udp` (protobuf only) rejette — correctement — ces charges. Les scénarios
+> **03–07** tapent un serveur **Mumble 1.5.857** (`192.168.129.87`, `release:
+> "1.5.857"`, NixOS arm64) : plan voix en **format UDP protobuf** (introduit en
+> 1.5.0, `PROTOBUF_INTRODUCTION_VERSION`).
+>
+> Conséquence : `decode_udp` **est déjà validé sur du trafic réel ≥ 1.5**. Les
+> scénarios 03–07 décodent de 190 à 905 paquets `UDP(protobuf)` (Audio + Ping) par
+> scénario, OCB2 déchiffrés, **0 rejet**, re-key du scénario 03 inclus. La « capture
+> contre un serveur ≥ 1.5.0 » n'est donc **plus un reste à faire** : elle vit dans
+> le corpus depuis le début. L'ADR-0001 tient (le legacy 01–02 reste hors scope) et
+> n'est pas rediscuté ici.
 
 ---
 
@@ -75,12 +81,18 @@ scénarios (0 octet TCP résiduel, 0 paquet UDP rejeté).
      et symétrie serveur dans `murmur/Messages.cpp`. **Re-key géré** : un
      `CryptSetup` complet en cours de session reconstruit l'état (le scénario 03
      en contient un ; sans ce traitement, 347/383 paquets échouaient).
-  3. Charge déchiffrée en **format legacy** (serveur 1.3.4) : signalée comme telle
-     (type via `(header>>5)&0x7`), non décodée structurellement (ADR-0001).
+  3. Charge déchiffrée, deux formats selon le serveur :
+     - **protobuf** (03–07, serveur 1.5.857) : décodée structurellement par
+       `decode_udp` en `UdpMessage::Audio`/`Ping`. C'est la validation réelle du
+       chemin protobuf.
+     - **legacy** (01–02, serveur 1.3.4) : signalée comme telle (type via
+       `(header>>5)&0x7`), non décodée structurellement (ADR-0001).
 - Un rejet OCB2 (rejeu / retard hors fenêtre / tag) est une issue *comptée et
   expliquée* (le vrai Murmur les jette pareil), pas une panique — 0 sur le corpus.
 - Test d'intégration `tests/decode_corpus.rs` : décode les 7 scénarios, exige 0
-  octet résiduel et 0 rejet ; verrouille la régression du re-key (scénario 03).
+  octet résiduel et 0 rejet ; verrouille la régression du re-key (scénario 03) et
+  la **nature mixte du corpus** — 03–07 produisent du `UDP(protobuf) Audio` réel
+  et 0 charge legacy, 01–02 l'inverse (garde contre le retour du mythe « tout 1.3.4 »).
 - Lecteur `.voxcap` **ré-implémenté** dans le crate (format figé `VOXCAP01`) plutôt
   qu'extrait du proxy : garde le tool sans dépendance au crate binaire P0. `// REF:`
   vers `capture.rs` comme autorité du format.
@@ -98,13 +110,15 @@ Commits (sur `main`, sans `Co-Authored-By`) : `5fef92f` refs, `153a875` corpus,
 
 ## Reste à faire
 
-### 1. (optionnel, humain) Capturer un corpus contre un serveur ≥ 1.5.0
+### 1. ~~Capturer un corpus contre un serveur ≥ 1.5.0~~ (fait, déjà dans le corpus)
 
-Le corpus actuel (serveur 1.3.4) n'exerce **jamais** le chemin UDP protobuf de
-`decode_udp` : il n'a donc pas de validation sur trafic réel (voir la découverte
-en tête de doc). Capturer un scénario voix contre un Murmur ≥ 1.5.0 donnerait
-cette validation. Tâche de capture (P0), PR séparée (R2), point de contrôle
-humain. Ne pas rediscuter l'ADR-0001 sans décision produit explicite.
+**Résolu.** Les scénarios 03–07 tapent déjà un serveur 1.5.857 et exercent le
+chemin UDP protobuf de `decode_udp` sur trafic réel (voir « Nature du corpus » en
+tête de doc). Aucune capture supplémentaire n'est requise pour valider ce chemin.
+Diversifier resterait *possible* mais non nécessaire (autres versions ≥ 1.5,
+positional data non vide, whisper/voice-target réellement exercé — cf. réserve
+`05-whisper`/`06-permission-denied` pour les golden tests de P3). Toute nouvelle
+capture reste une tâche P0, PR séparée (R2), point de contrôle humain.
 
 ### 2. Job nightly cargo-fuzz en CI (différé, optionnel)
 
