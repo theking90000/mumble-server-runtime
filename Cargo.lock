@@ -1003,6 +1003,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "voxloom-reconcile"
+version = "0.1.0"
+dependencies = [
+ "thiserror 2.0.19",
+ "voxloom-render",
+]
+
+[[package]]
 name = "voxloom-recording-proxy"
 version = "0.1.0"
 dependencies = [
