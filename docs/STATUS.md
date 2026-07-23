@@ -159,7 +159,7 @@ aller/retour, et ping non chiffré traversant avant toute session) et
 `tests/corpus_reencrypt.rs` (T3, corpus réel 03–07, 0 rejet).
 
 Commits P2 (sur `main`, sans `Co-Authored-By`) : `1bdb519` T1 encode,
-`119bc0a` T2 plan de contrôle, `d06e3bf` T3 ré-encryption UDP, `e8a2080` T4
+`119bc0a` T2 plan de contrôle, `d06e3bf` T3 ré-encryption UDP, `1077690` T4
 câblage UDP async (relais + test `udp_plane` + checklist P2).
 
 ---
