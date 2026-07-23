@@ -7,7 +7,9 @@
 //! against real traffic and is the hook the crypto rewrite lives on.
 //!
 //! A hard framing or decode error, or a rejected `CryptSetup`, tears the
-//! connection down (fail closed, L4). The UDP voice plane is a later tranche.
+//! connection down (fail closed, L4). The UDP voice plane it feeds lives in
+//! [`crate::udp_relay`]; this relay publishes each session so that plane can find
+//! its cipher domains.
 
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex as StdMutex};
@@ -24,6 +26,7 @@ use voxloom_crypto::{BLOCK_SIZE, KEY_SIZE};
 use voxloom_protocol::{ControlMessage, decode_frame, encode_frame, parse_frame};
 
 use crate::session::{Action, ProxySecrets, Session};
+use crate::udp_relay::Registry;
 
 const TCP_BUFFER_SIZE: usize = 16 * 1024;
 
@@ -55,6 +58,7 @@ pub async fn serve(
     tls_name: String,
     server_cfg: Arc<ServerConfig>,
     client_cfg: Arc<ClientConfig>,
+    registry: Registry,
 ) -> Result<()> {
     let listener = TcpListener::bind(listen)
         .await
@@ -69,9 +73,12 @@ pub async fn serve(
         let server_cfg = Arc::clone(&server_cfg);
         let client_cfg = Arc::clone(&client_cfg);
         let tls_name = tls_name.clone();
+        let registry = registry.clone();
         tokio::spawn(async move {
-            if let Err(error) =
-                handle_connection(stream, upstream, tls_name, server_cfg, client_cfg).await
+            if let Err(error) = handle_connection(
+                stream, peer, upstream, tls_name, server_cfg, client_cfg, registry,
+            )
+            .await
             {
                 eprintln!("connection from {peer} ended with error: {error:#}");
             }
@@ -81,10 +88,12 @@ pub async fn serve(
 
 async fn handle_connection(
     client_stream: TcpStream,
+    peer: SocketAddr,
     upstream: SocketAddr,
     tls_name: String,
     server_cfg: Arc<ServerConfig>,
     client_cfg: Arc<ClientConfig>,
+    registry: Registry,
 ) -> Result<()> {
     let acceptor = TlsAcceptor::from(server_cfg);
     let client_tls = acceptor
@@ -108,6 +117,11 @@ async fn handle_connection(
     let client_write = Arc::new(TokioMutex::new(client_write));
     let server_write = Arc::new(TokioMutex::new(server_write));
     let session = Arc::new(StdMutex::new(Session::new(random_secrets()?)));
+
+    // Publish this session under the client's IP so the UDP relay can correlate
+    // its voice datagrams to these cipher domains. The guard deregisters when the
+    // connection ends, so a closed session never binds a later datagram.
+    let _registration = registry.register(peer.ip(), Arc::clone(&session));
 
     // client -> server: forward toward the server, replies go back to the client.
     let c2s = pump_control(

@@ -74,8 +74,8 @@ impl std::fmt::Debug for ProxySecrets {
 }
 
 /// The two independent OCB2 cipher states a session owns once the server's
-/// initial `CryptSetup` has been intercepted. The UDP plane (Phase 2, next
-/// tranche) borrows these to decrypt on one side and re-encrypt on the other.
+/// initial `CryptSetup` has been intercepted. The UDP plane ([`crate::udp_relay`])
+/// borrows these to decrypt on one side and re-encrypt on the other.
 pub struct CryptChannels {
     /// Proxy acting as the client toward the real server (proxy <-> server).
     pub to_server: CryptState,

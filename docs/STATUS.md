@@ -4,10 +4,12 @@
 > reprend doit savoir. Autorité : la spec et la roadmap (`docs/`) ; ce fichier ne
 > fait que pointer l'état courant. Mettre à jour à chaque fin de tâche.
 
-**Phase courante : P1 (codec pur) — tâches 1 à 6 + `corpus-decode` terminées.**
-Le critère de « done » de P1 est atteint : les 7 captures se décodent
-intégralement (voir « Fait »). Reste optionnel : le job nightly cargo-fuzz en
-CI. Les règles R1–R6 (`AGENT.md`) et la discipline de code restent la loi.
+**Phase courante : P2 (proxy MITM oracle) — tranches T1 à T4 implémentées et
+vérifiées en CI.** P1 (codec pur) est close. Le seul reste de P2 est le **point
+de contrôle humain** : dérouler et signer `docs/checklists/p2-proxy-oracle.md`
+(un agent ne peut pas juger l'audio d'un vrai client). Reste optionnel hérité de
+P1 : le job nightly cargo-fuzz en CI. Les règles R1–R6 (`AGENT.md`) et la
+discipline de code restent la loi.
 
 > **Nature du corpus (corrigé le 2026-07-22, vérifié sur les octets décodés) :**
 > le corpus est **mixte**, pas uniformément 1.3.4 comme l'affirmait une version
@@ -106,9 +108,72 @@ Commits (sur `main`, sans `Co-Authored-By`) : `5fef92f` refs, `153a875` corpus,
 `19d8f92` framing, `2c32552` protobuf, `5c8c538` control, `9a5d953` udp,
 `0f53017` OCB2, `9846536` fuzzing.
 
+### Phase 2 — proxy MITM oracle (`tools/mitm-proxy`)
+
+Le proxy s'insère entre le client officiel et un vrai Murmur, termine la TLS des
+deux côtés, décode/ré-encode **chaque** message (le codec P1 exercé sur du trafic
+vivant) et tient un **domaine crypto OCB2 indépendant vers chaque bord** — donc
+il déchiffre et re-chiffre la voix, il ne relaie pas la clé. C'est l'oracle
+binaire de la roadmap : si le client marche normalement (voix comprise) à travers
+le proxy, le framing, la sérialisation, l'enveloppe UDP et la crypto sont corrects
+par construction.
+
+| Tranche | Livrable | Fichiers |
+|------|----------|----------|
+| T1 | Côté **encode** du codec (`encode_frame`/`encode_control`/`encode_udp`, UDPTunnel préservé en octets bruts) : le proxy ré-encode ce qu'il décode | `voxloom-protocol/src/{framing,control,udp}.rs` |
+| T2 | **Plan de contrôle** MITM : réassemblage framé, décode/ré-encode, machine à états qui **réécrit `CryptSetup`** (deux `CryptState` par connexion, resyncs absorbés au bord, tout ce qui n'est pas attendu d'un bord est refusé) | `tools/mitm-proxy/src/{relay,session,tls}.rs` |
+| T3 | **Ré-encryption UDP** (cœur pur) : décrypte dans le domaine du bord émetteur, valide par round-trip `decode_udp`/`encode_udp`, re-chiffre dans le domaine de l'autre bord ; pings de connectivité non chiffrés passés verbatim ; chaque datagramme finit en une issue explicite (L4) | `tools/mitm-proxy/src/udp.rs` |
+| T4 | **Câblage UDP asynchrone** : socket voix client, corrélation **adresse → session**, uplink dédié par client (le serveur distingue les clients), ré-encryption dans les deux sens sur de vraies sockets | `tools/mitm-proxy/src/udp_relay.rs`, `src/{main,relay}.rs` |
+
+Corrélation adresse→session (T4), tracée sur le serveur réel (R1) : un datagramme
+d'un pair **connu** utilise le `CryptState` de ce pair ; d'un pair **inconnu**, le
+serveur boucle sur les utilisateurs du même IP hôte (`qhHostUsers`) et lie
+l'adresse au **premier `checkDecrypt` qui réussit** (`qhPeerUsers`). Les pings non
+chiffrés sont répondus **avant** toute association. Fait exploité et vérifié en
+source : un `decrypt` OCB2 en échec est **sans effet de bord** (l'IV est restauré,
+aucune écriture d'historique de rejeu), donc essayer un datagramme contre plusieurs
+domaines candidats ne les corrompt pas — c'est ce qui rend la liaison « au premier
+succès » sûre. `// REF:` vers `murmur/Server.cpp` (`Server::run`, `checkDecrypt`).
+
+Choix d'implémentation notables :
+
+- **`std::sync::Mutex` (pas `tokio::sync::Mutex`) pour l'état de session/registre.**
+  Les sections critiques ne tiennent **jamais** le lock à travers un `.await` :
+  sous le lock il n'y a que du CPU synchrone (OCB2 sur un datagramme = quelques µs,
+  lookup `HashMap`, clone d'`Arc`), et les `send`/`recv` awaitent lock relâché.
+  C'est l'usage recommandé par tokio et cohérent avec T2 (`Arc<StdMutex<Session>>`
+  pour la crypto synchrone, `TokioMutex` pour l'écriture TLS qui, elle, await).
+- **Zéro deadlock par construction** : le slot `Option<session>` et le `Session`
+  ne sont jamais verrouillés en même temps (`lock_session` clone l'`Arc` puis
+  relâche avant de verrouiller le `Session`).
+- **`Registry`** (index `IP hôte → sessions`, `qhHostUsers`) publié par le plan
+  TCP, consommé par le plan UDP ; désinscription **RAII** à la fin de connexion
+  (une session fermée ne lie jamais un datagramme ultérieur).
+
+**Vérifié** (`RUSTFLAGS="-D warnings"`, tout vert) : `ci/gates.sh`,
+`ci/dep-direction.sh`, `ci/verifier-boundary.sh`, `cargo fmt --check`, `cargo
+clippy --workspace --all-targets`, `cargo test --workspace`.
+Done-command de T4 : `cargo test -p voxloom-mitm-proxy` — 9 tests verts, dont
+`tests/udp_plane.rs` (relais UDP réel sur loopback : corrélation + ré-encryption
+aller/retour, et ping non chiffré traversant avant toute session) et
+`tests/corpus_reencrypt.rs` (T3, corpus réel 03–07, 0 rejet).
+
+Commits P2 (sur `main`, sans `Co-Authored-By`) : `1bdb519` T1 encode,
+`119bc0a` T2 plan de contrôle, `d06e3bf` T3 ré-encryption UDP, `e8a2080` T4
+câblage UDP async (relais + test `udp_plane` + checklist P2).
+
 ---
 
 ## Reste à faire
+
+### 0. Point de contrôle humain P2 (bloquant pour clore P2)
+
+Le code et la CI de P2 sont verts, mais la roadmap exige une validation qu'aucun
+agent ne peut faire : un vrai client Mumble qui parle **à travers** le proxy, sans
+artefact audible, dans les deux sens. Dérouler et **signer**
+`docs/checklists/p2-proxy-oracle.md` (client officiel + Murmur réel + oreille
+humaine). Tant que ce n'est pas signé, P2 n'est pas « done ». P5 (moteur de vues
+pur) reste parallélisable sans attendre cette signature.
 
 ### 1. ~~Capturer un corpus contre un serveur ≥ 1.5.0~~ (fait, déjà dans le corpus)
 
@@ -174,14 +239,18 @@ ci/fuzz-smoke.sh 30        # nightly + cargo-fuzz requis, sinon skip propre
 ```
 tools/recording-proxy/   binaire P0 (proxy d'enregistrement + lecteur .voxcap)
 tools/corpus-decode/      binaire P1 (décodeur de corpus, critère de « done »)
-voxloom-protocol/         framing, messages prost, control, udp   (pur)
+tools/mitm-proxy/         binaire P2 (proxy MITM oracle : TLS deux bords,
+                          réécriture CryptSetup, ré-encryption UDP, relais async)
+voxloom-protocol/         framing, messages prost, control, udp (decode + encode) (pur)
 voxloom-crypto/           ocb2 (OCB2-AES128, CryptState)          (pur)
 fuzz/                     cibles cargo-fuzz (workspace détaché, nightly)
 references/vendored/      vérité protocolaire (R1), pin v1.5.915
 fixtures/corpus/          7 captures réelles (zone vérificateur R2)
 ```
 
-### Après P1
+### Après P2
 
-`P2 proxy MITM comme oracle vivant` (déchiffre/réencode le trafic réel à travers
-le proxy). `P5 moteur de vues pur` est parallélisable dès P2. Voir la roadmap.
+Une fois `docs/checklists/p2-proxy-oracle.md` signé, P2 est close. Suite :
+`P3 serveur minimal` (handshake sans Murmur + `SimulatedMumbleClient` dans le
+testkit, par un agent distinct au titre de R2). `P5 moteur de vues pur` est
+parallélisable dès maintenant (aucune dépendance réseau). Voir la roadmap.

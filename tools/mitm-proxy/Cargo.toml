@@ -33,7 +33,9 @@ thiserror = "1"
 clap = { version = "4", features = ["derive"] }
 
 [dev-dependencies]
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-util"] }
+# `time` adds the recv timeouts the UDP plane test uses to fail fast instead of
+# hanging; `net`/`sync` are already on via [dependencies] (features are unioned).
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-util", "time"] }
 # The T3 done-command replays the real captured corpus through the UDP
 # re-encryptor; this reuses the Phase 1 corpus reader/decoder (verification tool).
 voxloom-corpus-decode = { path = "../corpus-decode" }

@@ -6,7 +6,7 @@ use std::net::SocketAddr;
 
 use anyhow::{Context, Result};
 use clap::Parser;
-use voxloom_mitm_proxy::{serve, tls};
+use voxloom_mitm_proxy::{Registry, serve, serve_udp, tls};
 
 #[derive(Parser)]
 #[command(
@@ -35,23 +35,31 @@ async fn main() -> Result<()> {
     let client_cfg = tls::client_config();
 
     eprintln!(
-        "MITM proxy: {} -> {} (Ctrl-C to stop)",
+        "MITM proxy: {} -> {} (TCP control + UDP voice, Ctrl-C to stop)",
         cli.listen, cli.upstream
     );
 
-    let relay = serve(
-        cli.listen,
-        cli.upstream,
-        cli.tls_name.clone(),
-        server_cfg,
-        client_cfg,
-    );
+    // One registry bridges the two planes: the TCP relay publishes each session
+    // under its client IP, the UDP relay looks it up to re-encrypt that client's
+    // voice through the same cipher domains (and its mid-session re-keys).
+    let registry = Registry::new();
 
     tokio::select! {
-        // serve only returns on a fatal bind/accept error; Ctrl-C is the normal
-        // stop path. Cancelling the relay future is safe: every in-flight frame
-        // is fully written and flushed before the next read.
-        result = relay => result.context("control relay stopped")?,
+        // Each relay only returns on a fatal socket error; Ctrl-C is the normal
+        // stop path. Cancelling a relay future is safe: the TCP side fully writes
+        // and flushes every in-flight frame before the next read, and the UDP side
+        // holds no half-sent datagram across an await.
+        result = serve(
+            cli.listen,
+            cli.upstream,
+            cli.tls_name.clone(),
+            server_cfg,
+            client_cfg,
+            registry.clone(),
+        ) => result.context("control relay stopped")?,
+        result = serve_udp(cli.listen, cli.upstream, registry.clone()) => {
+            result.context("UDP voice relay stopped")?;
+        }
         result = tokio::signal::ctrl_c() => {
             result.context("waiting for Ctrl-C")?;
             eprintln!("\nCtrl-C received, stopping.");

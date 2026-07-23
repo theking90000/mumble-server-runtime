@@ -82,7 +82,7 @@ fn reencrypt(
     encrypt_with: &mut CryptState,
     datagram: &[u8],
 ) -> UdpOutcome {
-    if is_unencrypted_ping(origin, datagram) {
+    if is_connectivity_ping(origin, datagram) {
         return UdpOutcome::PassThrough;
     }
     let plaintext = match decrypt_with.decrypt(datagram) {
@@ -106,7 +106,10 @@ fn reencrypt(
 /// Recognise an unencrypted UDP connectivity ping by its fixed shapes. An
 /// encrypted voice packet never matches these (its first byte is an OCB2 IV, and
 /// its bytes do not cleanly decode as a `Ping`), so a match means "not voice".
-fn is_unencrypted_ping(origin: Origin, datagram: &[u8]) -> bool {
+///
+/// The async relay ([`crate::udp_relay`]) also needs this to forward pings that
+/// arrive before a session's cipher domains exist, so it is crate-visible.
+pub(crate) fn is_connectivity_ping(origin: Origin, datagram: &[u8]) -> bool {
     // Legacy connectivity ping: direction-specific fixed shapes.
     match origin {
         // 12-byte request: four zero bytes then a 64-bit timestamp.
