@@ -4,12 +4,22 @@
 > reprend doit savoir. Autorité : la spec et la roadmap (`docs/`) ; ce fichier ne
 > fait que pointer l'état courant. Mettre à jour à chaque fin de tâche.
 
-**Phase courante : P2 (proxy MITM oracle) — tranches T1 à T4 implémentées et
-vérifiées en CI.** P1 (codec pur) est close. Le seul reste de P2 est le **point
-de contrôle humain** : dérouler et signer `docs/checklists/p2-proxy-oracle.md`
-(un agent ne peut pas juger l'audio d'un vrai client). Reste optionnel hérité de
-P1 : le job nightly cargo-fuzz en CI. Les règles R1–R6 (`AGENT.md`) et la
+**Phase courante : P2 (proxy MITM oracle) — CLOSE.** Tranches T1 à T4
+implémentées et vérifiées en CI ; le **point de contrôle humain** est déroulé et
+signé (`docs/checklists/p2-proxy-oracle.md`, commit `2fb1e98`, le 2026-07-24) :
+appel vocal complet à travers le proxy sans artefact, deux sens, deux clients,
+resync et déconnexion propre. P1 (codec pur) est close. Reste optionnel hérité de
+P1 : le job nightly cargo-fuzz en CI. Prochaine étape : P3 (serveur minimal) ; P5
+(moteur de vues pur) est parallélisable. Les règles R1–R6 (`AGENT.md`) et la
 discipline de code restent la loi.
+
+> **Piège client macOS (corrigé le 2026-07-24, commit `2fb1e98`) :** le client
+> Mumble macOS (Qt/OpenSSL) segfault à la fin du handshake TLS si le proxy
+> négocie **TLS 1.3** — le crash est dans l'introspection post-handshake de Qt,
+> *avant* tout message Mumble, donc sans rapport avec le codec/crypto/UDP. rustls
+> préférait 1.3 ; le proxy est désormais épinglé sur **TLS 1.2** (comme Murmur)
+> dans `tools/mitm-proxy/src/tls.rs`. Se connecter au proxy via `127.0.0.1:64738`
+> (pas `localhost`, qui résout d'abord en IPv6 que le proxy n'écoute pas).
 
 > **Nature du corpus (corrigé le 2026-07-22, vérifié sur les octets décodés) :**
 > le corpus est **mixte**, pas uniformément 1.3.4 comme l'affirmait une version
@@ -166,14 +176,13 @@ câblage UDP async (relais + test `udp_plane` + checklist P2).
 
 ## Reste à faire
 
-### 0. Point de contrôle humain P2 (bloquant pour clore P2)
+### 0. ~~Point de contrôle humain P2~~ (fait, signé le 2026-07-24)
 
-Le code et la CI de P2 sont verts, mais la roadmap exige une validation qu'aucun
-agent ne peut faire : un vrai client Mumble qui parle **à travers** le proxy, sans
-artefact audible, dans les deux sens. Dérouler et **signer**
-`docs/checklists/p2-proxy-oracle.md` (client officiel + Murmur réel + oreille
-humaine). Tant que ce n'est pas signé, P2 n'est pas « done ». P5 (moteur de vues
-pur) reste parallélisable sans attendre cette signature.
+**Résolu.** `docs/checklists/p2-proxy-oracle.md` est déroulé et signé (commit
+`2fb1e98`) : un vrai client Mumble parle à travers le proxy sans artefact
+audible, dans les deux sens, deux clients, resync et déconnexion propre. Un crash
+du client macOS au handshake a été diagnostiqué (introspection TLS 1.3 de Qt) et
+corrigé (proxy épinglé sur TLS 1.2). P2 est close.
 
 ### 1. ~~Capturer un corpus contre un serveur ≥ 1.5.0~~ (fait, déjà dans le corpus)
 
