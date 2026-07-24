@@ -4,14 +4,16 @@
 > reprend doit savoir. Autorité : la spec et la roadmap (`docs/`) ; ce fichier ne
 > fait que pointer l'état courant. Mettre à jour à chaque fin de tâche.
 
-**Phase courante : P2 (proxy MITM oracle) — CLOSE.** Tranches T1 à T4
-implémentées et vérifiées en CI ; le **point de contrôle humain** est déroulé et
-signé (`docs/checklists/p2-proxy-oracle.md`, commit `2fb1e98`, le 2026-07-24) :
-appel vocal complet à travers le proxy sans artefact, deux sens, deux clients,
-resync et déconnexion propre. P1 (codec pur) est close. Reste optionnel hérité de
-P1 : le job nightly cargo-fuzz en CI. Prochaine étape : P3 (serveur minimal) ; P5
-(moteur de vues pur) est parallélisable. Les règles R1–R6 (`AGENT.md`) et la
-discipline de code restent la loi.
+**Phase courante : P3 (serveur minimal) — cœur implémenté et vérifié en CI ; il
+ne reste que le point de contrôle humain.** Les deux critères machine de P3 sont
+verts (client simulé rejoue le handshake sans violation §20 ; deux clients
+simulés simultanés à vues indépendantes). Le troisième critère — vrai client
+officiel connecté + loopback audible — est une checklist humaine **non encore
+signée** (`docs/checklists/p3-minimal-server.md`). Tant qu'elle ne l'est pas, P3
+n'est pas « close » au sens roadmap, même CI verte. P2 est close (checklist
+signée `2fb1e98`). P1 (codec pur) est close. Reste optionnel hérité de P1 : le
+job nightly cargo-fuzz en CI. Suite après signature P3 : P4 (routage audio deux
+clients). Les règles R1–R6 (`AGENT.md`) et la discipline de code restent la loi.
 
 **P5 (moteur de vues pur) — cœur pur implémenté et vérifié en CI, mergé sur
 `main` le 2026-07-24.** `voxloom-render` (vue normalisée, normalize, validate) et
@@ -220,6 +222,63 @@ clippy --workspace --all-targets`. Done-command : `cargo test -p voxloom-render`
 Commits P5 (sans `Co-Authored-By`) : `66b1847` `voxloom-render`, `f6afb72`
 `voxloom-reconcile` ; mergés sur `main` le 2026-07-24 (merge no-ff).
 
+### Phase 3 — serveur minimal (cœur fait, checkpoint humain en attente)
+
+Handshake sans Murmur, plan UDP, loopback. Deux crates, en **deux commits
+séparés** au titre de R2 (implémenteur ≠ vérificateur, `verifier-boundary.sh`).
+
+| Crate | Rôle | Fichiers |
+|------|------|----------|
+| `voxloom-server` | Implémenteur : accept TLS (TLS 1.2), handshake, plan UDP, loopback, tunnel TCP | `voxloom-server/src/{tls,config,state,handshake,connection,voice,server,main}.rs` |
+| `voxloom-testkit` | Vérificateur (R2) : `SimulatedMumbleClient`, juge strict §20 | `voxloom-testkit/src/{model,client,tls}.rs` |
+
+Ordre du handshake **autoritaire** (R1, tracé dans `handshake.rs`) :
+`Server::encrypted` envoie **Version** dès la TLS établie (avant Authenticate) ;
+puis sur `Authenticate`, `Messages.cpp::msgAuthenticate` émet **CryptSetup →
+CodecVersion → ChannelState (racine, parents avant enfants) → UserState(self) →
+UserState(autres) → ServerSync → ServerConfig**. `build_handshake` est une
+**fonction pure** : les invariants §20 d'ordre (self avant ServerSync, parents
+avant enfants, racine sans parent) sont testés unitairement dessus.
+
+- **Auth stub** : tout username accepté, le password est un credential opaque
+  (le flux jeton §10.2 est P8). Nom serveur-autoritaire (§10.5).
+- **Plan UDP** (`voice.rs`) : association d'adresse **par preuve cryptographique**
+  (`checkDecrypt`, premier décryptage qui réussit ; un décryptage en échec est
+  sans effet de bord, sûr à réessayer — hérité P2). Pings chiffrés **et** non
+  chiffrés répondus. **Loopback = target 31** (REF `MumbleUDP.proto` : `2^5-1 =
+  "server loopback"`) : réfléchi vers l'émetteur, re-chiffré, `context` normal,
+  `sender_session` estampillée, Opus intact. Repli **tunnel TCP** (`UDPTunnel`)
+  réfléchit le loopback de même. Parole normale (target 0) : **droppée** en P3
+  (le graphe de routage est P4).
+- **Présence** : arrivée diffusée aux pairs (UserState), départ via UserRemove.
+- **`SimulatedMumbleClient`** (§26.6) : applique chaque message serveur à un
+  modèle local et **panique** sur toute violation §20, chaque invariant dans son
+  propre `check_*` (mutation-testable). Invariants couverts : 1 (racine existe à
+  sync), 2 (racine jamais retirée), 3 (parent visible), 4 (pas de cycle), 5
+  (user dans canal visible), 6 (self avant ServerSync), 8 (canal occupé jamais
+  retiré), 15 (pas d'actor invisible). Écrit contre la spec/référence, parle le
+  wire uniquement via `voxloom-protocol` (R2). N'active pas les lints
+  workspace (contrat = paniquer bruyamment), évite quand même `.unwrap()`.
+
+Fait par le loopback : voir le débat « le loopback client Mumble est local, mais
+le mode Loopback → *Serveur* envoie l'audio avec la cible loopback et attend
+l'écho serveur » — c'est exactement le test humain de P3.
+
+**Vérifié** (`RUSTFLAGS="-D warnings"`, tout vert) : `ci/gates.sh`,
+`ci/dep-direction.sh`, `ci/verifier-boundary.sh`, `cargo fmt --check`, `cargo
+clippy --workspace --all-targets`. Done-commands :
+- `cargo test -p voxloom-server` — 8 tests (ordre handshake pur + handshake TLS
+  live, association/loopback UDP, loopback tunnel TCP).
+- `cargo test -p voxloom-testkit` — 11 tests (9 modèle dont chaque invariant qui
+  panique à la violation ; 2 conformance = les deux critères machine de P3).
+
+Commits P3 (sur `main`, sans `Co-Authored-By`, **séparés R2**) : `4465149`
+`voxloom-server` (implémenteur), `e56caf1` `voxloom-testkit` (vérificateur).
+
+**Reste pour clore P3** : signer `docs/checklists/p3-minimal-server.md` (vrai
+client Mumble connecté, loopback serveur audible, UDP + repli TCP, deux clients
+qui se voient). Un agent ne peut pas le faire (GUI Qt + oreille).
+
 ---
 
 ## Reste à faire
@@ -256,10 +315,13 @@ Le cœur pur de P5 est fait (voir « Fait »), mais ces restes exigent d'autres
 phases et n'ont **pas** été inventés ici (R1/R5) :
 
 - **Proptest autoritaire à grand volume (>10⁵ paires, CI nocturne) contre le
-  client simulé.** Le générateur partagé et `SimulatedMumbleClient` (§26.6) sont
-  des livrables **vérificateur de P3** (R2, agent distinct). Le proptest in-crate
-  actuel (4000 seeds, générateur + applieur locaux) tient le même contrat et sera
-  remplacé/déplacé dans le testkit quand P3 atterrit.
+  client simulé.** `SimulatedMumbleClient` (§26.6) existe désormais dans
+  `voxloom-testkit` (livré en P3, R2). Le proptest de P5 peut maintenant le
+  consommer ; le proptest in-crate actuel (4000 seeds, générateur + applieur
+  locaux) tient le même contrat en attendant le déplacement. Note : le client
+  simulé actuel modélise le handshake/présence (§20 : 1-6, 8, 15) ; le pilotage
+  d'un plan de transition complet (appliquer un `OutputTransaction` de
+  `voxloom-reconcile`) reste à câbler côté testkit pour ce proptest.
 - **`render_full` depuis `CanonicalState`.** L'état canonique est **P7** ; le
   moteur opère pour l'instant sur des `ClientView` déjà résolues. Le rendu depuis
   composants (§8.1, spécifique Minecraft) est **P8**.
@@ -323,18 +385,29 @@ voxloom-protocol/         framing, messages prost, control, udp (decode + encode
 voxloom-crypto/           ocb2 (OCB2-AES128, CryptState)          (pur)
 voxloom-render/           P5 : vue normalisée, normalize, validate (§20)  (pur)
 voxloom-reconcile/        P5 : diff, planificateur (§12.5/12.6), ViewIdMapping (pur)
+voxloom-server/           P3 : serveur minimal (TLS, handshake, plan UDP, loopback)
+voxloom-testkit/          P3 : SimulatedMumbleClient, juge strict §20 (vérificateur R2)
 fuzz/                     cibles cargo-fuzz (workspace détaché, nightly)
 references/vendored/      vérité protocolaire (R1), pin v1.5.915
 fixtures/corpus/          7 captures réelles (zone vérificateur R2)
 ```
 
 Note : `voxloom-render`/`voxloom-reconcile` sont sur `main` (P5 mergé le
-2026-07-24).
+2026-07-24). `voxloom-server`/`voxloom-testkit` sur `main` (P3, le 2026-07-24).
 
-### Après P2
+### Après P3
 
-P2 est close (checklist signée). P5 est mergé sur `main` (cœur pur fait). Suite :
-`P3 serveur minimal` (handshake sans Murmur + `SimulatedMumbleClient` dans le
-testkit, par un agent distinct au titre de R2), à faire dans une **nouvelle
-session**. La clôture de P5 attend le client simulé de P3 pour le proptest
-autoritaire (cf. « Reste à faire » §3). Voir la roadmap.
+Le cœur de P3 est fait et vert en CI. **Reste avant de clore P3** : dérouler et
+signer `docs/checklists/p3-minimal-server.md` (vrai client Mumble → loopback
+serveur audible, UDP + repli TCP, deux clients qui se voient) — point de contrôle
+humain, un agent ne peut pas le faire. Ensuite, **P4 (routage audio deux
+clients)** : le hot path (§15.1), snapshot `Arc<AudioRoutingSnapshot>` publié par
+swap atomique, `RoutingDomainId` dès maintenant, gates R4 `voxloom-audio` (ni
+lock ni await par paquet). P5 peut aussi être clôturé en branchant son proptest
+sur le `SimulatedMumbleClient` (cf. « Reste à faire » §3). Voir la roadmap.
+
+Pièges P3 à retenir : (1) se connecter via `127.0.0.1`, pas `localhost` (IPv6) ;
+(2) TLS épinglé 1.2 (crash client macOS en 1.3) ; (3) la séparation R2 se fait en
+**commits distincts** (`voxloom-server/src` vs `voxloom-testkit/`) — jamais dans
+le même diff ; (4) le testkit n'active pas les lints workspace mais évite quand
+même `.unwrap()` (gate global).
