@@ -29,7 +29,12 @@ pub fn server_config() -> Result<Arc<ServerConfig>> {
     let key_der = PrivatePkcs8KeyDer::from(certified.key_pair.serialize_der());
     let key = PrivateKeyDer::Pkcs8(key_der);
 
-    let config = ServerConfig::builder()
+    // Restrict the client-facing side to TLS 1.2. A real Murmur negotiates 1.2
+    // by default, and the macOS Qt/OpenSSL Mumble build segfaults in its post-
+    // handshake introspection (sessionCipher/ephemeralServerKey) when handed a
+    // TLS 1.3 session, where rustls otherwise prefers 1.3. Matching Murmur's
+    // version keeps the oracle transparent to the real client.
+    let config = ServerConfig::builder_with_protocol_versions(&[&rustls::version::TLS12])
         .with_no_client_auth()
         .with_single_cert(vec![cert_der], key)
         .context("building server TLS config")?;
