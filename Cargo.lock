@@ -1048,6 +1048,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "voxloom-testkit"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "rustls",
+ "tokio",
+ "tokio-rustls",
+ "voxloom-crypto",
+ "voxloom-protocol",
+ "voxloom-server",
+]
+
+[[package]]
 name = "wasi"
 version = "0.11.1+wasi-snapshot-preview1"
 source = "registry+https://github.com/rust-lang/crates.io-index"

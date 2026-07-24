@@ -1,0 +1,32 @@
+[package]
+name = "voxloom-testkit"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Verifier toolkit (Phase 3) : a strict SimulatedMumbleClient that applies server messages to a local model and panics on any spec §20 invariant violation, as the official client would reject them. The judge for later phases (R2)."
+
+[lib]
+name = "voxloom_testkit"
+path = "src/voxloom_testkit.rs"
+
+[dependencies]
+voxloom-protocol = { path = "../voxloom-protocol" }
+voxloom-crypto = { path = "../voxloom-crypto" }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "time", "sync"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12", "logging"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+anyhow = "1"
+
+[dev-dependencies]
+# The tests point the simulated client (the judge) at a running server to prove
+# the P3 handshake replays without any §20 violation.
+voxloom-server = { path = "../voxloom-server" }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "time", "sync"] }
+
+# This crate is a verifier harness whose contract is to PANIC on protocol
+# violations, so it deliberately does not enable the workspace `unwrap/expect`
+# lints (like the P2 proxy). It still avoids `.unwrap()` (ci/gates.sh forbids it
+# workspace-wide) and uses explicit panics with diagnostic messages instead.

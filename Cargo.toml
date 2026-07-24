@@ -37,6 +37,10 @@ members = [
     # Murmur, associe l'UDP par preuve cryptographique, répond aux pings et
     # réfléchit l'audio de loopback (target 31). Dépend des crates purs P1.
     "voxloom-server",
+    # Phase 3 : testkit vérificateur — SimulatedMumbleClient, modèle strict qui
+    # applique les messages serveur et panique sur toute violation §20. Zone
+    # vérificateur (R2) : jamais dans le même diff qu'un voxloom-*/src.
+    "voxloom-testkit",
 ]
 
 [workspace.package]
