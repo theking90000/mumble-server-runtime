@@ -33,6 +33,10 @@ members = [
     # transitions (§12.5/§12.6), résolution clé→ID stable (ADR-007). Dépend
     # uniquement des types de vue de voxloom-render.
     "voxloom-reconcile",
+    # Phase 3 : serveur minimal — accepte la TLS, déroule le handshake sans
+    # Murmur, associe l'UDP par preuve cryptographique, répond aux pings et
+    # réfléchit l'audio de loopback (target 31). Dépend des crates purs P1.
+    "voxloom-server",
 ]
 
 [workspace.package]
