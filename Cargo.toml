@@ -26,6 +26,13 @@ members = [
     "voxloom-protocol",
     # Phase 1 : crypto pure (OCB2-AES128, nonces, anti-rejeu).
     "voxloom-crypto",
+    # Phase 5 : moteur de vues pur — types de vue normalisée + validation des
+    # invariants §20. Sans IO, sans wire format (gate render/no-protocol).
+    "voxloom-render",
+    # Phase 5 : réconciliation pure — diff logique (§12.4), planificateur de
+    # transitions (§12.5/§12.6), résolution clé→ID stable (ADR-007). Dépend
+    # uniquement des types de vue de voxloom-render.
+    "voxloom-reconcile",
 ]
 
 [workspace.package]
