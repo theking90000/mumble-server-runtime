@@ -97,9 +97,18 @@ pub enum TransitionError {
 impl ConnectionView {
     /// A connection that has been told nothing yet.
     pub fn new(self_session: SessionId) -> ConnectionView {
+        // `ClientView::empty()` is the minimal *valid* view and contains the
+        // root. A brand-new wire connection has not received even that root,
+        // however. Keeping it in `committed` here would make the initial diff
+        // omit `CreateChannel(root)` and let the first synthetic child precede
+        // its parent. The pre-sync shadow state is therefore deliberately
+        // uninitialized; the first desired view is validated, creates root
+        // first, and the first commit makes `committed` valid.
+        let mut committed = ClientView::empty();
+        committed.channels.clear();
         ConnectionView {
             self_session,
-            committed: ClientView::empty(),
+            committed,
             committed_routes: BTreeSet::new(),
             ids: ViewIdMapping::new(),
             revision: 0,
@@ -324,13 +333,13 @@ mod tests {
             .expect("view is valid")
             .expect("something to send");
 
-        // A fresh committed view is the minimal valid one: the root and nobody
-        // in it. Preparing must not have added the user or the channel.
+        // A fresh wire connection has been told literally nothing yet, not even
+        // about the root. Preparing must not have added any of it.
         assert!(
             connection.committed().users.is_empty(),
             "the client has been told nothing yet"
         );
-        assert_eq!(connection.committed().channels.len(), 1);
+        assert!(connection.committed().channels.is_empty());
         assert_eq!(connection.revision(), 0);
 
         let (_steps, token) = pending.split();
