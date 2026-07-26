@@ -1128,7 +1128,12 @@ name = "voxloom-control"
 version = "0.1.0"
 dependencies = [
  "thiserror 2.0.19",
+ "voxloom-audio",
  "voxloom-flavor",
+ "voxloom-protocol",
+ "voxloom-reconcile",
+ "voxloom-render",
+ "voxloom-session",
 ]
 
 [[package]]

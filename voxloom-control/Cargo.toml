@@ -14,7 +14,12 @@ path = "src/voxloom_control.rs"
 
 [dependencies]
 thiserror = "2"
+voxloom-audio = { path = "../voxloom-audio" }
 voxloom-flavor = { path = "../voxloom-flavor" }
+voxloom-protocol = { path = "../voxloom-protocol" }
+voxloom-reconcile = { path = "../voxloom-reconcile" }
+voxloom-render = { path = "../voxloom-render" }
+voxloom-session = { path = "../voxloom-session" }
 
 [lints]
 workspace = true

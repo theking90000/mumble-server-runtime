@@ -1,11 +1,14 @@
-//! Pure control-plane coordination for flavor snapshot renders.
+//! Control-plane coordination of flavor snapshot renders.
 //!
-//! T2 renders one immutable snapshot for every currently known connection. It
-//! deliberately stops before output validation, transition planning, or
-//! publication, which belong to later P7 tasks.
+//! One generation goes through three stages, each refusing to advance to the
+//! next on any failure: [`render_snapshot`] renders one immutable snapshot for
+//! every known connection, [`validate_rendered_snapshot`] checks the outputs
+//! before any effect, and [`PublicationCoordinator`] resolves them to numeric
+//! views, delivers the transitions and publishes the routing snapshot in the
+//! order that keeps view and audio safe.
 //!
-//! REF: docs/voxloom-roadmap-agents-v0_1.md P7 T2
-//! REF: docs/voxloom-specification-technique-v0.1.md 23.1, 24.1
+//! REF: docs/voxloom-roadmap-agents-v0_1.md P7 T2, T3, T4
+//! REF: docs/voxloom-specification-technique-v0.1.md 23.1, 23.3, 24.1
 #![forbid(unsafe_code)]
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -13,8 +16,13 @@ use std::sync::Arc;
 
 use voxloom_flavor::{ConnectionId, FlavorError, FlavorRevision, RenderOutput, VoiceFlavor};
 
+mod publication;
 mod validation;
 
+pub use publication::{
+    PendingPublication, PublicationCommit, PublicationCoordinator, PublicationError,
+    PublishedGeneration,
+};
 pub use validation::{
     AudioRouteValidationError, DesiredViewValidationError, FlavorOutputValidationError,
     InteractionRegistryValidationError, ValidatedSnapshot, validate_rendered_snapshot,
