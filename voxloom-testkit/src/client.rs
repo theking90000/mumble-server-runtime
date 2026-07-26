@@ -7,11 +7,14 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use tokio::io::{AsyncReadExt, AsyncWriteExt, ReadHalf, WriteHalf};
-use tokio::net::TcpStream;
+use tokio::net::{TcpStream, UdpSocket};
 use tokio_rustls::TlsConnector;
 use tokio_rustls::client::TlsStream;
-use voxloom_protocol::messages::tcp;
-use voxloom_protocol::{ControlMessage, decode_frame, encode_frame, parse_frame};
+use voxloom_crypto::{BLOCK_SIZE, CryptState, KEY_SIZE};
+use voxloom_protocol::messages::{tcp, udp};
+use voxloom_protocol::{
+    ControlMessage, UdpMessage, decode_frame, decode_udp, encode_frame, encode_udp, parse_frame,
+};
 
 use crate::model::ClientModel;
 use crate::tls;
@@ -19,11 +22,22 @@ use crate::tls;
 /// How long the client waits for the handshake to complete before giving up.
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 
+/// Largest datagram the judge will read. Anything bigger than the protocol's own
+/// limit is a server defect, and truncating here would hide it.
+const VOICE_BUFFER: usize = 2048;
+
 /// A strict simulated Mumble client driven over a real TLS connection.
+///
+/// It also owns a voice plane, because judging the audio data plane needs the
+/// same connection's OCB2 material: the key arrives on the control channel and
+/// is what proves ownership of a UDP address.
 pub struct SimulatedMumbleClient {
     reader: FrameReader,
     writer: WriteHalf<TlsStream<TcpStream>>,
     model: ClientModel,
+    /// Derived from the server's `CryptSetup`. `None` until it arrives.
+    crypt: Option<CryptState>,
+    voice: UdpSocket,
 }
 
 impl SimulatedMumbleClient {
@@ -43,10 +57,16 @@ impl SimulatedMumbleClient {
             .context("TLS handshake")?;
         let (read, write) = tokio::io::split(stream);
 
+        let voice = UdpSocket::bind("127.0.0.1:0")
+            .await
+            .context("binding the judge's voice socket")?;
+
         let mut client = Self {
             reader: FrameReader::new(read),
             writer: write,
             model: ClientModel::new(),
+            crypt: None,
+            voice,
         };
 
         client
@@ -73,7 +93,10 @@ impl SimulatedMumbleClient {
     pub async fn drive_handshake(&mut self) -> Result<()> {
         while !self.model.synced {
             match tokio::time::timeout(HANDSHAKE_TIMEOUT, self.reader.next()).await {
-                Ok(Ok(Some(message))) => self.model.apply(&message),
+                Ok(Ok(Some(message))) => {
+                    self.observe(&message);
+                    self.model.apply(&message);
+                }
                 Ok(Ok(None)) => anyhow::bail!("server closed the connection before ServerSync"),
                 Ok(Err(error)) => return Err(error),
                 Err(_) => anyhow::bail!("timed out waiting for ServerSync"),
@@ -88,7 +111,10 @@ impl SimulatedMumbleClient {
     pub async fn pump(&mut self, window: Duration) -> Result<()> {
         loop {
             match tokio::time::timeout(window, self.reader.next()).await {
-                Ok(Ok(Some(message))) => self.model.apply(&message),
+                Ok(Ok(Some(message))) => {
+                    self.observe(&message);
+                    self.model.apply(&message);
+                }
                 Ok(Ok(None)) => return Ok(()), // connection closed
                 Ok(Err(error)) => return Err(error),
                 Err(_) => return Ok(()), // idle: nothing more within the window
@@ -104,6 +130,109 @@ impl SimulatedMumbleClient {
     /// This connection's own session id, once synced.
     pub fn self_session(&self) -> Option<u32> {
         self.model.self_session
+    }
+
+    /// Capture what the judge needs from a message before the model validates it.
+    ///
+    /// The model deliberately knows nothing about crypto (it enforces §20
+    /// structure), so the key is taken here instead of widening the model.
+    fn observe(&mut self, message: &ControlMessage) {
+        if let ControlMessage::CryptSetup(setup) = message {
+            self.crypt = client_crypt(setup);
+        }
+    }
+
+    /// Prove ownership of this client's UDP address by sending an encrypted
+    /// ping and waiting for the reply.
+    ///
+    /// Association is by cryptographic proof, so a client that never sends a
+    /// datagram simply has no UDP address as far as the server is concerned;
+    /// the judge must do this before expecting voice over UDP.
+    pub async fn associate_udp(&mut self, voice_addr: SocketAddr, timeout: Duration) -> Result<()> {
+        let ping = encode_udp(&UdpMessage::Ping(udp::Ping {
+            timestamp: 1,
+            ..Default::default()
+        }));
+        self.send_voice(voice_addr, &ping).await?;
+
+        let mut buffer = vec![0u8; VOICE_BUFFER];
+        let received = tokio::time::timeout(timeout, self.voice.recv_from(&mut buffer))
+            .await
+            .context("timed out waiting for the UDP ping reply")?;
+        let (len, _from) = received.context("receiving the UDP ping reply")?;
+
+        let crypt = self
+            .crypt
+            .as_mut()
+            .context("no CryptSetup received, cannot decrypt")?;
+        let plaintext = crypt
+            .decrypt(buffer.get(..len).unwrap_or(&[]))
+            .context("the UDP ping reply did not authenticate")?;
+        match decode_udp(&plaintext).context("decoding the UDP ping reply")? {
+            UdpMessage::Ping(_) => Ok(()),
+            other => anyhow::bail!("expected a Ping reply, got {other:?}"),
+        }
+    }
+
+    /// Send one voice packet to the given target.
+    pub async fn speak(
+        &mut self,
+        voice_addr: SocketAddr,
+        target: u32,
+        frame_number: u64,
+        opus: &[u8],
+    ) -> Result<()> {
+        let packet = encode_udp(&UdpMessage::Audio(udp::Audio {
+            header: Some(udp::audio::Header::Target(target)),
+            frame_number,
+            opus_data: opus.to_vec(),
+            ..Default::default()
+        }));
+        self.send_voice(voice_addr, &packet).await
+    }
+
+    /// Receive one voice packet, or `None` if none arrives within `timeout`.
+    ///
+    /// A datagram that arrives but fails to authenticate or decode is an error,
+    /// not a `None`: silence and corruption are different verdicts and the judge
+    /// must not blur them.
+    pub async fn recv_voice(&mut self, timeout: Duration) -> Result<Option<udp::Audio>> {
+        let mut buffer = vec![0u8; VOICE_BUFFER];
+        let Ok(received) = tokio::time::timeout(timeout, self.voice.recv_from(&mut buffer)).await
+        else {
+            return Ok(None);
+        };
+        let (len, _from) = received.context("receiving voice")?;
+
+        let crypt = self
+            .crypt
+            .as_mut()
+            .context("no CryptSetup received, cannot decrypt")?;
+        let plaintext = crypt
+            .decrypt(buffer.get(..len).unwrap_or(&[]))
+            .context("a voice datagram did not authenticate")?;
+        match decode_udp(&plaintext).context("decoding voice")? {
+            UdpMessage::Audio(audio) => Ok(Some(audio)),
+            UdpMessage::Ping(_) => Ok(None),
+        }
+    }
+
+    async fn send_voice(&mut self, voice_addr: SocketAddr, plaintext: &[u8]) -> Result<()> {
+        let crypt = self
+            .crypt
+            .as_mut()
+            .context("no CryptSetup received, cannot encrypt")?;
+        let sealed = crypt.encrypt(plaintext).context("OCB2 encrypt failed")?;
+        self.voice
+            .send_to(&sealed, voice_addr)
+            .await
+            .context("sending a voice datagram")?;
+        Ok(())
+    }
+
+    /// The judge's own outbound control channel, for driving the server.
+    pub async fn send_control(&mut self, message: &ControlMessage) -> Result<()> {
+        self.send(message).await
     }
 
     async fn send(&mut self, message: &ControlMessage) -> Result<()> {
@@ -158,4 +287,19 @@ impl FrameReader {
             None => Ok(None),
         }
     }
+}
+
+/// Build the client side of the OCB2 state from the server's `CryptSetup`.
+///
+/// Returns `None` for a malformed setup rather than guessing: a judge that
+/// invents crypto material would report the server's mistakes as its own.
+///
+/// REF: references/mumble/src/mumble/Messages.cpp : `setKey(key, client_nonce,
+///   server_nonce)` — the client encrypts client-to-server with the client
+///   nonce and decrypts server-to-client with the server nonce.
+fn client_crypt(setup: &tcp::CryptSetup) -> Option<CryptState> {
+    let key: [u8; KEY_SIZE] = setup.key.as_deref()?.try_into().ok()?;
+    let client_nonce: [u8; BLOCK_SIZE] = setup.client_nonce.as_deref()?.try_into().ok()?;
+    let server_nonce: [u8; BLOCK_SIZE] = setup.server_nonce.as_deref()?.try_into().ok()?;
+    Some(CryptState::new(&key, &client_nonce, &server_nonce))
 }
