@@ -14,7 +14,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Instant;
 
 use voxloom_audio::{
@@ -216,6 +216,10 @@ impl Registry {
 /// Shared server state handed to every connection task and the voice plane.
 pub struct SharedState {
     registry: Mutex<Registry>,
+    /// Serializes complete view refreshes so an older scenario snapshot cannot
+    /// commit after a newer one and leave a connection permanently stale.
+    /// This guard is never held across an await.
+    view_refresh: Mutex<()>,
     /// Monotonic session-id source. Starts at 1; 0 is reserved (no user is
     /// session 0, matching Murmur which dequeues ids starting at 1).
     next_session: AtomicU32,
@@ -247,6 +251,7 @@ impl SharedState {
                 routes: Arc::new(compile_authorized(&[], &[], 0)),
                 enabled_routes: BTreeSet::new(),
             }),
+            view_refresh: Mutex::new(()),
             next_session: AtomicU32::new(1),
             config,
             channels,
@@ -404,7 +409,12 @@ impl SharedState {
     }
 
     /// Rerender every live connection from one shared scenario snapshot.
+    ///
+    /// Refreshes are serialized before taking the snapshot. A caller that was
+    /// waiting behind an older refresh therefore observes the latest registry
+    /// state instead of committing its own stale copy afterward.
     pub fn refresh_views(&self) {
+        let _refresh = self.lock_view_refresh();
         let users = self.users();
         let scenario = self.scenario_users();
         for user in users {
@@ -414,8 +424,18 @@ impl SharedState {
 
     /// Retry one connection after its writer drained a queued message.
     pub fn refresh_view(&self, user: &Arc<UserEntry>) {
+        let _refresh = self.lock_view_refresh();
         let scenario = self.scenario_users();
         self.refresh_view_from(user, &scenario);
+    }
+
+    fn lock_view_refresh(&self) -> MutexGuard<'_, ()> {
+        match self.view_refresh.lock() {
+            Ok(guard) => guard,
+            // The guard protects ordering, not mutable data. Continuing with
+            // the recovered guard preserves serialization after a panic.
+            Err(poisoned) => poisoned.into_inner(),
+        }
     }
 
     fn refresh_view_from(&self, user: &Arc<UserEntry>, scenario: &[ScenarioUser]) {
