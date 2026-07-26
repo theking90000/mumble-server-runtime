@@ -46,9 +46,14 @@ members = [
     # Le snapshot métier reste opaque ; seules les sorties sémantiques de vue et
     # de routage traversent cette frontière.
     "voxloom-flavor",
-    # Phase 7 T2/T3 : rendu complet d'un snapshot métier opaque puis validation
-    # des vues, routes et interactions. Pur et sans effet avant la tranche T4.
+    # Phase 7 T2/T3/T4/T5 : rendu complet d'un snapshot métier opaque, validation
+    # des vues, routes et interactions, publication atomique dans l'ordre de
+    # sécurité, et conversion des actions résolues en événements vocaux.
     "voxloom-control",
+    # Phase 7 T6 : flavor de référence Aurora/Borealis. Possède ses realms et
+    # ses mutations, et ne parle à Voxloom que par le contrat public. Aucun
+    # crate central ne dépend de lui.
+    "voxloom-flavor-reference",
     # Phase 3 : serveur minimal — accepte la TLS, déroule le handshake sans
     # Murmur, associe l'UDP par preuve cryptographique, répond aux pings et
     # réfléchit l'audio de loopback (target 31). Dépend des crates purs P1.

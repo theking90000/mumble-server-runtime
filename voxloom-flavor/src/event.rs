@@ -19,9 +19,16 @@ use crate::{ChannelKey, ConnectionId};
 #[non_exhaustive]
 pub enum VoiceEvent {
     /// A voice connection became live and holds a committed view.
+    ///
+    /// The name and certificate hash are the authenticated presentation
+    /// identity the runtime obtained during the handshake (spec 10). They are
+    /// the flavor's only input for deciding who this connection is; the runtime
+    /// itself derives no business meaning from them.
     Connected {
         connection: ConnectionId,
         generation: u64,
+        name: String,
+        certificate_hash: Option<String>,
     },
     /// A connection was refused before it ever held a view.
     AuthenticationFailed {

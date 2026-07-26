@@ -43,12 +43,20 @@ pub enum VoiceEventError {
 }
 
 impl PublicationCoordinator {
-    /// The event announcing that `connection` holds a committed view.
+    /// The event announcing that `connection` holds a committed view, with the
+    /// presentation identity its handshake authenticated.
     #[must_use]
-    pub const fn connected(&self, connection: ConnectionId) -> VoiceEvent {
+    pub fn connected(
+        &self,
+        connection: ConnectionId,
+        name: impl Into<String>,
+        certificate_hash: Option<String>,
+    ) -> VoiceEvent {
         VoiceEvent::Connected {
             connection,
             generation: self.generation(),
+            name: name.into(),
+            certificate_hash,
         }
     }
 
@@ -392,10 +400,12 @@ mod tests {
         let (coordinator, _flavor) = committed();
 
         assert_eq!(
-            coordinator.connected(CONNECTION),
+            coordinator.connected(CONNECTION, "alice", Some("cert".to_owned())),
             VoiceEvent::Connected {
                 connection: CONNECTION,
                 generation: 1,
+                name: "alice".to_owned(),
+                certificate_hash: Some("cert".to_owned()),
             }
         );
         assert_eq!(

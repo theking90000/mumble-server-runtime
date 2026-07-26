@@ -1161,6 +1161,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "voxloom-flavor-reference"
+version = "0.1.0"
+dependencies = [
+ "voxloom-control",
+ "voxloom-flavor",
+]
+
+[[package]]
 name = "voxloom-mitm-proxy"
 version = "0.1.0"
 dependencies = [
