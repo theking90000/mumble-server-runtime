@@ -5,6 +5,7 @@
 //! These are the machine-verifiable P3 done criteria. The remaining criterion —
 //! a real official client connecting and hearing loopback — is a human checkpoint
 //! (docs/checklists/p3-minimal-server.md).
+// Integration setup uses explicit expectations so failures identify the stage.
 #![allow(clippy::expect_used)]
 
 use std::net::SocketAddr;
@@ -69,14 +70,16 @@ async fn two_clients_connected_simultaneously_have_independent_views() {
         .expect("bob connect");
     bob.drive_handshake().await.expect("bob handshake");
 
-    // Alice picks up the presence broadcast announcing Bob.
+    let bob_session = bob.self_session().expect("bob session");
+    // Alice waits for the exact presence state announced by Bob.
     alice
-        .pump(Duration::from_secs(2))
+        .wait_until(Duration::from_secs(2), |model| {
+            model.users.contains_key(&bob_session)
+        })
         .await
-        .expect("alice pump");
+        .expect("alice sees bob");
 
     let alice_session = alice.self_session().expect("alice session");
-    let bob_session = bob.self_session().expect("bob session");
     assert_ne!(
         alice_session, bob_session,
         "sessions must be unique across connections (§9.1)"

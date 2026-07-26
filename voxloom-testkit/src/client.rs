@@ -91,35 +91,42 @@ impl SimulatedMumbleClient {
     /// validated by the model, which panics on a §20 violation. Errors if the
     /// connection closes or times out before sync.
     pub async fn drive_handshake(&mut self) -> Result<()> {
-        while !self.model.synced {
-            match tokio::time::timeout(HANDSHAKE_TIMEOUT, self.reader.next()).await {
-                Ok(Ok(Some(message))) => {
-                    self.observe(&message);
-                    self.model.apply(&message);
-                }
-                Ok(Ok(None)) => anyhow::bail!("server closed the connection before ServerSync"),
-                Ok(Err(error)) => return Err(error),
-                Err(_) => anyhow::bail!("timed out waiting for ServerSync"),
-            }
-        }
-        Ok(())
+        self.wait_until(HANDSHAKE_TIMEOUT, |model| model.synced)
+            .await
+            .context("waiting for ServerSync")
     }
 
-    /// Drain and apply any messages that arrive within `window` (e.g. presence
-    /// updates broadcast after the handshake). Returns when the window elapses
-    /// with no further message.
-    pub async fn pump(&mut self, window: Duration) -> Result<()> {
-        loop {
-            match tokio::time::timeout(window, self.reader.next()).await {
-                Ok(Ok(Some(message))) => {
-                    self.observe(&message);
-                    self.model.apply(&message);
-                }
-                Ok(Ok(None)) => return Ok(()), // connection closed
-                Ok(Err(error)) => return Err(error),
-                Err(_) => return Ok(()), // idle: nothing more within the window
-            }
+    /// Apply control messages until `predicate` accepts the strict local model.
+    ///
+    /// The duration is only a failure deadline. Progress is synchronized by the
+    /// requested model state, never by assuming that an idle socket is settled.
+    pub async fn wait_until<Predicate>(
+        &mut self,
+        deadline: Duration,
+        predicate: Predicate,
+    ) -> Result<()>
+    where
+        Predicate: Fn(&ClientModel) -> bool,
+    {
+        if predicate(&self.model) {
+            return Ok(());
         }
+        tokio::time::timeout(deadline, async {
+            loop {
+                let message = self
+                    .reader
+                    .next()
+                    .await?
+                    .context("server closed the control connection before the expected view")?;
+                self.observe(&message);
+                self.model.apply(&message);
+                if predicate(&self.model) {
+                    return Ok(());
+                }
+            }
+        })
+        .await
+        .context("timed out waiting for the expected client model")?
     }
 
     /// The current model view.
@@ -212,7 +219,11 @@ impl SimulatedMumbleClient {
             .decrypt(buffer.get(..len).unwrap_or(&[]))
             .context("a voice datagram did not authenticate")?;
         match decode_udp(&plaintext).context("decoding voice")? {
-            UdpMessage::Audio(audio) => Ok(Some(audio)),
+            UdpMessage::Audio(audio) => {
+                // REF: references/mumble/src/MumbleUDP.proto:Audio.sender_session
+                self.model.apply_audio(&audio);
+                Ok(Some(audio))
+            }
             UdpMessage::Ping(_) => Ok(None),
         }
     }

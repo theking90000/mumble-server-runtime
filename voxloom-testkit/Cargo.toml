@@ -24,6 +24,9 @@ anyhow = "1"
 # The tests point the simulated client (the judge) at a running server to prove
 # the P3 handshake replays without any §20 violation.
 voxloom-server = { path = "../voxloom-server" }
+voxloom-render = { path = "../voxloom-render" }
+voxloom-reconcile = { path = "../voxloom-reconcile" }
+voxloom-session = { path = "../voxloom-session" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "time", "sync"] }
 
 # This crate is a verifier harness whose contract is to PANIC on protocol
