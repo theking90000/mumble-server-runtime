@@ -4,9 +4,10 @@
 > reprend doit savoir. Autorité : la spec et la roadmap (`docs/`) ; ce fichier ne
 > fait que pointer l'état courant. Mettre à jour à chaque fin de tâche.
 
-**Phase courante : P4 (routage audio deux clients) — T1 à T5 faits et verts en
-CI ; restent le bench criterion (T6) et le point de contrôle humain. P3 est
-close : checklist humaine signée le 2026-07-26.** Les trois critères de P3 sont
+**Phase courante : P4 (routage audio deux clients) — T1 à T6 faits et verts en
+CI ; il ne reste que le point de contrôle humain
+(`docs/checklists/p4-audio-routing.md`, non signée). P3 est close : checklist
+humaine signée le 2026-07-26.** Les trois critères de P3 sont
 tenus : client simulé rejouant le handshake sans violation §20 (CI), deux clients
 simulés simultanés à vues indépendantes (CI), et vrai client officiel connecté
 avec loopback serveur audible en UDP **et** en repli tunnel TCP, deux clients
@@ -294,7 +295,7 @@ Réserve confirmée et attendue : deux clients réels ne s'entendent **pas** ent
 eux (cible 0 droppée faute de graphe de routage), seul le loopback cible 31 est
 réfléchi. C'est P4.
 
-### Phase 4 — routage audio (T1–T5 faits, T6 + checkpoint humain restants)
+### Phase 4 — routage audio (T1–T6 faits, checkpoint humain en attente)
 
 Le hot path dans sa forme conceptuelle définitive, avec un contenu trivial. Le
 snapshot dit « tout le monde entend tout le monde », mais il est publié par le
@@ -307,6 +308,7 @@ mécanisme final : remplacer le corps de `compile` en P7/P8 ne touche rien d'aut
 | T3 | Parité inter-transport : les deux ingress convergent sur la même fonction, chaque destinataire est joint sur le transport qu'il a lui-même utilisé en dernier | `voxloom-server/src/{connection,routing}.rs` |
 | T4 | Limites §15.7 : bande de taille 2..=1024 o (référence) appliquée aux deux ingress, token bucket de paquets voix par connexion (horloge injectée) | `voxloom-server/src/limits.rs` |
 | T5 | **Vérificateur (R2)** : plan voix du client simulé + test de charge N clients, zéro perte interne, latence bornée | `voxloom-testkit/src/client.rs`, `tests/voice_load.rs` |
+| T6 | Bench criterion coût par paquet/destinataire + gate de non-régression | `voxloom-audio/benches/routing.rs`, `ci/bench-audio.sh` |
 
 Règle de transport, tracée en source (R1) : `aiUdpFlag` vaut 1 à la construction,
 passe à 0 quand le client tunnelise de l'audio, revient à 1 quand un datagramme
@@ -338,15 +340,51 @@ clippy --workspace --all-targets --all-features`. Done-commands :
 - `cargo test -p voxloom-testkit` — 13 tests, dont le test de charge (4 clients,
   25 rondes, 300 livraisons, zéro perte).
 - `ci/fuzz-smoke.sh 20` — 7 cibles, `audio_route` incluse (3,87 M exécutions).
+- `ci/bench-audio.sh` — plafond structurel tenu, aucune régression.
+
+**Mesures T6** (2026-07-26, Apple Silicon, profil bench, `--measurement-time 3`) :
+
+| Destinataires | lookup | relais complet | compile (chemin froid) |
+|---|---|---|---|
+| 1 | 13,0 ns | 25,1 ns | 114 ns |
+| 8 | 71,8 ns | 179 ns | 383 ns |
+| 32 | 276 ns | 688 ns | 1,59 µs |
+| 128 | 1,09 µs | 2,74 µs | 13,5 µs |
+
+Coût **linéaire** en destinataires : ~8,5 ns par destinataire pour la
+consultation, ~21 ns pour le relais complet (l'écart est la construction de
+l'enveloppe). À 100 paquets/s vers 128 auditeurs, un locuteur coûte ~0,27 ms de
+CPU par seconde. Le `compile` est quadratique par construction (« toute paire est
+une route ») mais reste sous 14 µs à 128, et ne tourne que sur changement
+d'appartenance.
+
+- **Le chemin de consultation ne peut pas allouer, par typage et non par
+  discipline** : `receivers` rend une *slice empruntée* au snapshot et
+  `AudioDecision` est un `Copy` sans champ tas. Il n'y a rien à allouer, donc
+  aucune sonde runtime n'est nécessaire ; le compilateur tient la propriété.
+  L'allocation par destinataire du relais est, elle, inhérente à « chiffrer
+  séparément pour chaque destinataire » (§15.2), et c'est ce que le bench
+  sépare pour la garder visible.
+- **Gate de non-régression, deux garde-fous de natures différentes** : un
+  plafond absolu par destinataire (500 ns contre ~21 ns mesurés, soit plus d'un
+  ordre de grandeur de marge) qui est portable d'une machine à l'autre et
+  n'attrape que les régressions structurelles ; et la comparaison criterion à
+  une baseline locale, plus fine mais valable seulement sur la même machine
+  (`target/criterion` n'est pas versionné). La comparaison a été calibrée à un
+  seuil de bruit de 20 % après l'avoir observée instable à 2 % : les cas les
+  plus rapides se mesurent en dizaines de nanosecondes, où l'écart run-à-run
+  dépasse couramment 2 %. Un gate capricieux ne vaut rien.
 
 Commits P4 (sans `Co-Authored-By`, **séparés R2**) : `3fbe7b2` `voxloom-audio`,
 `68596d2` `voxloom-server` (implémenteur), `650e0f5` `voxloom-testkit`
 (vérificateur).
 
-**Reste pour clore P4** : (1) le bench criterion coût par paquet et par
-destinataire, transformé en test de non-régression (T6) ; (2) le point de
-contrôle humain — deux vrais clients qui s'entendent, et le repli TCP vérifié en
-coupant l'UDP. La checklist reste à écrire.
+**Reste pour clore P4** : signer `docs/checklists/p4-audio-routing.md` (deux vrais
+clients qui s'entendent dans les deux sens, pas d'écho, loopback P3 intact, repli
+TCP d'un seul côté **et** des deux côtés, déconnexion propre). Un agent ne peut
+pas le faire (GUI Qt + oreille). Le cas le plus discriminant de la checklist est
+le repli TCP **d'un seul côté** : c'est celui qui échoue si le serveur choisit le
+transport de l'émetteur au lieu de celui de chaque destinataire.
 
 ---
 
@@ -414,6 +452,7 @@ RUSTFLAGS="-D warnings" cargo fmt --all --check
 RUSTFLAGS="-D warnings" cargo clippy --workspace --all-targets --all-features
 cargo test --workspace
 ci/fuzz-smoke.sh 30        # nightly + cargo-fuzz requis, sinon skip propre
+ci/bench-audio.sh          # coût par destinataire du routeur (P4) ; « save » (re)pose la baseline
 ```
 
 ### Pièges connus (traps)
@@ -467,8 +506,8 @@ Note : `voxloom-render`/`voxloom-reconcile` sont sur `main` (P5 mergé le
 
 ### Après P4
 
-Le cœur de P4 est fait et vert (T1–T5, voir « Fait »). Restent le bench criterion
-(T6) et le point de contrôle humain. Ensuite **P6 (vues par connexion en live)**,
+Le cœur de P4 est fait et vert (T1–T6, voir « Fait »). Reste le point de contrôle
+humain. Ensuite **P6 (vues par connexion en live)**,
 qui branche le moteur pur de P5 sur les connexions réelles. P5 peut aussi être
 clôturé en branchant son proptest sur le `SimulatedMumbleClient`, qui sait
 désormais aussi juger le plan voix (cf. « Reste à faire » §3). Voir la roadmap.

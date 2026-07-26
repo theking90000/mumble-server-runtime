@@ -15,5 +15,17 @@ path = "src/voxloom_audio.rs"
 [dependencies]
 voxloom-protocol = { path = "../voxloom-protocol" }
 
+# criterion only, and only for benches: testing.md requires the router's
+# per-packet, per-recipient cost to carry a recorded baseline, and the roadmap
+# makes that bench a non-regression gate for Phase 4.
+[dev-dependencies]
+criterion = { version = "0.5", default-features = false, features = [
+    "cargo_bench_support",
+] }
+
+[[bench]]
+name = "routing"
+harness = false
+
 [lints]
 workspace = true
