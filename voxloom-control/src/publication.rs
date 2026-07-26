@@ -14,10 +14,13 @@
 //! Stage 1 happens inside [`PublicationCoordinator::publish`] because revoking
 //! is unconditionally safe: a caller that abandons the pending publication
 //! leaves the connections at their previous committed views with less audio
-//! than they were entitled to, never more. Stages 2 and 3 are all-or-nothing
-//! for the whole generation: a delivery that cannot be admitted downstream
-//! means the [`PublicationCommit`] is dropped and nothing is committed, and the
-//! next publication is planned from the unchanged committed views.
+//! than they were entitled to, never more.
+//!
+//! Stage 2 is atomic per connection, not across them. One connection whose
+//! output queue refuses the transition keeps its token unspent and stays on its
+//! previous committed view, and every other connection still moves; a refusal
+//! must not hold the whole server at the pace of its slowest client. Stage 3
+//! then grants exactly the routes the committed views justify.
 //!
 //! REF: docs/voxloom-roadmap-agents-v0_1.md P7 T4
 //! REF: docs/voxloom-specification-technique-v0.1.md 12.6, 23.3
@@ -55,6 +58,8 @@ pub enum PublicationError {
     UnknownConnection { connection: ConnectionId },
     #[error("registered connection {connection:?} has no output in this generation")]
     MissingConnectionOutput { connection: ConnectionId },
+    #[error("connection {connection:?} has nothing to commit in this generation")]
+    NothingToCommit { connection: ConnectionId },
     #[error(
         "connection {connection:?} projects user {user:?} without a source connection; P7 \
          assigns no session to a synthetic user (spec 9.4)"
@@ -135,13 +140,19 @@ pub struct PendingPublication {
 }
 
 /// Proof that a specific generation was planned, and the state it commits to.
+///
+/// It holds one token per connection that has frames to receive. A connection
+/// whose delivery is refused downstream simply keeps its token unspent: it
+/// stays on its previous committed view and is planned again next time, which
+/// is the same congestion answer the view lifecycle already gives per
+/// connection.
 #[derive(Debug)]
 #[must_use = "dropping the commit abandons the generation; revoked audio stays revoked"]
 pub struct PublicationCommit {
     epoch: u64,
     generation: u64,
     flavor_revision: FlavorRevision,
-    tokens: Vec<(ConnectionId, CommitToken)>,
+    tokens: BTreeMap<ConnectionId, CommitToken>,
 }
 
 /// A committed generation (spec 23.3 `struct PublishedGeneration`).
@@ -345,7 +356,7 @@ impl PublicationCoordinator {
             .collect();
 
         let mut deliveries = BTreeMap::new();
-        let mut tokens = Vec::new();
+        let mut tokens = BTreeMap::new();
         let mut surviving: BTreeSet<AudioRoute> = BTreeSet::new();
 
         for (connection, output) in validated.outputs() {
@@ -397,7 +408,7 @@ impl PublicationCoordinator {
                 })
                 .collect();
             deliveries.insert(*connection, messages);
-            tokens.push((*connection, token));
+            tokens.insert(*connection, token);
         }
 
         self.republish_audio(&surviving);
@@ -414,12 +425,43 @@ impl PublicationCoordinator {
         })
     }
 
-    /// Commit a delivered generation and publish its grant stage.
+    /// Commit one connection whose frames have all been accepted downstream.
     ///
-    /// Call only once every frame of every delivery has been accepted
-    /// downstream. The coordinator refuses a commit planned before any later
-    /// registration, unregistration or publication.
-    pub fn commit(
+    /// Spending a token is what makes that connection's new routes eligible for
+    /// the grant stage; a connection left uncommitted keeps the view and the
+    /// routes it already had.
+    pub fn commit_connection(
+        &mut self,
+        commit: &mut PublicationCommit,
+        connection: ConnectionId,
+    ) -> Result<(), PublicationError> {
+        if commit.epoch != self.epoch {
+            return Err(PublicationError::StalePublication {
+                expected: commit.epoch,
+                found: self.epoch,
+            });
+        }
+        let token = commit
+            .tokens
+            .remove(&connection)
+            .ok_or(PublicationError::NothingToCommit { connection })?;
+        let entry = self
+            .connections
+            .get_mut(&connection)
+            .ok_or(PublicationError::UnknownConnection { connection })?;
+        entry
+            .view
+            .commit(token)
+            .map_err(|source| PublicationError::RejectedView { connection, source })?;
+        Ok(())
+    }
+
+    /// Close a generation and publish its grant stage.
+    ///
+    /// Every token still unspent is abandoned here: those connections were not
+    /// told anything, so granting their routes would authorize a flow against a
+    /// view the client does not hold.
+    pub fn finish(
         &mut self,
         commit: PublicationCommit,
     ) -> Result<PublishedGeneration, PublicationError> {
@@ -428,17 +470,6 @@ impl PublicationCoordinator {
                 expected: commit.epoch,
                 found: self.epoch,
             });
-        }
-
-        for (connection, token) in commit.tokens {
-            let entry = self
-                .connections
-                .get_mut(&connection)
-                .ok_or(PublicationError::UnknownConnection { connection })?;
-            entry
-                .view
-                .commit(token)
-                .map_err(|source| PublicationError::RejectedView { connection, source })?;
         }
 
         self.generation = commit.generation;
@@ -455,6 +486,21 @@ impl PublicationCoordinator {
                 .collect(),
             audio: Arc::clone(&self.audio),
         })
+    }
+
+    /// Commit every connection of a generation, then close it.
+    ///
+    /// This is the whole-generation form: it fails if any connection cannot
+    /// commit, and is meant for callers that delivered everything atomically.
+    pub fn commit(
+        &mut self,
+        mut commit: PublicationCommit,
+    ) -> Result<PublishedGeneration, PublicationError> {
+        let connections: Vec<ConnectionId> = commit.tokens.keys().copied().collect();
+        for connection in connections {
+            self.commit_connection(&mut commit, connection)?;
+        }
+        self.finish(commit)
     }
 
     /// Every route currently justified by a committed view.
@@ -982,6 +1028,35 @@ mod publication_order {
             Ok(_pending) => panic!("a partial generation must not publish"),
         }
         assert_eq!(coordinator.generation(), 0);
+    }
+
+    #[test]
+    fn publication_order_grants_only_what_the_committed_connections_justify() {
+        let mut coordinator = coordinator();
+        publish_and_commit(&mut coordinator, snapshot(1, false));
+
+        let (_deliveries, mut commit) = plan(&mut coordinator, snapshot(2, true)).split();
+        // The second connection's queue refuses: its token stays unspent.
+        match coordinator.commit_connection(&mut commit, FIRST) {
+            Ok(()) => {}
+            Err(error) => panic!("commit failed: {error}"),
+        }
+        match coordinator.finish(commit) {
+            Ok(published) => assert_eq!(published.view_revisions().get(&SECOND).copied(), Some(1)),
+            Err(error) => panic!("finish failed: {error}"),
+        }
+
+        // The connection that was told nothing hears nothing new, while the one
+        // that committed hears what its own view now shows.
+        assert!(hears(&coordinator, SECOND_SESSION, FIRST_SESSION));
+        assert!(!hears(&coordinator, FIRST_SESSION, SECOND_SESSION));
+        assert!(view_projects(&coordinator, FIRST, SECOND_SESSION));
+        assert!(!view_projects(&coordinator, SECOND, FIRST_SESSION));
+
+        // The next generation replans the connection that stayed behind.
+        publish_and_commit(&mut coordinator, snapshot(3, true));
+        assert!(hears(&coordinator, FIRST_SESSION, SECOND_SESSION));
+        assert!(view_projects(&coordinator, SECOND, FIRST_SESSION));
     }
 
     #[test]
