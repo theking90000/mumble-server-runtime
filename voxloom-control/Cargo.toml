@@ -1,0 +1,19 @@
+[package]
+name = "voxloom-control"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Pure control-plane coordination for Voxloom flavor snapshot renders."
+
+[lib]
+name = "voxloom_control"
+path = "src/voxloom_control.rs"
+
+[dependencies]
+voxloom-flavor = { path = "../voxloom-flavor" }
+
+[lints]
+workspace = true

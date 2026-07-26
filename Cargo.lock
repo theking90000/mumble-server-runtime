@@ -1124,6 +1124,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "voxloom-control"
+version = "0.1.0"
+dependencies = [
+ "voxloom-flavor",
+]
+
+[[package]]
 name = "voxloom-corpus-decode"
 version = "0.1.0"
 dependencies = [

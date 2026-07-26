@@ -1957,7 +1957,20 @@ attribués ensuite par Voxloom et ne traversent jamais la frontière du flavor.
 
 Une publication P7 fournit uniquement un `Arc<F::Snapshot>` ; le runtime rend
 toutes les connexions. Une éventuelle sélection ciblée reste une optimisation
-P10 avec fallback `All`. Le runtime émet vers le flavor :
+P10 avec fallback `All`.
+
+```rust
+struct RenderedSnapshot<S> {
+    snapshot: Arc<S>,
+    flavor_revision: FlavorRevision,
+    outputs: BTreeMap<ConnectionId, RenderOutput>,
+}
+```
+
+Cette valeur reste sans effet tant que sa validation et sa publication ne sont
+pas terminées.
+
+Le runtime émet vers le flavor :
 
 ```rust
 enum VoiceEvent {
