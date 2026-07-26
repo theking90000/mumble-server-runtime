@@ -1210,6 +1210,14 @@ dependencies = [
  "voxloom-audio",
  "voxloom-crypto",
  "voxloom-protocol",
+]
+
+[[package]]
+name = "voxloom-session"
+version = "0.1.0"
+dependencies = [
+ "thiserror 2.0.19",
+ "voxloom-protocol",
  "voxloom-reconcile",
  "voxloom-render",
 ]

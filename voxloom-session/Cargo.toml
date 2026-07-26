@@ -1,0 +1,25 @@
+[package]
+name = "voxloom-session"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Per-connection view lifecycle (Phase 6) : committed view, stable key-to-id mapping, transition planning and the atomic commit rule of spec 12.7. Pure : no sockets, no runtime."
+
+[lib]
+name = "voxloom_session"
+path = "src/voxloom_session.rs"
+
+[dependencies]
+# This crate is the only place that knows both vocabularies, view and wire: the
+# view engine describes what a connection should see, `voxloom-protocol` says how
+# a frame is spelled. Nothing above it needs to know either.
+voxloom-protocol = { path = "../voxloom-protocol" }
+voxloom-render = { path = "../voxloom-render" }
+voxloom-reconcile = { path = "../voxloom-reconcile" }
+thiserror = "2"
+
+[lints]
+workspace = true

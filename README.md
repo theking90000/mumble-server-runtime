@@ -28,6 +28,7 @@ voxloom-crypto/              OCB2-AES128, CryptState                 (pur)
 voxloom-render/              vue normalisée, normalize, validate     (pur)
 voxloom-reconcile/           diff, planificateur, ViewIdMapping      (pur)
 voxloom-audio/               routage audio : compile, may_receive    (pur)
+voxloom-session/             vue engagée d'une connexion, plan → wire (pur)
 voxloom-server/              serveur minimal + routage voix
 voxloom-testkit/             client simulé et juge des invariants (R2)
 ```

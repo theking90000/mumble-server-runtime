@@ -62,6 +62,7 @@
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
+use thiserror::Error;
 use tokio::sync::mpsc;
 use voxloom_protocol::ControlMessage;
 
@@ -108,6 +109,26 @@ pub enum ControlAdmission {
     /// connection has been marked fatal ([`OutboundQueue::must_close`]) because
     /// dropping the message would leave the client's view silently diverged.
     Refused,
+}
+
+/// Why a whole transition could not be admitted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+pub enum TransitionRefused {
+    /// Not enough free slots right now. The committed view must stay where it
+    /// is and the transition be retried later against a fresher desired state.
+    /// This is ordinary backpressure, not a fault.
+    #[error("output queue has {free} free slots, {needed} were needed")]
+    Congested { needed: usize, free: usize },
+
+    /// Larger than the queue can *ever* hold. Retrying would never succeed, so
+    /// this is a livelock rather than backpressure, and the connection is marked
+    /// for teardown: reconnecting rebuilds the view from scratch (ADR-009).
+    #[error("transition of {needed} messages exceeds the queue capacity of {capacity}")]
+    TooLarge { needed: usize, capacity: usize },
+
+    /// The receiving task is already gone.
+    #[error("the connection's writer has ended")]
+    Closed,
 }
 
 /// The sending half of one connection's output queue, plus its admission state.
@@ -187,6 +208,64 @@ impl OutboundQueue {
             // Either way the packet is dropped, which is what congestion means.
             Err(_) => self.record_voice_drop(),
         }
+    }
+
+    /// Admit a whole view transition, all of it or none of it.
+    ///
+    /// This is the commit point of spec 12.7: returning `Ok` means every message
+    /// is queued and in order, so the connection may advance its committed view.
+    /// Returning an error means **nothing** was queued and the committed view
+    /// must stay exactly where it is.
+    ///
+    /// Atomicity comes from reserving every slot before sending any of them: a
+    /// permit holds capacity, and dropping the collected permits releases them
+    /// without having written anything. Failing halfway is therefore impossible
+    /// rather than merely unlikely.
+    ///
+    /// Only the connection's own task may call this. Unrelated messages (a voice
+    /// packet, a ping reply) may still interleave between two of the transition's
+    /// frames, which is harmless — the ordering invariants constrain the view
+    /// operations *relative to each other*. Two concurrent transitions would not
+    /// be harmless, and single ownership is what rules them out.
+    pub fn send_transition(&self, messages: Vec<Outbound>) -> Result<(), TransitionRefused> {
+        let needed = messages.len();
+        let capacity = self.sender.max_capacity();
+        if needed > capacity {
+            // Not congestion: no amount of draining makes this fit. Treated like
+            // a refused control message so the connection is rebuilt rather than
+            // left retrying forever.
+            self.must_close.store(true, Ordering::Relaxed);
+            eprintln!(
+                "voxloom-server: session {}: transition of {needed} messages cannot fit a queue \
+                 of {capacity}; closing so the client can rebuild its view",
+                self.session
+            );
+            return Err(TransitionRefused::TooLarge { needed, capacity });
+        }
+
+        let mut permits = Vec::with_capacity(needed);
+        for _ in 0..needed {
+            match self.sender.try_reserve() {
+                Ok(permit) => permits.push(permit),
+                Err(mpsc::error::TrySendError::Full(())) => {
+                    // Every permit taken so far is released by this return, so
+                    // the queue is left exactly as it was found.
+                    return Err(TransitionRefused::Congested {
+                        needed,
+                        free: permits.len(),
+                    });
+                }
+                Err(mpsc::error::TrySendError::Closed(())) => {
+                    self.must_close.store(true, Ordering::Relaxed);
+                    return Err(TransitionRefused::Closed);
+                }
+            }
+        }
+
+        for (permit, message) in permits.into_iter().zip(messages) {
+            permit.send(message);
+        }
+        Ok(())
     }
 
     /// Whether a control message has been refused, meaning the owning task must
@@ -296,6 +375,82 @@ mod tests {
 
         assert_eq!(queue.push_control(message(3)), ControlAdmission::Refused);
         assert!(queue.must_close());
+    }
+
+    #[tokio::test]
+    async fn a_transition_that_does_not_fit_queues_nothing_at_all() {
+        let (queue, mut receiver) = OutboundQueue::new(1);
+
+        // Fill all but two slots with voice, then ask for a three-message
+        // transition. Partial admission would leave the client holding half a
+        // view change with no way to know.
+        for _ in 0..MAX_DEPTH_FOR_VOICE {
+            let _admitted = queue.push_voice(message(0));
+        }
+        while queue.depth() < CAPACITY - 2 {
+            assert_eq!(queue.push_control(message(1)), ControlAdmission::Accepted);
+        }
+        let depth_before = queue.depth();
+
+        let refused = queue
+            .send_transition(vec![message(7), message(7), message(7)])
+            .expect_err("three messages cannot fit in two slots");
+        assert_eq!(refused, TransitionRefused::Congested { needed: 3, free: 2 });
+        assert_eq!(
+            queue.depth(),
+            depth_before,
+            "a refused transition must leave the queue exactly as it was"
+        );
+        assert!(
+            !queue.must_close(),
+            "ordinary backpressure is not a reason to drop the connection"
+        );
+
+        // Draining makes exactly the missing slot available, and the same
+        // transition then goes through untouched.
+        receiver.recv().await.expect("queued message");
+        queue
+            .send_transition(vec![message(7); 3])
+            .expect("one drained slot is all that was missing");
+        assert_eq!(queue.depth(), depth_before + 2);
+    }
+
+    #[test]
+    fn a_transition_larger_than_the_queue_ends_the_connection() {
+        let (queue, _receiver) = OutboundQueue::new(1);
+
+        let refused = queue
+            .send_transition(vec![message(7); CAPACITY + 1])
+            .expect_err("it cannot fit, now or ever");
+        assert_eq!(
+            refused,
+            TransitionRefused::TooLarge {
+                needed: CAPACITY + 1,
+                capacity: CAPACITY,
+            }
+        );
+        assert!(
+            queue.must_close(),
+            "retrying something that can never fit is a livelock, not backpressure"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_admitted_transition_arrives_whole_and_in_order() {
+        let (queue, mut receiver) = OutboundQueue::new(1);
+        queue
+            .send_transition(vec![message(1), message(2), message(3)])
+            .expect("an empty queue has room");
+
+        let mut received = Vec::new();
+        for _ in 0..3 {
+            received.push(receiver.recv().await.expect("queued message"));
+        }
+        assert_eq!(
+            received,
+            vec![message(1), message(2), message(3)],
+            "plan order is what carries the ordering invariants"
+        );
     }
 
     #[tokio::test]

@@ -23,11 +23,6 @@ path = "src/main.rs"
 voxloom-protocol = { path = "../voxloom-protocol" }
 voxloom-crypto = { path = "../voxloom-crypto" }
 voxloom-audio = { path = "../voxloom-audio" }
-# Phase 6 : le plan de transition abstrait et les types de vue qu'il manipule.
-# L'émetteur (`emit.rs`) est le seul endroit qui connaisse les deux vocabulaires,
-# vue et wire ; voir la note de conception en tête de ce module.
-voxloom-render = { path = "../voxloom-render" }
-voxloom-reconcile = { path = "../voxloom-reconcile" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "sync", "time", "signal"] }
 tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12", "logging"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }

@@ -29,7 +29,6 @@
 
 pub mod config;
 pub mod connection;
-pub mod emit;
 pub mod handshake;
 pub mod limits;
 pub mod outbound;

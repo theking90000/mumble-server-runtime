@@ -4,7 +4,7 @@
 > reprend doit savoir. Autorité : la spec et la roadmap (`docs/`) ; ce fichier ne
 > fait que pointer l'état courant. Mettre à jour à chaque fin de tâche.
 
-**Phase courante : P6 (vues par connexion en live) — T2 fait, le reste à faire.
+**Phase courante : P6 (vues par connexion en live) — T1, T2 et T3 faits ; T4 à T8 à faire.
 P4 est close : T1 à T6 verts en CI et checklist humaine signée le 2026-07-26
 (`docs/checklists/p4-audio-routing.md`, serveur `dcf4916`) — deux vrais clients
 s'entendent dans les deux sens, en UDP, en repli tunnel d'un seul côté et des
@@ -416,14 +416,14 @@ concernés** plutôt qu'ici, pour qu'elles survivent à ce document :
 |---|---|---|
 | T1 | Émetteur `PlanOp` → `ControlMessage` (pur, sans réseau) | **fait** |
 | T2 | File de sortie bornée, admission différenciée voix/contrôle | **fait** |
-| T3 | `voxloom-session` (crate pur) : vue engagée, commit atomique, ADR-009 | à faire |
+| T3 | `voxloom-session` (crate pur) : vue engagée, commit atomique, ADR-009 | **fait** |
 | T4 | Résolution ID→clé des commandes entrantes (invariants 13/14/16/17) | à faire |
 | T5 | Scénario déterministe + domaine de routage par realm | à faire |
 | T6 | Couplage audio asymétrique (coupure eager, activation gated) | à faire |
 | T7 | Vérificateur R2 : file adverse, convergence, « aucune entité hors vue » | à faire |
 | T8 | Checklist humaine P6 | à faire |
 
-**T1 — `voxloom-server/src/emit.rs`.** `emit_transaction(transaction, committed,
+**T1 — `voxloom-session/src/emit.rs`** (écrit dans `voxloom-server`, déménagé en T3). `emit_transaction(transaction, committed,
 self_session)` rend des `EmittedStep` ordonnés : soit un `ControlMessage`, soit
 un basculement de route audio (qui ne porte aucune frame). Les deux sont dans la
 **même** séquence, parce que c'est l'ordre qui porte §12.6 — coupure avant la
@@ -460,8 +460,41 @@ variante casse la compilation au lieu de produire une transition muette.
   silencieusement `Kick` à qui a reçu `Listen`. Table explicite + test qui
   vérifie les 17 valeurs contre `ACL.h`.
 
-Done-command : `cargo test -p voxloom-server` — 31 tests (23 unitaires dont 10
-neufs sur l'émetteur, 8 d'intégration inchangés).
+**T3 — le crate `voxloom-session` (pur) et la réservation atomique.** La moitié
+pure vit dans `voxloom-session/src/view.rs`, la moitié impure dans
+`voxloom-server/src/outbound.rs` ; la frontière est exactement l'admission, qui
+est une **entrée** du crate pur et non un appel sortant.
+
+- `ConnectionView` porte la vue engagée, les routes engagées, le `ViewIdMapping`
+  et la révision. `prepare()` ne modifie **rien** : il normalise, valide (§12.2),
+  planifie, traduit, et rend un `PendingTransition`. `split()` en sort les étapes
+  et un `CommitToken` ; `commit(token)` est le seul chemin qui fait avancer la
+  vue. **Lâcher le token abandonne la transition** — c'est l'issue correcte d'une
+  admission refusée, pas un chemin d'erreur rajouté après coup.
+- **Le saut des états intermédiaires est testé, pas seulement affirmé.** Deux
+  tests le verrouillent : une transition refusée puis un état désiré revenu à
+  son point de départ ne coûtent **rien** (`prepare` rend `None`), et une
+  transition refusée suivie d'un désiré plus riche produit **une seule**
+  transition vers le plus récent, pas un rejeu.
+- **Un token dépassé est refusé** (`StaleCommit`) : impossible avec un
+  propriétaire unique, donc refusé plutôt que cru — l'honorer ferait reculer la
+  vue en silence, la pire classe de bug de ce design.
+- **Les IDs des canaux disparus sont libérés au commit, pas au plan** : tant que
+  la transition n'est pas livrée, le client les détient encore, et une clé
+  résolue entre-temps doit continuer à rendre l'ID qu'il connaît. Un ID retiré ne
+  revient jamais (invariant 12).
+- **Une vue désirée invalide est refusée sans tuer la connexion** : la vue
+  engagée est encore valable, et reconnecter reproduirait le même rendu cassé.
+  ADR-009 (reconnexion forcée) est en aval, là où une transition peut se révéler
+  **indélivrable** : `OutboundQueue::send_transition` réserve tous les créneaux
+  avant d'en écrire un seul (`try_reserve`), donc échouer à mi-chemin est
+  impossible par construction et non seulement improbable ; `Congested` = on
+  réessaiera plus tard, `TooLarge` = ça ne rentrera **jamais**, donc reconnexion
+  plutôt que livelock.
+
+Done-commands : `cargo test -p voxloom-session` — 19 tests (10 émetteur, 9 cycle
+de vie de la vue) ; `cargo test -p voxloom-server` — 24 tests (16 unitaires dont
+3 neufs sur la réservation atomique, 8 d'intégration inchangés).
 
 **T2 — `voxloom-server/src/outbound.rs`.** La file était un
 `mpsc::UnboundedSender` : un client lent faisait croître la mémoire du serveur
@@ -604,6 +637,8 @@ voxloom-crypto/           ocb2 (OCB2-AES128, CryptState)          (pur)
 voxloom-render/           P5 : vue normalisée, normalize, validate (§20)  (pur)
 voxloom-reconcile/        P5 : diff, planificateur (§12.5/12.6), ViewIdMapping (pur)
 voxloom-audio/            P4 : routage pur (compile, may_receive, enveloppe)  (pur)
+voxloom-session/          P6 : vue engagée d'UNE connexion, clé→ID, plan→wire,
+                          commit atomique (§12.7)                        (pur)
 voxloom-server/           P3+P4 : serveur minimal + routage voix, limites §15.7
 voxloom-testkit/          P3+P4 : SimulatedMumbleClient (§20 + plan voix), juge (R2)
 fuzz/                     cibles cargo-fuzz (workspace détaché, nightly)
