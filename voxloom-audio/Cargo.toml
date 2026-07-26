@@ -1,0 +1,19 @@
+[package]
+name = "voxloom-audio"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Routage audio pur (Phase 4) : compilation du snapshot de routage (§15.3), politique directionnelle (§15.4) et réécriture d'enveloppe sortante (§15.2). Sans IO, sans état mutable, sans verrou (ADR-005)."
+
+[lib]
+name = "voxloom_audio"
+path = "src/voxloom_audio.rs"
+
+[dependencies]
+voxloom-protocol = { path = "../voxloom-protocol" }
+
+[lints]
+workspace = true
