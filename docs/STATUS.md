@@ -4,9 +4,11 @@
 > reprend doit savoir. Autorité : la spec et la roadmap (`docs/`) ; ce fichier ne
 > fait que pointer l'état courant. Mettre à jour à chaque fin de tâche.
 
-**Phase courante : P4 (routage audio deux clients) — T1 à T6 faits et verts en
-CI ; il ne reste que le point de contrôle humain
-(`docs/checklists/p4-audio-routing.md`, non signée). P3 est close : checklist
+**P4 (routage audio deux clients) est close : T1 à T6 verts en CI et checklist
+humaine signée le 2026-07-26 (`docs/checklists/p4-audio-routing.md`, serveur
+`dcf4916`) — deux vrais clients s'entendent dans les deux sens, en UDP, en repli
+tunnel d'un seul côté et des deux côtés. Prochaine phase : P6 (vues par
+connexion en live), pas encore entamée. P3 est close : checklist
 humaine signée le 2026-07-26.** Les trois critères de P3 sont
 tenus : client simulé rejouant le handshake sans violation §20 (CI), deux clients
 simulés simultanés à vues indépendantes (CI), et vrai client officiel connecté
@@ -295,7 +297,7 @@ Réserve confirmée et attendue : deux clients réels ne s'entendent **pas** ent
 eux (cible 0 droppée faute de graphe de routage), seul le loopback cible 31 est
 réfléchi. C'est P4.
 
-### Phase 4 — routage audio (T1–T6 faits, checkpoint humain en attente)
+### Phase 4 — routage audio (close, checkpoint humain signé le 2026-07-26)
 
 Le hot path dans sa forme conceptuelle définitive, avec un contenu trivial. Le
 snapshot dit « tout le monde entend tout le monde », mais il est publié par le
@@ -379,12 +381,31 @@ Commits P4 (sans `Co-Authored-By`, **séparés R2**) : `3fbe7b2` `voxloom-audio`
 `68596d2` `voxloom-server` (implémenteur), `650e0f5` `voxloom-testkit`
 (vérificateur).
 
-**Reste pour clore P4** : signer `docs/checklists/p4-audio-routing.md` (deux vrais
-clients qui s'entendent dans les deux sens, pas d'écho, loopback P3 intact, repli
-TCP d'un seul côté **et** des deux côtés, déconnexion propre). Un agent ne peut
-pas le faire (GUI Qt + oreille). Le cas le plus discriminant de la checklist est
-le repli TCP **d'un seul côté** : c'est celui qui échoue si le serveur choisit le
-transport de l'émetteur au lieu de celui de chaque destinataire.
+**Checkpoint humain : signé** (`docs/checklists/p4-audio-routing.md`, 2026-07-26,
+serveur `dcf4916`). Les dix cases sont validées sur deux vrais clients : voix
+comprise dans les deux sens sans écho, attribution correcte, loopback P3 intact,
+repli tunnel d'un seul côté **et** des deux côtés, déconnexion propre. Le cas le
+plus discriminant est le repli TCP **d'un seul côté** : c'est celui qui échoue si
+le serveur choisit le transport de l'émetteur au lieu de celui de chaque
+destinataire. Aucun correctif n'a été nécessaire.
+
+- **Non-bug tranché pendant le checkpoint : couper l'UDP sous un client déjà
+  connecté ne le fait jamais basculer en tunnel.** Le client officiel bascule sur
+  `(uiRemoteGood == 0 || uiGood == 0) && bUdp && elapsed > 20 s`
+  (`mumble/ServerHandler.cpp`, branche `TCPMessageType::Ping`), or `uiGood` est un
+  compteur cumulatif initialisé à 0 et seulement incrémenté au déchiffrement
+  réussi (`crypto/CryptState.h`, `crypto/CryptStateOCB2.cpp`), jamais remis à
+  zéro. Un client dont l'UDP a fonctionné une fois a donc les deux compteurs
+  définitivement non nuls : la condition ne peut plus jamais devenir vraie. Le
+  test du client n'est pas « l'UDP marche-t-il maintenant » mais « a-t-il déjà
+  marché sur cette connexion », ce qui suppose une topologie réseau statique — le
+  client persiste d'ailleurs le verdict par empreinte de clé publique serveur
+  (`Database::setUdp`, relu à la connexion suivante). Le serveur ne peut rien y
+  faire sans diverger : Murmur n'a **aucun** timeout de liveness UDP à l'émission,
+  le transport par destinataire suit uniquement le transport du dernier paquet
+  reçu de lui (`aiUdpFlag`, `murmur/Server.cpp`), ce que `voxloom-server`
+  reproduit. Le scénario réel (pare-feu bloquant **avant** la connexion) bascule
+  bien, au bout de ~20 s. Rien à corriger ; la checklist porte le détail.
 
 ---
 
@@ -506,11 +527,11 @@ Note : `voxloom-render`/`voxloom-reconcile` sont sur `main` (P5 mergé le
 
 ### Après P4
 
-Le cœur de P4 est fait et vert (T1–T6, voir « Fait »). Reste le point de contrôle
-humain. Ensuite **P6 (vues par connexion en live)**,
-qui branche le moteur pur de P5 sur les connexions réelles. P5 peut aussi être
-clôturé en branchant son proptest sur le `SimulatedMumbleClient`, qui sait
-désormais aussi juger le plan voix (cf. « Reste à faire » §3). Voir la roadmap.
+P4 est close (T1–T6 verts, checkpoint humain signé). La prochaine phase est
+**P6 (vues par connexion en live)**, qui branche le moteur pur de P5 sur les
+connexions réelles. P5 peut aussi être clôturé en branchant son proptest sur le
+`SimulatedMumbleClient`, qui sait désormais aussi juger le plan voix (cf.
+« Reste à faire » §3). Voir la roadmap.
 
 Pièges P4 à retenir : (1) les gates `audio/no-render-dep` et `audio/no-state-dep`
 grep les **chaînes** `voxloom[_-]render` / `voxloom[_-]state` sur tout
@@ -519,7 +540,12 @@ doc, même pour expliquer qu'on n'en dépend pas, casse la CI ; formuler en
 concepts (« l'état vivant », « l'état canonique ») ; (2) le chiffrement par
 destinataire impose une allocation par destinataire (sortie OCB2 + enveloppe),
 inhérente à « chiffrer séparément pour chaque destinataire » (§15.2) — c'est ce
-que T6 doit mesurer avant toute optimisation (§27.4).
+que T6 doit mesurer avant toute optimisation (§27.4) ; (3) **couper l'UDP sous un
+client déjà connecté ne le fait pas basculer en tunnel, et ce n'est pas un bug
+serveur** — la bascule teste des compteurs cumulatifs jamais remis à zéro, donc
+un client dont l'UDP a marché une fois ne rebascule jamais (démonstration en
+source dans « Phase 4 » ci-dessus). Ne pas partir en chasse d'un défaut de
+transport : tester le repli en bloquant l'UDP **avant** la connexion.
 
 Pièges P3 à retenir : (1) se connecter via `127.0.0.1`, pas `localhost` (IPv6) ;
 (2) TLS épinglé 1.2 (crash client macOS en 1.3) ; (3) la séparation R2 se fait en

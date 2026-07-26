@@ -3,8 +3,9 @@
 > Roadmap P4, critère de « done » : _deux clients officiels s'entendent (humain) ;
 > test de charge testkit — N clients simulés, débit soutenu, zéro perte interne,
 > latence routeur bornée (CI) ; fallback TCP vérifié en coupant l'UDP._ Les
-> critères machine sont verts ; celui-ci, non. Un agent ne peut pas juger si une
-> voix est intelligible : il faut un humain, deux vrais clients et une oreille.
+> critères machine étaient verts ; celui-ci l'est depuis le 2026-07-26 (voir
+> « Signature »). Un agent ne peut pas juger si une voix est intelligible : il
+> faut un humain, deux vrais clients et une oreille.
 
 Ce que la CI prouve déjà (donc **hors** de cette checklist) :
 
@@ -50,33 +51,43 @@ enregistrée, budget épuisé, paquet hors bande de taille).
 
 ## Checklist (cocher, dater, signer)
 
-- [ ] **Présence.** Les deux clients se connectent et se voient dans la liste
+- [x] **Présence.** Les deux clients se connectent et se voient dans la liste
       d'utilisateurs.
-- [ ] **Alice entend Bob.** Bob parle en mode normal : Alice l'entend, **voix
+- [x] **Alice entend Bob.** Bob parle en mode normal : Alice l'entend, **voix
       comprise, sans hachage ni blancs**. Juger sur une phrase entière.
-- [ ] **Bob entend Alice.** Le sens inverse, même critère. Les deux sens sont à
+- [x] **Bob entend Alice.** Le sens inverse, même critère. Les deux sens sont à
       tester séparément : un routage cassé dans un seul sens est un cas réel.
-- [ ] **Pas d'écho.** En parlant, on ne s'entend **pas** soi-même revenir (hors
+- [x] **Pas d'écho.** En parlant, on ne s'entend **pas** soi-même revenir (hors
       loopback explicite). Un écho signifierait que le locuteur est routé vers
       lui-même.
-- [ ] **Attribution.** Le client indique le bon locuteur (l'icône de parole
+- [x] **Attribution.** Le client indique le bon locuteur (l'icône de parole
       s'allume en face du bon nom, pas de l'autre).
-- [ ] **Loopback intact.** `Settings → Audio Output → Loopback → Server` : le
+- [x] **Loopback intact.** `Settings → Audio Output → Loopback → Server` : le
       loopback de P3 fonctionne toujours. C'est le test de non-régression de la
       phase précédente. Remettre sur `None` ensuite.
-- [ ] **Repli TCP d'un seul côté.** Cocher `Settings → Network → Force TCP mode`
+- [x] **Repli TCP d'un seul côté.** Cocher `Settings → Network → Force TCP mode`
       sur **Bob uniquement**, reconnecter. Alice reste en UDP. Les deux doivent
       continuer à s'entendre **dans les deux sens** : c'est le cas croisé, celui
       qui échoue si le serveur choisit le transport de l'émetteur au lieu de
       celui de chaque destinataire.
-- [ ] **Repli TCP des deux côtés.** Force TCP sur les deux clients : ils
+- [x] **Repli TCP des deux côtés.** Force TCP sur les deux clients : ils
       s'entendent toujours.
-- [ ] **Coupure d'UDP réelle** _(optionnel, plus fort que Force TCP)_ : bloquer
-      l'UDP vers le port du serveur au pare-feu pendant que les clients sont
-      connectés. Après la bascule annoncée par le client (« UDP packets cannot be
-      sent to or received from the server. Switching to TCP mode. »), la voix
-      doit continuer à passer par le tunnel, sans reconnexion.
-- [ ] **Déconnexion propre.** Fermer un client : l'autre le voit disparaître, et
+- [x] **Coupure d'UDP réelle** _(optionnel, plus fort que Force TCP)_ : bloquer
+      l'UDP vers le port du serveur au pare-feu, **puis** connecter le client.
+      Après ~20 s, il annonce la bascule (« UDP packets cannot be sent to or
+      received from the server. Switching to TCP mode. ») et la voix passe par
+      le tunnel, sans reconnexion.
+
+      Bloquer l'UDP _pendant_ qu'un client est déjà connecté ne le fera **pas**
+      basculer, et c'est le comportement du client officiel, pas un défaut du
+      serveur : la bascule exige `(uiRemoteGood == 0 || uiGood == 0)`
+      (`ServerHandler.cpp:653`), or ces compteurs sont cumulatifs et jamais
+      remis à zéro (`CryptState.h:16`, `CryptStateOCB2.cpp:209`). Un client dont
+      l'UDP a fonctionné une seule fois ne repassera donc jamais en TCP. Le
+      serveur ne peut rien y faire : côté Murmur le transport par destinataire
+      suit uniquement le transport du dernier paquet reçu de lui
+      (`Server.cpp:975` / `:1721` / `:1037`), sans aucun timeout de liveness UDP.
+- [x] **Déconnexion propre.** Fermer un client : l'autre le voit disparaître, et
       un nouveau client peut se connecter et être entendu.
 
 Réserves connues (attendues en P4) :
@@ -93,11 +104,22 @@ Réserves connues (attendues en P4) :
 
 ## Signature
 
-- Version du serveur (commit) : `__________`
-- Versions des clients Mumble / OS : `__________`
-- Date : `__________`
-- Validé par : `__________`
-- Notes / artefacts observés : `__________`
+**OK !!** Les dix cases sont validées sur deux vrais clients Mumble.
 
-Tant que cette checklist n'est pas signée, le point de contrôle humain de P4
-n'est **pas** « done » au sens de la roadmap, même si toute la CI est verte.
+- Version du serveur (commit) : `dcf4916`
+- Date : 2026-07-26
+- Validé par : theking90000
+- Notes / artefacts observés : voix comprise dans les deux sens, sans hachage ni
+  blancs, sans écho, attribution correcte ; loopback P3 intact ; repli tunnel
+  vérifié d'un seul côté (le cas croisé) puis des deux côtés ; déconnexion propre
+  et reprise par un nouveau client. Un point a été investigué pendant le déroulé
+  et **classé comportement normal du client officiel**, sans correctif serveur :
+  bloquer l'UDP alors qu'un client est déjà connecté ne le fait jamais basculer
+  en tunnel, parce que la bascule teste `uiGood`/`uiRemoteGood`, compteurs
+  cumulatifs jamais remis à zéro (détail et références dans la case « Coupure
+  d'UDP réelle » ci-dessus). Le scénario réel — pare-feu bloquant avant la
+  connexion — bascule bien, au bout de ~20 s.
+
+Le point de contrôle humain de P4 est **done**. Les critères machine (routeur
+pur, relais deux clients sur les deux transports, test de charge sans perte,
+coût par destinataire sous plafond) étaient déjà verts.
