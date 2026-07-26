@@ -18,6 +18,7 @@ use voxloom_flavor::{ConnectionId, FlavorError, FlavorRevision, RenderOutput, Vo
 
 mod publication;
 mod validation;
+mod voice_events;
 
 pub use publication::{
     PendingPublication, PublicationCommit, PublicationCoordinator, PublicationError,
@@ -27,6 +28,7 @@ pub use validation::{
     AudioRouteValidationError, DesiredViewValidationError, FlavorOutputValidationError,
     InteractionRegistryValidationError, ValidatedSnapshot, validate_rendered_snapshot,
 };
+pub use voice_events::VoiceEventError;
 
 /// Complete render result for one immutable flavor snapshot.
 ///
@@ -135,6 +137,8 @@ mod snapshot_publication {
                 InteractionRegistry::default(),
             ))
         }
+
+        fn observe(&self, _event: &voxloom_flavor::VoiceEvent) {}
     }
 
     fn snapshot(revision: u64) -> Arc<Snapshot> {

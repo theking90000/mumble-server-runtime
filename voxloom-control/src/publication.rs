@@ -247,6 +247,13 @@ impl PublicationCoordinator {
             .map(|entry| entry.view.committed())
     }
 
+    /// One connection's view lifecycle, for the inbound direction: resolving a
+    /// client-supplied id is only meaningful against the view that connection
+    /// actually holds.
+    pub(crate) fn connection_view(&self, connection: ConnectionId) -> Option<&ConnectionView> {
+        self.connections.get(&connection).map(|entry| &entry.view)
+    }
+
     /// The audio routes that go with `connection`'s committed view.
     #[must_use]
     pub fn committed_routes(&self, connection: ConnectionId) -> Option<&BTreeSet<AudioRoute>> {
@@ -746,6 +753,8 @@ mod publication_order {
                 InteractionRegistry::default(),
             ))
         }
+
+        fn observe(&self, _event: &voxloom_flavor::VoiceEvent) {}
     }
 
     const FIRST: ConnectionId = ConnectionId::new(1);

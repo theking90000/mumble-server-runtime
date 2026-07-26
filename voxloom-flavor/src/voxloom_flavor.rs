@@ -11,8 +11,10 @@
 
 use thiserror::Error;
 
+mod event;
 mod output;
 
+pub use event::VoiceEvent;
 pub use output::{
     DesiredAudioRoute, DesiredChannel, DesiredClientView, DesiredListenerRelation, DesiredUser,
     InteractionRegistry, RenderOutput,
@@ -112,6 +114,15 @@ pub trait VoiceFlavor: Send + Sync + 'static {
         snapshot: &Self::Snapshot,
         connection: ConnectionId,
     ) -> Result<RenderOutput, FlavorError>;
+
+    /// Observe one voice event.
+    ///
+    /// The flavor owns every business mutation and its own concurrency model,
+    /// which is why this takes `&self`: Voxloom holds no lock on the flavor and
+    /// applies nothing itself. Publishing a new snapshot afterwards is the
+    /// flavor's own decision and its own call; ignoring the event is a valid
+    /// business answer, so it is stated by an empty body rather than assumed.
+    fn observe(&self, event: &VoiceEvent);
 }
 
 #[cfg(test)]
@@ -157,6 +168,8 @@ mod tests {
                 InteractionRegistry::default(),
             ))
         }
+
+        fn observe(&self, _event: &VoiceEvent) {}
     }
 
     fn assert_contract<T: VoiceFlavor>() {}
