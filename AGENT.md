@@ -58,9 +58,9 @@ par-crate) et `ci/dep-direction.sh` (via `cargo metadata`) :
 
 | Zone                         | Interdit |
 |------------------------------|----------|
-| `voxloom-audio/src`          | `Mutex`, `RwLock`, `.await` (chemin par-paquet), `Box<dyn Fn>`, dépendre de `voxloom-render` / `voxloom-state` |
+| `voxloom-audio/src`          | `Mutex`, `RwLock`, `.await` (chemin par-paquet), `Box<dyn Fn>`, dépendre de `voxloom-render` / `voxloom-flavor` |
 | `voxloom-render/src`         | importer `voxloom-protocol` (le renderer ignore le wire format) |
-| `voxloom-state/src`          | types protocolaires Mumble / importer `voxloom-protocol` |
+| `voxloom-flavor/src`         | types protocolaires Mumble, importer `voxloom-protocol` ou définir un métier concret |
 | `voxloom-protocol`, `voxloom-crypto` | `tokio`, IO (`std::net`, `std::fs`) — crates purs |
 | tout le workspace            | `.unwrap()` hors tests, `static mut`, `unsafe` sans commentaire `// SAFETY:` |
 
@@ -79,7 +79,7 @@ Arêtes interdites dans le graphe cargo (`ci/dep-direction.sh`) :
 
 ```
 voxloom-audio    -/->  voxloom-render      voxloom-render   -/->  voxloom-protocol
-voxloom-audio    -/->  voxloom-state       voxloom-state    -/->  voxloom-protocol
+voxloom-audio    -/->  voxloom-flavor      voxloom-flavor   -/->  voxloom-protocol
 voxloom-protocol -/->  tokio               voxloom-crypto   -/->  tokio
 ```
 
@@ -87,24 +87,30 @@ voxloom-protocol -/->  tokio               voxloom-crypto   -/->  tokio
 
 `voxloom-protocol` (framing/protobuf/UDP) · `voxloom-crypto` (OCB2/nonces/rejeu) ·
 `voxloom-transport` (TLS/sockets) · `voxloom-session` · `voxloom-auth` ·
-`voxloom-state` (état canonique/révisions) · `voxloom-render` (VDOM/rendu) ·
+`voxloom-flavor` (contrat de snapshot/rendu métier opaque) · `voxloom-render` (VDOM/rendu) ·
 `voxloom-reconcile` (diff/plan) · `voxloom-audio` (routage) · `voxloom-control` ·
 `voxloom-observe` · `voxloom-testkit` (client simulé/proptest/fuzz).
+
+Le métier concret appartient aux flavors compilés avec l'application, jamais au
+runtime Voxloom. La décision `docs/decisions/0002-flavor-owns-business-state.md`
+fait autorité sur cette frontière.
 
 ## Ordre des phases (résumé)
 
 `P0 corpus/refs → P1 codec → P2 proxy oracle → P3 serveur minimal → P4 hot path`,
 avec `P5 moteur de vues pur` parallélisable dès P2. Détail et critères de « done »
 dans `docs/voxloom-roadmap-agents-v0_1.md`. **P0 à P4 sont closes** (checkpoints
-humains signés pour P0, P2, P3 et P4) ; le cœur pur de P5 est fait. **Prochaine
-phase : P6 (vues par connexion en live).** État détaillé et reprise :
+humains signés pour P0, P2, P3 et P4) ; le cœur pur de P5 est fait et P6 est
+close. **Phase courante : P7 (intégration de flavors et publication atomique).**
+État détaillé et reprise :
 **`docs/STATUS.md`**, qui fait foi sur l'avancement.
 
 ## Points de contrôle humains
 
 `P0` captures corpus + décision legacy UDP · `P2` audio à travers le proxy ·
 `P3` premier handshake client officiel · `P4` premier appel deux clients ·
-`P6` comportement client sur vues dynamiques · `P9` compatibilité multi-clients ·
+`P6` comportement client sur vues dynamiques · `P7` flavor de référence en live ·
+`P9` compatibilité multi-clients ·
 **+ toute modification de `conformance/` ou du testkit (R2).**
 
 ## Conventions du dépôt

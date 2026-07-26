@@ -4,9 +4,9 @@
 #
 # Règles interdites (arêtes qui ne doivent JAMAIS exister dans le graphe cargo) :
 #   voxloom-audio    -> voxloom-render     (le hot path ne connaît pas la vue)
-#   voxloom-audio    -> voxloom-state      (le hot path lit un snapshot, pas l'état)
+#   voxloom-audio    -> voxloom-flavor     (le hot path ne connaît pas le métier)
 #   voxloom-render   -> voxloom-protocol   (le renderer ignore le wire format)
-#   voxloom-state    -> voxloom-protocol   (l'état canonique est indépendant de Mumble)
+#   voxloom-flavor   -> voxloom-protocol   (le contrat flavor est indépendant de Mumble)
 #   voxloom-protocol -> tokio              (crate pur)
 #   voxloom-crypto   -> tokio              (crate pur)
 #
@@ -28,9 +28,9 @@ META="$(cargo metadata --format-version 1 --no-deps 2>/dev/null || echo '{"packa
 # Arêtes interdites : "<from>|<to>".
 FORBIDDEN=(
   "voxloom-audio|voxloom-render"
-  "voxloom-audio|voxloom-state"
+  "voxloom-audio|voxloom-flavor"
   "voxloom-render|voxloom-protocol"
-  "voxloom-state|voxloom-protocol"
+  "voxloom-flavor|voxloom-protocol"
   "voxloom-protocol|tokio"
   "voxloom-crypto|tokio"
 )

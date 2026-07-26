@@ -3,7 +3,7 @@
 # Phase 0 : le workspace est VIDE (aucun membre). Conformément à la règle R5 de
 # la roadmap, un crate n'existe que lorsqu'une phase le remplit. Les crates de la
 # spec §7.1 (voxloom-protocol, voxloom-crypto, voxloom-transport, voxloom-session,
-# voxloom-auth, voxloom-state, voxloom-render, voxloom-reconcile, voxloom-audio,
+# voxloom-auth, voxloom-flavor, voxloom-render, voxloom-reconcile, voxloom-audio,
 # voxloom-control, voxloom-observe, voxloom-testkit) seront ajoutés ici au fil des
 # phases, pas avant.
 [workspace]

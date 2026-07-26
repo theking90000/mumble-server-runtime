@@ -29,11 +29,11 @@ Gates grep/clippy actifs avant la première ligne de logique :
 ```text
 voxloom-audio/src :
   interdits : Mutex, RwLock, .await dans le chemin par-paquet,
-              Box<dyn Fn, appels vers voxloom-render ou voxloom-state
+              Box<dyn Fn, appels vers voxloom-render ou un flavor
 voxloom-render/src :
   interdit d'importer voxloom-protocol (le renderer ignore le wire format)
-voxloom-state/src :
-  interdits : types protocolaires Mumble (SessionId protocolaire, ChannelId wire)
+voxloom-flavor/src :
+  interdits : types protocolaires Mumble et concepts d'un flavor concret
 voxloom-protocol, voxloom-crypto :
   interdits : tokio, IO ; crates purs, sans dépendance runtime
 tout le workspace :
@@ -156,31 +156,124 @@ C'est ici que se vérifie l'hypothèse la plus originale et la moins prouvable p
 
 ---
 
-## Phase 7 : état canonique, partitions, intégration
+## Phase 7 : intégration de flavors et publication atomique
 
-**Objectif :** `voxloom-state` et `voxloom-control`. Acteur par partition sérialisant les commandes, révisions, **snapshots immuables de l'état pour les renders** (structural sharing : les rendus lisent la révision N figée pendant que l'acteur applique N+1 ; jamais de `RwLock<CanonicalState>` traversant les rendus), batching par fenêtre événementielle (23.4), commandes `CanonicalCommand` et événements `VoiceEvent` de la section 24.
+**Décision préalable :** `docs/decisions/0002-flavor-owns-business-state.md`.
+Voxloom ne possède jamais l'état métier. Le flavor compilé possède son snapshot,
+ses commandes, ses acteurs et ses transactions. Le runtime ne connaît que les
+connexions vocales, les vues engagées, les routes audio et les générations
+publiées.
 
-Les opérations cross-partition (`MergeRealms`, `SplitRealm`, changement de realm d'un joueur) sont des transactions à deux partitions ordonnées par un coordinateur, testées sous proptest avec assertion centrale : **aucune fuite inter-realm**, sur tous les canaux secondaires listés en 26.7 (audio, présence, texte, stats, blobs, plugin data, targets, actors).
+**Objectif :** introduire le contrat `VoiceFlavor`, le coordinateur de
+publication `voxloom-control` et un binaire de composition. Un flavor fournit
+un snapshot métier immuable et des sorties déclaratives. Voxloom traite le
+snapshot comme opaque, valide les sorties et publie les transitions de vue et
+le snapshot audio dans l'ordre de sécurité.
 
-L'ordre de sécurité inter-plans devient vérifiable : publication du snapshot audio génération G avant l'enqueue des transactions de vue taguées G, testé par un scénario de révocation qui échoue si un paquet passe entre les deux.
+### T1. Contrat minimal de flavor
 
-**Done :** proptest fuite-inter-realm vert à grand volume ; scénario de révocation sous charge audio sans paquet fuité ; bench : mutation + rerender de K connexions affectées sous budget fixé.
+Créer `voxloom-flavor` avec les types génériques `VoiceFlavor`,
+`FlavorRevision`, `RenderOutput` et `FlavorError`. L'API est statique, sans ABI
+dynamique, callback dans le hot path ni concepts joueur, realm, équipe, position
+ou radio.
+
+**Done :** `cargo test -p voxloom-flavor`.
+
+### T2. Publication d'un snapshot opaque
+
+Créer le chemin `Arc<F::Snapshot>` vers rendu complet de toutes les connexions.
+Le snapshot et sa révision restent figés pendant toute la génération. Voxloom ne
+lit le snapshot qu'en appelant le flavor et ne conserve aucun état métier
+dérivé comme source de vérité.
+
+**Done :** `cargo test -p voxloom-control snapshot_publication`.
+
+### T3. Validation des sorties du flavor
+
+Valider séparément la vue désirée, les routes audio et le registre
+d'interactions avant tout effet. Une erreur de flavor ou une sortie invalide
+annule toute la génération et conserve la génération engagée.
+
+**Done :** `cargo test -p voxloom-control flavor_output_validation`.
+
+### T4. Publication atomique avec ordre de sécurité
+
+Attribuer une génération Voxloom monotone et produire les transactions de vue
+et le snapshot audio. Une révocation audio devient effective avant le retrait
+visuel ; une nouvelle route n'est activée qu'après le commit de la vue du
+destinataire.
+
+**Done :** `cargo test -p voxloom-control publication_order`.
+
+### T5. Événements vocaux vers l'intégration
+
+Convertir les actions Mumble déjà résolues dans la vue courante en
+`VoiceEvent` versionnés. Le flavor décide seul des mutations métier. Il peut
+ensuite publier un nouveau snapshot, mais Voxloom n'applique jamais de commande
+métier.
+
+**Done :** `cargo test -p voxloom-control voice_events`.
+
+### T6. Flavor de référence Aurora/Borealis
+
+Extraire le modèle déterministe utilisé en P6 dans un crate de flavor de
+référence. Il possède ses realms et ses mutations, puis rend les mêmes vues et
+routes à travers l'API publique. Aucun crate central ne dépend de ce crate.
+
+**Done :** `cargo test -p voxloom-flavor-reference`.
+
+### T7. Vérificateur de confidentialité
+
+Dans une tâche R2 séparée, générer des paires de snapshots du flavor de
+référence et appliquer chaque génération avec le client simulé. Vérifier
+qu'aucune sortie ne référence une entité absente de la vue du destinataire, sur
+tous les canaux de la section 26.7. Ajouter le scénario de révocation sous
+charge audio qui échoue si un paquet traverse entre deux générations.
+
+**Done :** `cargo test -p voxloom-testkit --test flavor_privacy`.
+
+### T8. Binaire de composition et checkpoint
+
+Ajouter un binaire qui compile explicitement le flavor de référence avec le
+runtime. Rejouer Aurora/Borealis sans branche métier dans `voxloom-server`,
+mesurer le coût d'une publication complète, puis valider sur deux clients
+officiels qu'un changement de snapshot conserve les propriétés observées en P6.
+Une fois l'extraction faite, étendre les gates pour empêcher le retour de
+concepts du flavor de référence dans les crates centrales.
+
+**Done :** `ci/bench-publication.sh` et checklist humaine
+`docs/checklists/p7-flavor-integration.md` signée.
+
+**Done de phase :** T1 à T8 sont verts ; le flavor de référence reproduit P6 à
+travers l'API publique ; les crates centrales ne contiennent aucun concept
+métier ; le proptest de confidentialité et le scénario de révocation sont
+verts ; le benchmark mesure la publication et le rerender complet de N
+connexions pour un changement de snapshot.
 
 ---
 
-## Phase 8 : intégration Minecraft
+## Phase 8 : flavor Minecraft
 
-**Objectif :** jetons à usage unique (10.2, consommation atomique, entropie, expiration), association certificat↔principal, état joueur, realms, équipes, dimensions, positions autoritaires côté Minecraft, proximité.
+**Objectif :** implémenter un flavor Minecraft au-dessus de l'API P7 et un
+binaire de composition qui le compile avec Voxloom. Le flavor possède les
+jetons à usage unique (10.2, consommation atomique, entropie, expiration),
+l'association certificat vers principal, l'état joueur, les parties, équipes,
+dimensions, positions autoritaires et règles de proximité.
+
+Les acteurs par partie, `MergeRealms`, `SplitRealm`, les changements d'équipe et
+le batching des événements Minecraft vivent dans ce flavor. Ils produisent des
+snapshots immuables consommés par Voxloom ; aucune crate centrale ne dépend de
+Minecraft.
 
 Les positions suivent le chemin de la section 13.7 : hors VDOM, index spatial, recompilation du snapshot par tick batché (50-100 ms) et par domaine de routage, avec hystérésis sur les seuils de distance pour éviter le flapping des routes. Le VDOM ne voit un joueur bouger que si la structure change (changement de dimension, d'équipe), jamais à chaque déplacement.
 
-**Done :** critère spec Phase 3 : plusieurs parties isolées sur un endpoint unique, proximité fonctionnelle, changements sans reconnexion (humain + scénarios simulés) ; bench : M joueurs à 20 Hz de positions, recompilation par tick sous budget, aucune pression sur le control plane.
+**Done :** critère spec Phase 4 : plusieurs parties isolées sur un endpoint unique, proximité fonctionnelle, changements sans reconnexion (humain + scénarios simulés) ; bench : M joueurs à 20 Hz de positions, recompilation par tick sous budget, aucune pression sur le control plane.
 
 ---
 
 ## Phase 9 : interactions et durcissement
 
-Regroupe les Phases 4-5 de la spec : permissions effectives, context actions avec revalidation par génération (24.4), texte contrôlé, voice targets validés, radios, listeners traduits ou refusés, `explain_audio` et inspecteur de vues (25.2-25.3), rate limits complets (22.5), replay de commandes canoniques (25.4), fuzzing continu élargi (commandes client, résolution d'IDs), campagne de compatibilité clients réels (desktop x3 OS, mobile selon décision Phase 0), tests longue durée.
+Regroupe les Phases 5-6 de la spec : permissions effectives, context actions avec revalidation par génération (24.4), texte contrôlé, voice targets validés, radios, listeners traduits ou refusés, `explain_audio` et inspecteur de vues (25.2-25.3), rate limits complets (22.5), replay des publications de flavor et événements vocaux, fuzzing continu élargi (commandes client, résolution d'IDs), campagne de compatibilité clients réels (desktop x3 OS, mobile selon décision Phase 0), tests longue durée.
 
 **Done :** les 15 critères MVP de la section 33, chacun mappé à un test ou une checklist humaine identifiée ; matrice de compatibilité clients remplie et versionnée.
 
@@ -188,7 +281,12 @@ Regroupe les Phases 4-5 de la spec : permissions effectives, context actions ave
 
 ## Phase 10 : optimisation (conditionnelle)
 
-Uniquement après profiling (27.4) : invalidation ciblée, cache de sous-arbres, dependency tracking, retained-mode sur les profils mesurés coûteux. Oracle déjà en place depuis la Phase 5 : `normalize(render_incremental) == normalize(render_full)` en proptest, plus comparaison aléatoire d'une fraction des rendus en mode dev. Un agent n'entame cette phase que sur présentation de mesures, pas d'intuition.
+Uniquement après profiling (27.4) : invalidation ciblée des connexions avec
+fallback `All`, cache de sous-arbres, dependency tracking, retained-mode sur les
+profils mesurés coûteux. Oracle déjà en place depuis la Phase 5 :
+`normalize(render_incremental) == normalize(render_full)` en proptest, plus
+comparaison aléatoire d'une fraction des rendus en mode dev. Un agent n'entame
+cette phase que sur présentation de mesures, pas d'intuition.
 
 ---
 
@@ -200,7 +298,7 @@ P0 corpus/refs ──> P1 codec ──> P2 proxy oracle ──> P3 serveur minim
                         └──> P5 moteur de vues pur <───────┘ (client simulé)
                                       │
                                       ▼
-                              P6 vues live ──> P7 état/partitions ──> P8 Minecraft ──> P9 durcissement ──> P10 opti
+                              P6 vues live ──> P7 API flavor ──> P8 flavor Minecraft ──> P9 durcissement ──> P10 opti
 ```
 
 P5 peut démarrer en parallèle de P2-P4 (aucune dépendance réseau). P1 et le client simulé de P3 sont les deux chantiers agents les plus parallélisables.
