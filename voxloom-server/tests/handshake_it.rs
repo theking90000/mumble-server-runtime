@@ -3,6 +3,7 @@
 //! TCP tunnel fallback. This is the async proof for the server crate; the strict
 //! §20 conformance judge (`SimulatedMumbleClient`) is the verifier deliverable in
 //! `voxloom-testkit` (separate commit, R2).
+// Integration fixtures use explicit expectations to keep failures local.
 #![allow(clippy::expect_used, clippy::unwrap_used)]
 
 use std::sync::Arc;
@@ -40,25 +41,60 @@ async fn start_server() -> ServerHandle {
 
 /// A rustls client config that trusts any server certificate (local test only).
 fn client_config() -> Arc<ClientConfig> {
+    client_config_with_identity(None)
+}
+
+fn client_config_with_identity(identity: Option<Identity>) -> Arc<ClientConfig> {
     let algorithms = rustls::crypto::ring::default_provider().signature_verification_algorithms;
-    let config = ClientConfig::builder()
+    let builder = ClientConfig::builder()
         .dangerous()
-        .with_custom_certificate_verifier(Arc::new(TrustAnyServer { algorithms }))
-        .with_no_client_auth();
+        .with_custom_certificate_verifier(Arc::new(TrustAnyServer { algorithms }));
+    let config = match identity {
+        Some(identity) => builder
+            .with_client_auth_cert(vec![identity.cert], identity.key)
+            .expect("client identity"),
+        None => builder.with_no_client_auth(),
+    };
     Arc::new(config)
 }
 
 /// TLS-connect to the server and split the stream into framed read/write halves.
 async fn connect(handle: &ServerHandle) -> (FramedReader, WriteHalf<TlsStream<TcpStream>>) {
+    connect_with_config(handle, client_config()).await
+}
+
+async fn connect_with_config(
+    handle: &ServerHandle,
+    config: Arc<ClientConfig>,
+) -> (FramedReader, WriteHalf<TlsStream<TcpStream>>) {
     let tcp = TcpStream::connect(handle.tcp_addr)
         .await
         .expect("tcp connect");
     tcp.set_nodelay(true).ok();
-    let connector = TlsConnector::from(client_config());
+    let connector = TlsConnector::from(config);
     let name = ServerName::try_from("localhost").expect("server name");
     let tls = connector.connect(name, tcp).await.expect("tls connect");
     let (read, write) = tokio::io::split(tls);
     (FramedReader::new(read), write)
+}
+
+fn certificate_hash(certificate: &CertificateDer<'_>) -> String {
+    let digest = ring::digest::digest(
+        &ring::digest::SHA1_FOR_LEGACY_USE_ONLY,
+        certificate.as_ref(),
+    );
+    digest
+        .as_ref()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+fn clone_identity(identity: &Identity) -> Identity {
+    Identity {
+        cert: identity.cert.clone(),
+        key: identity.key.clone_key(),
+    }
 }
 
 async fn send(writer: &mut WriteHalf<TlsStream<TcpStream>>, message: &ControlMessage) {
@@ -145,14 +181,65 @@ async fn full_handshake_ordering_over_tls() {
         ControlMessage::ServerSync(s) => assert!(s.session.is_some(), "ServerSync.session set"),
         _ => unreachable!(),
     }
-    // The self UserState names the authenticated user in the root channel (0).
+    // The self UserState names the authenticated user in a visible synthetic
+    // realm channel. The root still precedes it in the channel tree.
     match &messages[user] {
         ControlMessage::UserState(u) => {
             assert_eq!(u.name.as_deref(), Some("alice"));
-            assert_eq!(u.channel_id, Some(0));
+            let channel = u.channel_id.expect("self channel");
+            assert_ne!(channel, 0, "self lives in a synthetic realm");
+            assert!(
+                messages.iter().any(|message| matches!(
+                    message,
+                    ControlMessage::ChannelState(state)
+                        if state.channel_id == Some(channel)
+                )),
+                "self channel must be visible before UserState"
+            );
         }
         _ => unreachable!(),
     }
+
+    handle.shutdown();
+}
+
+/// REF: references/vendored/Mumble.proto:UserState.hash
+/// REF: references/mumble/src/murmur/Server.cpp:Server::encrypted
+#[tokio::test]
+async fn client_certificate_hash_is_stable_across_sessions() {
+    let handle = start_server().await;
+    let identity = Identity::self_signed(vec!["test-client".to_owned()]).expect("identity");
+    let expected_hash = certificate_hash(&identity.cert);
+
+    let (mut first_reader, mut first_writer) = connect_with_config(
+        &handle,
+        client_config_with_identity(Some(clone_identity(&identity))),
+    )
+    .await;
+    let first = do_handshake(&mut first_reader, &mut first_writer, "alice").await;
+
+    let (mut second_reader, mut second_writer) =
+        connect_with_config(&handle, client_config_with_identity(Some(identity))).await;
+    let second = do_handshake(&mut second_reader, &mut second_writer, "alice").await;
+
+    let presented_hash = |messages: &[ControlMessage]| {
+        messages.iter().find_map(|message| match message {
+            ControlMessage::UserState(user) if user.name.as_deref() == Some("alice") => {
+                user.hash.clone()
+            }
+            _ => None,
+        })
+    };
+
+    assert_eq!(
+        presented_hash(&first).as_deref(),
+        Some(expected_hash.as_str())
+    );
+    assert_eq!(
+        presented_hash(&second).as_deref(),
+        Some(expected_hash.as_str())
+    );
+    assert_ne!(session_of(&first), session_of(&second));
 
     handle.shutdown();
 }
@@ -368,6 +455,7 @@ struct Client {
     crypt: CryptState,
     session: u32,
     sock: UdpSocket,
+    channels: std::collections::BTreeMap<String, u32>,
 }
 
 /// Connect, authenticate and take the crypto material.
@@ -375,12 +463,20 @@ async fn join(handle: &ServerHandle, name: &str) -> Client {
     let (mut reader, mut writer) = connect(handle).await;
     let messages = do_handshake(&mut reader, &mut writer, name).await;
     let (crypt, _) = client_crypt(&find_crypt_setup(&messages));
+    let channels = messages
+        .iter()
+        .filter_map(|message| match message {
+            ControlMessage::ChannelState(state) => Some((state.name.clone()?, state.channel_id?)),
+            _ => None,
+        })
+        .collect();
     Client {
         reader,
         writer,
         crypt,
         session: session_of(&messages),
         sock: UdpSocket::bind("127.0.0.1:0").await.expect("bind udp"),
+        channels,
     }
 }
 
@@ -444,6 +540,19 @@ async fn recv_tunnelled_audio(client: &mut Client) -> udp::Audio {
             }
             Ok(Some(_)) => continue,
             _ => panic!("no tunnelled audio before timeout"),
+        }
+    }
+}
+
+async fn recv_until(
+    client: &mut Client,
+    predicate: impl Fn(&ControlMessage) -> bool,
+) -> ControlMessage {
+    loop {
+        match tokio::time::timeout(Duration::from_secs(5), client.reader.next()).await {
+            Ok(Some(message)) if predicate(&message) => return message,
+            Ok(Some(_)) => continue,
+            _ => panic!("expected control transition before timeout"),
         }
     }
 }
@@ -576,6 +685,113 @@ async fn an_unregistered_voice_target_is_not_routed() {
     alice.sock.send_to(&sealed, udp_addr).await.expect("send");
     let heard = recv_audio(&mut bob).await;
     assert_eq!(heard.opus_data, vec![0xCD]);
+
+    handle.shutdown();
+}
+
+/// The deterministic P6 scenario changes both the connection views and the
+/// directional audio domain without reconnecting. Revocation is observable
+/// before the `UserRemove` that hides Bob from Alice; activation is observable
+/// only after both clients have received the view that introduces their peer.
+#[tokio::test]
+async fn moving_between_realms_updates_views_and_gates_audio() {
+    let handle = start_server().await;
+    let udp_addr = handle.udp_addr;
+    let mut alice = join(&handle, "alice@aurora").await;
+    let mut bob = join(&handle, "bob@borealis").await;
+    associate_udp(&mut alice, udp_addr).await;
+    associate_udp(&mut bob, udp_addr).await;
+
+    assert_ne!(
+        alice.channels, bob.channels,
+        "viewer-relative channel trees must diverge"
+    );
+
+    let sealed = alice
+        .crypt
+        .encrypt(&speech(NORMAL_TARGET, &[0xA0]))
+        .expect("encrypt");
+    alice.sock.send_to(&sealed, udp_addr).await.expect("send");
+    let mut buffer = vec![0u8; 2048];
+    assert!(
+        tokio::time::timeout(Duration::from_millis(250), bob.sock.recv_from(&mut buffer))
+            .await
+            .is_err(),
+        "different realms must be audio-isolated"
+    );
+
+    let aurora = bob
+        .channels
+        .iter()
+        .find(|(name, _)| name.ends_with("Aurora"))
+        .map(|(_, id)| *id)
+        .expect("Bob sees the Aurora destination");
+    send(
+        &mut bob.writer,
+        &ControlMessage::UserState(tcp::UserState {
+            session: Some(bob.session),
+            channel_id: Some(aurora),
+            ..Default::default()
+        }),
+    )
+    .await;
+
+    let _alice_sees_bob = recv_until(&mut alice, |message| {
+        matches!(
+            message,
+            ControlMessage::UserState(state) if state.session == Some(bob.session)
+        )
+    })
+    .await;
+    let _bob_sees_alice = recv_until(&mut bob, |message| {
+        matches!(
+            message,
+            ControlMessage::UserState(state) if state.session == Some(alice.session)
+        )
+    })
+    .await;
+
+    let sealed = alice
+        .crypt
+        .encrypt(&speech(NORMAL_TARGET, &[0xA1]))
+        .expect("encrypt");
+    alice.sock.send_to(&sealed, udp_addr).await.expect("send");
+    assert_eq!(recv_audio(&mut bob).await.opus_data, vec![0xA1]);
+
+    let borealis = bob
+        .channels
+        .iter()
+        .find(|(name, _)| name.ends_with("Borealis"))
+        .map(|(_, id)| *id)
+        .expect("Bob sees the Borealis destination");
+    send(
+        &mut bob.writer,
+        &ControlMessage::UserState(tcp::UserState {
+            session: Some(bob.session),
+            channel_id: Some(borealis),
+            ..Default::default()
+        }),
+    )
+    .await;
+    let _alice_hides_bob = recv_until(&mut alice, |message| {
+        matches!(
+            message,
+            ControlMessage::UserRemove(remove) if remove.session == bob.session
+        )
+    })
+    .await;
+
+    let sealed = alice
+        .crypt
+        .encrypt(&speech(NORMAL_TARGET, &[0xA2]))
+        .expect("encrypt");
+    alice.sock.send_to(&sealed, udp_addr).await.expect("send");
+    assert!(
+        tokio::time::timeout(Duration::from_millis(250), bob.sock.recv_from(&mut buffer))
+            .await
+            .is_err(),
+        "route revocation must precede the visual removal"
+    );
 
     handle.shutdown();
 }

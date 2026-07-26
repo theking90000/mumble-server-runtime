@@ -20,12 +20,20 @@ use voxloom_protocol::messages::tcp;
 use voxloom_protocol::{
     ControlMessage, UdpMessage, decode_frame, decode_udp, encode_frame, parse_frame,
 };
+use voxloom_session::{EmittedStep, InboundCommand, wire_permissions};
 
-use crate::handshake::{self, OtherUser};
+use crate::handshake;
 use crate::limits;
-use crate::outbound::{ControlAdmission, OutboundQueue};
+use crate::outbound::OutboundQueue;
+use crate::projection;
 use crate::state::{SessionId, SharedState, UserEntry};
 use crate::voice;
+
+#[derive(Debug, thiserror::Error)]
+enum ConnectionStateError {
+    #[error("session {session} view lock poisoned")]
+    ViewPoisoned { session: SessionId },
+}
 
 /// Serve one accepted TCP connection to completion. Errors (TLS failure, a
 /// malformed frame, a dropped socket) end the connection cleanly: the user is
@@ -44,6 +52,7 @@ pub async fn serve(
     // Nagle off: control latency matters more than coalescing small frames.
     let _ignored = tcp.set_nodelay(true);
     let tls = acceptor.accept(tcp).await.context("TLS handshake")?;
+    let certificate_hash = crate::tls::client_certificate_hash(&tls);
     let (read_half, write_half) = tokio::io::split(tls);
     let mut reader = FrameReader::new(read_half);
     let mut writer = write_half;
@@ -62,94 +71,55 @@ pub async fn serve(
     // Stub authentication (spec §10.2 token flow is P8): any username is accepted,
     // the password/token is treated as an opaque credential and not validated.
     // The client-proposed username is only a display suggestion (§10.5).
-    let name = sanitize_username(authenticate.username.as_deref().unwrap_or("Guest"));
+    let (name, realm) =
+        projection::scenario_identity(authenticate.username.as_deref().unwrap_or("Guest"));
 
     let session = state.allocate_session();
     let (crypt_setup, crypt_state) = voice::generate_crypt_setup(&rng)?;
 
     let (outbound, mut outbound_rx) = OutboundQueue::new(session);
-    let user = Arc::new(UserEntry {
+    let user = Arc::new(UserEntry::new(
         session,
-        name: name.clone(),
-        channel_id: crate::state::ROOT_CHANNEL_ID,
+        name.clone(),
+        certificate_hash,
+        realm,
         outbound,
-        crypto: std::sync::Mutex::new(Some(crypt_state)),
-        udp_addr: std::sync::Mutex::new(None),
-        // Optimistic, like the real server: assume UDP until the client tells
-        // us otherwise by tunnelling audio (REF `ServerUser.cpp`).
-        udp_mode: std::sync::atomic::AtomicBool::new(true),
-        voice_budget: std::sync::Mutex::new(crate::limits::VoiceBudget::new(Instant::now())),
-    });
+        crypt_state,
+        Instant::now(),
+    ));
 
-    // Register atomically and learn who was already present.
-    let others = state.insert_user(Arc::clone(&user));
-    let other_views: Vec<OtherUser> = others
-        .iter()
-        .map(|u| OtherUser {
-            session: u.session,
-            name: u.name.clone(),
-            channel_id: u.channel_id,
-        })
-        .collect();
+    state.insert_user(Arc::clone(&user));
 
-    // Emit the handshake.
-    let messages = handshake::build_handshake(
-        state.config(),
-        state.channels(),
-        session,
-        &name,
-        user.channel_id,
-        crypt_setup,
-        &other_views,
-    );
-    for message in &messages {
-        write_message(&mut writer, message).await?;
-    }
-
-    // Announce the newcomer to everyone already connected (§17 presence).
-    let announce = ControlMessage::UserState(tcp::UserState {
-        session: Some(session),
-        name: Some(name.clone()),
-        channel_id: Some(user.channel_id),
-        ..Default::default()
-    });
-    for other in &others {
-        match other.outbound.push_control(announce.clone()) {
-            ControlAdmission::Accepted => {}
-            // That peer is too far behind to be told about the newcomer. It has
-            // been marked for teardown by its own queue, and its task will act
-            // on that; skipping it silently here would leave it permanently
-            // blind to this user.
-            ControlAdmission::Refused => {}
+    // Everything after registration is wrapped so a write/render failure during
+    // the handshake gets the same cleanup as a steady-state disconnect.
+    let result = async {
+        // Lifecycle prelude, then the connection-specific view produced by the
+        // P5 engine, then ServerSync/ServerConfig. This is the one live
+        // translation path documented by voxloom-session.
+        for message in handshake::handshake_prelude(crypt_setup) {
+            write_message(&mut writer, &message).await?;
         }
-    }
+        write_initial_view(&mut writer, &user, &state).await?;
+        for message in handshake::handshake_completion(state.config(), session) {
+            write_message(&mut writer, &message).await?;
+        }
+        user.mark_view_live();
+        state.refresh_views();
 
-    // Service the connection. On any exit path we deregister and announce the
-    // departure, so this is wrapped to run the cleanup unconditionally.
-    let result = service_loop(
-        &mut reader,
-        &mut writer,
-        &mut outbound_rx,
-        &user,
-        &state,
-        &udp,
-    )
+        service_loop(
+            &mut reader,
+            &mut writer,
+            &mut outbound_rx,
+            &user,
+            &state,
+            &udp,
+        )
+        .await
+    }
     .await;
 
     state.remove_user(session);
-    let departure = ControlMessage::UserRemove(tcp::UserRemove {
-        session,
-        ..Default::default()
-    });
-    for remaining in state.users() {
-        match remaining.outbound.push_control(departure.clone()) {
-            ControlAdmission::Accepted => {}
-            // Same reasoning as the arrival broadcast: a peer that cannot take
-            // the departure would keep a ghost user forever, so its queue has
-            // already marked it for teardown.
-            ControlAdmission::Refused => {}
-        }
-    }
+    state.refresh_views();
 
     result
 }
@@ -160,7 +130,7 @@ async fn service_loop(
     reader: &mut FrameReader,
     writer: &mut WriteHalf<TlsStream<TcpStream>>,
     outbound_rx: &mut mpsc::Receiver<ControlMessage>,
-    user: &UserEntry,
+    user: &Arc<UserEntry>,
     state: &SharedState,
     udp: &UdpSocket,
 ) -> Result<()> {
@@ -198,7 +168,7 @@ async fn service_loop(
                         }
                     }
                     Some(message) => {
-                        for reply in handle_control(message, user) {
+                        for reply in handle_control(message, user, state) {
                             write_message(writer, &reply).await?;
                         }
                     }
@@ -208,7 +178,15 @@ async fn service_loop(
             // from the channel when this branch is selected.
             queued = outbound_rx.recv() => {
                 match queued {
-                    Some(message) => write_message(writer, &message).await?,
+                    Some(message) => {
+                        write_message(writer, &message).await?;
+                        // A transition refused for ordinary congestion is
+                        // retried as capacity returns. Planning always starts
+                        // from the still-committed view, so this converges to
+                        // the newest desired state rather than replaying stale
+                        // intermediate ones.
+                        state.refresh_view(user);
+                    }
                     None => return Ok(()), // no senders left (cannot happen while we hold the user)
                 }
             }
@@ -230,8 +208,15 @@ async fn wait_for_authenticate(reader: &mut FrameReader) -> Result<Option<tcp::A
 
 /// Handle one control message from the client, returning replies to send back on
 /// the same connection. Every branch ends in an explicit outcome (L4): a reply,
-/// or an intentional (logged) drop for intents P3 does not support.
-fn handle_control(message: ControlMessage, user: &UserEntry) -> Vec<ControlMessage> {
+/// or an intentional logged refusal for intents P6 does not support.
+///
+/// REF: references/vendored/Mumble.proto:UserState
+/// REF: references/vendored/Mumble.proto:PermissionQuery
+fn handle_control(
+    message: ControlMessage,
+    user: &Arc<UserEntry>,
+    state: &SharedState,
+) -> Vec<ControlMessage> {
     let session = user.session;
     match message {
         // TCP ping: echo the timestamp so the client can measure RTT (§16.3),
@@ -241,11 +226,56 @@ fn handle_control(message: ControlMessage, user: &UserEntry) -> Vec<ControlMessa
         // Everything else a client may send is, in P3, either a self-state change
         // we do not yet reflect or an action we refuse by default (spec §16.5-16.8,
         // §16.11...). Drop it explicitly rather than acting on it (fail closed).
-        other => {
-            drop_unsupported(&other, session);
-            Vec::new()
-        }
+        other => match user.view.lock() {
+            Ok(view) => match view.resolve_inbound(&other) {
+                Ok(InboundCommand::MoveSelf { channel }) => {
+                    drop(view);
+                    match projection::realm_from_channel_key(&channel) {
+                        Some(realm) if state.move_to_realm(session, realm) => Vec::new(),
+                        _ => vec![permission_denied(session)],
+                    }
+                }
+                Ok(InboundCommand::QueryPermissions {
+                    channel,
+                    permissions,
+                }) => {
+                    let Some(channel_id) = view
+                        .committed()
+                        .channels
+                        .values()
+                        .find(|candidate| candidate.key == channel)
+                        .map(|candidate| candidate.id.0)
+                    else {
+                        user.outbound.mark_fatal();
+                        return Vec::new();
+                    };
+                    vec![ControlMessage::PermissionQuery(tcp::PermissionQuery {
+                        channel_id: Some(channel_id),
+                        permissions: Some(wire_permissions(permissions)),
+                        ..Default::default()
+                    })]
+                }
+                Ok(InboundCommand::ValidatedUnsupported { .. }) | Err(_) => {
+                    drop_unsupported(&other, session);
+                    vec![permission_denied(session)]
+                }
+            },
+            Err(_) => {
+                user.outbound.mark_fatal();
+                Vec::new()
+            }
+        },
     }
+}
+
+/// REF: references/vendored/Mumble.proto:PermissionDenied
+fn permission_denied(session: SessionId) -> ControlMessage {
+    ControlMessage::PermissionDenied(tcp::PermissionDenied {
+        session: Some(session),
+        reason: Some("This action is not available in the current view".to_owned()),
+        r#type: Some(i32::from(tcp::permission_denied::DenyType::Text)),
+        ..Default::default()
+    })
 }
 
 /// Build the reply to a TCP `Ping`: the echoed timestamp plus the OCB2 counters
@@ -336,15 +366,58 @@ fn drop_unsupported(message: &ControlMessage, session: SessionId) {
         ControlMessage::PermissionQuery(_) => "PermissionQuery",
         _ => "unsupported message",
     };
-    eprintln!("voxloom-server: session {session}: refusing unsupported {kind} (P3)");
+    eprintln!("voxloom-server: session {session}: refusing unsupported {kind} (P6)");
 }
 
-/// Normalise a client-proposed username: trim, collapse to non-empty, cap length.
-/// The server is authoritative over the display name (spec §10.5).
-fn sanitize_username(raw: &str) -> String {
-    let trimmed = raw.trim();
-    let name = if trimmed.is_empty() { "Guest" } else { trimmed };
-    name.chars().take(64).collect()
+async fn write_initial_view(
+    writer: &mut WriteHalf<TlsStream<TcpStream>>,
+    user: &Arc<UserEntry>,
+    state: &SharedState,
+) -> Result<()> {
+    let scenario = state.scenario_users();
+    let viewer = scenario
+        .iter()
+        .find(|candidate| candidate.session == user.session)
+        .context("new session missing from scenario snapshot")?;
+    let (steps, token) = {
+        let mut view = user
+            .view
+            .lock()
+            .map_err(|_| ConnectionStateError::ViewPoisoned {
+                session: user.session,
+            })?;
+        let (desired, routes) = projection::render(&mut view, viewer, &scenario, state.config())
+            .context("rendering view")?;
+        view.prepare(&desired, &routes)
+            .context("preparing initial view")?
+            .context("initial view unexpectedly produced no transition")?
+            .split()
+    };
+    let mut enables = Vec::new();
+    for step in steps {
+        match step {
+            EmittedStep::Message(message) => write_message(writer, &message).await?,
+            EmittedStep::RouteChange {
+                route,
+                enabled: false,
+            } => state.set_route(route, false),
+            EmittedStep::RouteChange {
+                route,
+                enabled: true,
+            } => enables.push(route),
+        }
+    }
+    user.view
+        .lock()
+        .map_err(|_| ConnectionStateError::ViewPoisoned {
+            session: user.session,
+        })?
+        .commit(token)
+        .context("committing initial view")?;
+    for route in enables {
+        state.set_route(route, true);
+    }
+    Ok(())
 }
 
 /// Frame the message and write it, flushing so it is not stuck in a buffer.

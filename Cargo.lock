@@ -1210,6 +1210,9 @@ dependencies = [
  "voxloom-audio",
  "voxloom-crypto",
  "voxloom-protocol",
+ "voxloom-reconcile",
+ "voxloom-render",
+ "voxloom-session",
 ]
 
 [[package]]
