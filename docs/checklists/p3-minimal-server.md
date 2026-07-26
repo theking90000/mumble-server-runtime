@@ -51,23 +51,23 @@ parle. La voix doit revenir depuis le serveur.
 
 ## Checklist (cocher, dater, signer)
 
-- [ ] **Connexion.** Le client se connecte au serveur (sans Murmur) et atteint
+- [x] **Connexion.** Le client se connecte au serveur (sans Murmur) et atteint
       l'état connecté : canal racine visible, soi-même présent dans la liste.
-- [ ] **Handshake propre.** Aucun message d'erreur ni « Reject » ; le client
+- [x] **Handshake propre.** Aucun message d'erreur ni « Reject » ; le client
       affiche le nom du serveur et le texte de bienvenue.
-- [ ] **UDP négocié.** L'info de connexion du client montre **UDP** actif (le
+- [x] **UDP négocié.** L'info de connexion du client montre **UDP** actif (le
       ping UDP chiffré passe), pas un repli permanent en tunnel TCP.
-- [ ] **Loopback serveur (UDP).** Mode loopback « Serveur », en parlant on
+- [x] **Loopback serveur (UDP).** Mode loopback « Serveur », en parlant on
       s'entend soi-même revenir **sans artefact audible** (pas de hachage, pas de
       blancs, latence seulement celle du réseau local).
-- [ ] **Loopback en tunnel TCP.** Forcer le mode « Force TCP » dans le client
+- [x] **Loopback en tunnel TCP.** Forcer le mode « Force TCP » dans le client
       (Configuration → Réseau), refaire le test loopback : la voix revient
       toujours (repli tunnel TCP fonctionnel).
-- [ ] **Deux clients.** Deux clients réels connectés simultanément se voient
+- [x] **Deux clients.** Deux clients réels connectés simultanément se voient
       mutuellement dans la liste d'utilisateurs (présence diffusée). _(Le routage
       voix entre eux est P4 ; ici on ne valide que la présence + le loopback de
       chacun.)_
-- [ ] **Déconnexion propre.** Fermer un client : l'autre voit l'utilisateur
+- [x] **Déconnexion propre.** Fermer un client : l'autre voit l'utilisateur
       disparaître (UserRemove) ; un nouveau client peut se reconnecter.
 
 Réserve connue (attendue en P3) : parler en mode **normal** (target 0), sans le
@@ -78,13 +78,20 @@ audio (P4). Seul le loopback serveur (target 31) est réfléchi.
 
 ## Signature
 
-- Version du serveur (commit) : `__________`
-- Version du client Mumble / OS : `__________`
-- Date : `__________`
-- Validé par : `__________`
-- Notes / artefacts observés : `__________`
+**OK !!** Les sept cases sont validées sur un vrai client Mumble.
 
-Tant que cette checklist n'est pas signée, le point de contrôle humain de P3
-n'est **pas** « done » au sens de la roadmap, même si toute la CI est verte. Les
-deux critères machine (client simulé sans panique, deux clients simulés
-indépendants) sont, eux, déjà verts.
+- Version du serveur (commit) : `49bff51`
+- Version du client Mumble / OS : `Mumble ______` / macOS (Darwin 25.5.0)
+- Date : 2026-07-26
+- Validé par : theking90000
+- Notes / artefacts observés : aucun artefact audible sur le loopback serveur,
+  en UDP comme en repli tunnel TCP. Un défaut a été trouvé et corrigé pendant le
+  déroulé : la réponse au `Ping` TCP ne portait que le timestamp, donc
+  `uiRemoteGood` restait à zéro et le client basculait définitivement en tunnel
+  TCP au bout de 20 s alors que l'UDP fonctionnait. Corrigé en `49bff51` (report
+  des compteurs OCB2), sans quoi la case « UDP négocié » est inatteignable. La
+  réserve attendue est confirmée : deux clients se voient et s'entendent chacun
+  en loopback, mais ne s'entendent pas entre eux (cible 0 droppée, routage = P4).
+
+Le point de contrôle humain de P3 est **done**. Les deux critères machine (client
+simulé sans panique, deux clients simulés indépendants) étaient déjà verts.

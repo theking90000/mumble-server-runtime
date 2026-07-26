@@ -4,16 +4,15 @@
 > reprend doit savoir. Autorité : la spec et la roadmap (`docs/`) ; ce fichier ne
 > fait que pointer l'état courant. Mettre à jour à chaque fin de tâche.
 
-**Phase courante : P3 (serveur minimal) — cœur implémenté et vérifié en CI ; il
-ne reste que le point de contrôle humain.** Les deux critères machine de P3 sont
-verts (client simulé rejoue le handshake sans violation §20 ; deux clients
-simulés simultanés à vues indépendantes). Le troisième critère — vrai client
-officiel connecté + loopback audible — est une checklist humaine **non encore
-signée** (`docs/checklists/p3-minimal-server.md`). Tant qu'elle ne l'est pas, P3
-n'est pas « close » au sens roadmap, même CI verte. P2 est close (checklist
-signée `2fb1e98`). P1 (codec pur) est close. Reste optionnel hérité de P1 : le
-job nightly cargo-fuzz en CI. Suite après signature P3 : P4 (routage audio deux
-clients). Les règles R1–R6 (`AGENT.md`) et la discipline de code restent la loi.
+**Phase courante : P4 (routage audio deux clients) — pas encore commencée. P3 est
+close : checklist humaine signée le 2026-07-26.** Les trois critères de P3 sont
+tenus : client simulé rejouant le handshake sans violation §20 (CI), deux clients
+simulés simultanés à vues indépendantes (CI), et vrai client officiel connecté
+avec loopback serveur audible en UDP **et** en repli tunnel TCP, deux clients
+réels qui se voient (humain, `docs/checklists/p3-minimal-server.md`). P2 est close
+(checklist signée `2fb1e98`). P1 (codec pur) est close. Reste optionnel hérité de
+P1 : le job nightly cargo-fuzz en CI. Les règles R1–R6 (`AGENT.md`) et la
+discipline de code restent la loi.
 
 **P5 (moteur de vues pur) — cœur pur implémenté et vérifié en CI, mergé sur
 `main` le 2026-07-24.** `voxloom-render` (vue normalisée, normalize, validate) et
@@ -222,7 +221,7 @@ clippy --workspace --all-targets`. Done-command : `cargo test -p voxloom-render`
 Commits P5 (sans `Co-Authored-By`) : `66b1847` `voxloom-render`, `f6afb72`
 `voxloom-reconcile` ; mergés sur `main` le 2026-07-24 (merge no-ff).
 
-### Phase 3 — serveur minimal (cœur fait, checkpoint humain en attente)
+### Phase 3 — serveur minimal (close, checkpoint humain signé le 2026-07-26)
 
 Handshake sans Murmur, plan UDP, loopback. Deux crates, en **deux commits
 séparés** au titre de R2 (implémenteur ≠ vérificateur, `verifier-boundary.sh`).
@@ -272,12 +271,27 @@ clippy --workspace --all-targets`. Done-commands :
 - `cargo test -p voxloom-testkit` — 11 tests (9 modèle dont chaque invariant qui
   panique à la violation ; 2 conformance = les deux critères machine de P3).
 
-Commits P3 (sur `main`, sans `Co-Authored-By`, **séparés R2**) : `4465149`
-`voxloom-server` (implémenteur), `e56caf1` `voxloom-testkit` (vérificateur).
+- **Compteurs OCB2 dans la réponse au `Ping` TCP** (`49bff51`, trouvé pendant le
+  checkpoint humain) : la réponse ne portait que le timestamp. Le client lit
+  `good` comme `uiRemoteGood` et, s'il vaut encore 0 **20 secondes** après la
+  connexion, décide que son UDP ne nous atteint pas et bascule **définitivement**
+  en tunnel TCP, alors même que le plan UDP fonctionne dans les deux sens. Sans
+  ce report, la case « UDP négocié » de la checklist est inatteignable. `resync`
+  vaut 0 en vérité (le resync de nonce est refusé en P3), pas par défaut.
+  REF `murmur/Messages.cpp::Server::msgPing`, `mumble/ServerHandler.cpp`
+  (`TCPMessageType::Ping`).
 
-**Reste pour clore P3** : signer `docs/checklists/p3-minimal-server.md` (vrai
-client Mumble connecté, loopback serveur audible, UDP + repli TCP, deux clients
-qui se voient). Un agent ne peut pas le faire (GUI Qt + oreille).
+Commits P3 (sur `main`, sans `Co-Authored-By`, **séparés R2**) : `4465149`
+`voxloom-server` (implémenteur), `e56caf1` `voxloom-testkit` (vérificateur),
+`49bff51` compteurs `Ping` (correctif du checkpoint humain).
+
+**Checkpoint humain : signé** (`docs/checklists/p3-minimal-server.md`, 2026-07-26,
+serveur `49bff51`). Validé sur un vrai client Mumble : connexion sans Murmur,
+handshake propre, UDP négocié, loopback serveur audible sans artefact en UDP et
+en repli « Force TCP », deux clients réels qui se voient, déconnexion propre.
+Réserve confirmée et attendue : deux clients réels ne s'entendent **pas** entre
+eux (cible 0 droppée faute de graphe de routage), seul le loopback cible 31 est
+réfléchi. C'est P4.
 
 ---
 
@@ -397,17 +411,26 @@ Note : `voxloom-render`/`voxloom-reconcile` sont sur `main` (P5 mergé le
 
 ### Après P3
 
-Le cœur de P3 est fait et vert en CI. **Reste avant de clore P3** : dérouler et
-signer `docs/checklists/p3-minimal-server.md` (vrai client Mumble → loopback
-serveur audible, UDP + repli TCP, deux clients qui se voient) — point de contrôle
-humain, un agent ne peut pas le faire. Ensuite, **P4 (routage audio deux
-clients)** : le hot path (§15.1), snapshot `Arc<AudioRoutingSnapshot>` publié par
-swap atomique, `RoutingDomainId` dès maintenant, gates R4 `voxloom-audio` (ni
-lock ni await par paquet). P5 peut aussi être clôturé en branchant son proptest
-sur le `SimulatedMumbleClient` (cf. « Reste à faire » §3). Voir la roadmap.
+P3 est close (CI verte + checkpoint humain signé le 2026-07-26). La suite est
+**P4 (routage audio deux clients)** : le hot path (§15.1), snapshot
+`Arc<AudioRoutingSnapshot>` publié par swap atomique, `RoutingDomainId` dès
+maintenant même avec un seul domaine, gates R4 `voxloom-audio` (ni lock ni await
+ni allocation par paquet), bench criterion en non-régression. Done P4 : deux
+clients officiels s'entendent (humain), test de charge testkit (N clients
+simulés, débit soutenu, zéro perte interne, latence routeur bornée), repli TCP
+vérifié en coupant l'UDP. Point d'entrée naturel : `voice.rs::reflect_loopback`,
+qui droppe aujourd'hui toute cible autre que 31. P5 peut aussi être clôturé en
+branchant son proptest sur le `SimulatedMumbleClient` (cf. « Reste à faire » §3).
+Voir la roadmap.
 
 Pièges P3 à retenir : (1) se connecter via `127.0.0.1`, pas `localhost` (IPv6) ;
 (2) TLS épinglé 1.2 (crash client macOS en 1.3) ; (3) la séparation R2 se fait en
 **commits distincts** (`voxloom-server/src` vs `voxloom-testkit/`) — jamais dans
 le même diff ; (4) le testkit n'active pas les lints workspace mais évite quand
-même `.unwrap()` (gate global).
+même `.unwrap()` (gate global) ; (5) **toute réponse au `Ping` TCP doit reporter
+les compteurs OCB2** (`good`/`late`/`lost`/`resync`) : un `good` à zéro fait
+basculer le vrai client en tunnel TCP définitif au bout de 20 s, en silence, sans
+qu'aucun test local ne le voie. Le certificat auto-signé étant régénéré à chaque
+lancement, le client repart d'une ardoise vierge à chaque redémarrage du serveur
+(il indexe cette décision par `sha1(clé publique)`), ce qui masque le symptôme en
+test court.
