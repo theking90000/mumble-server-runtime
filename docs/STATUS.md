@@ -4,7 +4,8 @@
 > reprend doit savoir. Autorité : la spec et la roadmap (`docs/`) ; ce fichier ne
 > fait que pointer l'état courant. Mettre à jour à chaque fin de tâche.
 
-**Phase courante : P4 (routage audio deux clients) — pas encore commencée. P3 est
+**Phase courante : P4 (routage audio deux clients) — T1 à T5 faits et verts en
+CI ; restent le bench criterion (T6) et le point de contrôle humain. P3 est
 close : checklist humaine signée le 2026-07-26.** Les trois critères de P3 sont
 tenus : client simulé rejouant le handshake sans violation §20 (CI), deux clients
 simulés simultanés à vues indépendantes (CI), et vrai client officiel connecté
@@ -293,6 +294,60 @@ Réserve confirmée et attendue : deux clients réels ne s'entendent **pas** ent
 eux (cible 0 droppée faute de graphe de routage), seul le loopback cible 31 est
 réfléchi. C'est P4.
 
+### Phase 4 — routage audio (T1–T5 faits, T6 + checkpoint humain restants)
+
+Le hot path dans sa forme conceptuelle définitive, avec un contenu trivial. Le
+snapshot dit « tout le monde entend tout le monde », mais il est publié par le
+mécanisme final : remplacer le corps de `compile` en P7/P8 ne touche rien d'autre.
+
+| Tranche | Livrable | Fichiers |
+|------|----------|----------|
+| T1 | `voxloom-audio` **pur** : `compile` (chemin froid), `AudioRoutingSnapshot`/`RouteMatrix`/`SenderMetadata` (§15.3), `may_receive` (§15.4), `AudioTarget`/`AudioContext` (§15.5), `outgoing_audio` (§15.2) | `voxloom-audio/src/{snapshot,policy,envelope}.rs` |
+| T2 | Câblage serveur : snapshot recompilé dans la section critique qui change l'appartenance, lu par clone d'`Arc` (le swap atomique de §23.2, zéro dépendance), routage cible 0, chiffrement par destinataire | `voxloom-server/src/{routing,state,voice}.rs` |
+| T3 | Parité inter-transport : les deux ingress convergent sur la même fonction, chaque destinataire est joint sur le transport qu'il a lui-même utilisé en dernier | `voxloom-server/src/{connection,routing}.rs` |
+| T4 | Limites §15.7 : bande de taille 2..=1024 o (référence) appliquée aux deux ingress, token bucket de paquets voix par connexion (horloge injectée) | `voxloom-server/src/limits.rs` |
+| T5 | **Vérificateur (R2)** : plan voix du client simulé + test de charge N clients, zéro perte interne, latence bornée | `voxloom-testkit/src/client.rs`, `tests/voice_load.rs` |
+
+Règle de transport, tracée en source (R1) : `aiUdpFlag` vaut 1 à la construction,
+passe à 0 quand le client tunnelise de l'audio, revient à 1 quand un datagramme
+de lui arrive ; l'émission choisit l'UDP seulement si le drapeau est mis **et**
+que le pair a une adresse prouvée. Un client dont l'UDP meurt en cours d'appel
+continue donc d'entendre tout le monde, par le tunnel. REF `Server::sendMessage`,
+`Server::run`, `ServerUser.cpp`.
+
+- **Le loopback n'est plus un cas particulier** : l'émetteur est stocké en tête
+  de sa propre plage de destinataires, donc la cible 31 est une route ordinaire
+  à un élément. Le comportement validé en P3 est préservé à l'identique.
+- **Cibles shout/whisper refusées et journalisées** plutôt que routées comme de
+  la parole normale, ce qui livrerait de la voix à des auditeurs que le client
+  n'a jamais adressés. Leur enregistrement par `VoiceTarget` est P9.
+- **Défaut trouvé par une propriété** (T1) : collapser les participants
+  dupliqués en « le premier gagne » faisait dépendre le domaine survivant de
+  l'ordre d'entrée, donc une même session pouvait compiler vers deux partitions
+  différentes. Une session revendiquée par deux domaines n'est désormais routée
+  par **aucun** : perdre de l'audio vaut mieux que le livrer dans la mauvaise
+  partition. C'est exactement la classe de bug que P7/P8 auraient héritée.
+
+**Vérifié** (`RUSTFLAGS="-D warnings"`, tout vert) : `ci/gates.sh` (dont les
+gates `voxloom-audio` : ni verrou, ni await, ni callback, ni accès à l'état),
+`ci/dep-direction.sh`, `ci/verifier-boundary.sh`, `cargo fmt --check`, `cargo
+clippy --workspace --all-targets --all-features`. Done-commands :
+- `cargo test -p voxloom-audio` — 16 tests (propriétés sur 4000 seeds + smoke).
+- `cargo test -p voxloom-server` — 12 tests, dont 4 d'intégration de routage
+  (deux clients en UDP, tunnel→UDP, UDP→tunnel, cible non enregistrée).
+- `cargo test -p voxloom-testkit` — 13 tests, dont le test de charge (4 clients,
+  25 rondes, 300 livraisons, zéro perte).
+- `ci/fuzz-smoke.sh 20` — 7 cibles, `audio_route` incluse (3,87 M exécutions).
+
+Commits P4 (sans `Co-Authored-By`, **séparés R2**) : `3fbe7b2` `voxloom-audio`,
+`68596d2` `voxloom-server` (implémenteur), `650e0f5` `voxloom-testkit`
+(vérificateur).
+
+**Reste pour clore P4** : (1) le bench criterion coût par paquet et par
+destinataire, transformé en test de non-régression (T6) ; (2) le point de
+contrôle humain — deux vrais clients qui s'entendent, et le repli TCP vérifié en
+coupant l'UDP. La checklist reste à écrire.
+
 ---
 
 ## Reste à faire
@@ -399,8 +454,9 @@ voxloom-protocol/         framing, messages prost, control, udp (decode + encode
 voxloom-crypto/           ocb2 (OCB2-AES128, CryptState)          (pur)
 voxloom-render/           P5 : vue normalisée, normalize, validate (§20)  (pur)
 voxloom-reconcile/        P5 : diff, planificateur (§12.5/12.6), ViewIdMapping (pur)
-voxloom-server/           P3 : serveur minimal (TLS, handshake, plan UDP, loopback)
-voxloom-testkit/          P3 : SimulatedMumbleClient, juge strict §20 (vérificateur R2)
+voxloom-audio/            P4 : routage pur (compile, may_receive, enveloppe)  (pur)
+voxloom-server/           P3+P4 : serveur minimal + routage voix, limites §15.7
+voxloom-testkit/          P3+P4 : SimulatedMumbleClient (§20 + plan voix), juge (R2)
 fuzz/                     cibles cargo-fuzz (workspace détaché, nightly)
 references/vendored/      vérité protocolaire (R1), pin v1.5.915
 fixtures/corpus/          7 captures réelles (zone vérificateur R2)
@@ -409,19 +465,22 @@ fixtures/corpus/          7 captures réelles (zone vérificateur R2)
 Note : `voxloom-render`/`voxloom-reconcile` sont sur `main` (P5 mergé le
 2026-07-24). `voxloom-server`/`voxloom-testkit` sur `main` (P3, le 2026-07-24).
 
-### Après P3
+### Après P4
 
-P3 est close (CI verte + checkpoint humain signé le 2026-07-26). La suite est
-**P4 (routage audio deux clients)** : le hot path (§15.1), snapshot
-`Arc<AudioRoutingSnapshot>` publié par swap atomique, `RoutingDomainId` dès
-maintenant même avec un seul domaine, gates R4 `voxloom-audio` (ni lock ni await
-ni allocation par paquet), bench criterion en non-régression. Done P4 : deux
-clients officiels s'entendent (humain), test de charge testkit (N clients
-simulés, débit soutenu, zéro perte interne, latence routeur bornée), repli TCP
-vérifié en coupant l'UDP. Point d'entrée naturel : `voice.rs::reflect_loopback`,
-qui droppe aujourd'hui toute cible autre que 31. P5 peut aussi être clôturé en
-branchant son proptest sur le `SimulatedMumbleClient` (cf. « Reste à faire » §3).
-Voir la roadmap.
+Le cœur de P4 est fait et vert (T1–T5, voir « Fait »). Restent le bench criterion
+(T6) et le point de contrôle humain. Ensuite **P6 (vues par connexion en live)**,
+qui branche le moteur pur de P5 sur les connexions réelles. P5 peut aussi être
+clôturé en branchant son proptest sur le `SimulatedMumbleClient`, qui sait
+désormais aussi juger le plan voix (cf. « Reste à faire » §3). Voir la roadmap.
+
+Pièges P4 à retenir : (1) les gates `audio/no-render-dep` et `audio/no-state-dep`
+grep les **chaînes** `voxloom[_-]render` / `voxloom[_-]state` sur tout
+`voxloom-audio/src`, **commentaires compris** — mentionner ces crates dans une
+doc, même pour expliquer qu'on n'en dépend pas, casse la CI ; formuler en
+concepts (« l'état vivant », « l'état canonique ») ; (2) le chiffrement par
+destinataire impose une allocation par destinataire (sortie OCB2 + enveloppe),
+inhérente à « chiffrer séparément pour chaque destinataire » (§15.2) — c'est ce
+que T6 doit mesurer avant toute optimisation (§27.4).
 
 Pièges P3 à retenir : (1) se connecter via `127.0.0.1`, pas `localhost` (IPv6) ;
 (2) TLS épinglé 1.2 (crash client macOS en 1.3) ; (3) la séparation R2 se fait en
