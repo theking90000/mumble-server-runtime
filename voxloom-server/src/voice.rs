@@ -14,19 +14,18 @@
 
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::Instant;
 
 use anyhow::{Context, Result};
 use ring::rand::{SecureRandom, SystemRandom};
 use tokio::net::UdpSocket;
+use voxloom_audio::AudioTarget;
 use voxloom_crypto::{BLOCK_SIZE, CryptState, KEY_SIZE};
 use voxloom_protocol::messages::{tcp, udp};
 use voxloom_protocol::{UdpMessage, decode_udp, encode_udp};
 
 use crate::state::{SharedState, UserEntry};
-
-/// The reserved Audio target meaning "server loopback".
-/// REF: references/vendored/MumbleUDP.proto : `target ... 2^{5} - 1 means "server loopback"`.
-pub const LOOPBACK_TARGET: u32 = 31;
+use crate::{limits, routing};
 
 /// Generate a fresh OCB2 key and the two nonces for a new connection, returning
 /// both the `CryptSetup` message to send and the server's `CryptState`.
@@ -143,6 +142,17 @@ impl VoicePlane {
         plaintext: &[u8],
         addr: SocketAddr,
     ) -> Vec<(Vec<u8>, SocketAddr)> {
+        // The size band applies to the decoded Mumble packet, so both ingress
+        // paths (here and the TCP tunnel) enforce the same rule (spec 15.7).
+        if !limits::is_acceptable_size(plaintext.len()) {
+            eprintln!(
+                "voxloom-server: dropping {}-byte voice packet from session {} (outside the accepted size band)",
+                plaintext.len(),
+                user.session
+            );
+            return Vec::new();
+        }
+
         match decode_udp(plaintext) {
             Ok(UdpMessage::Ping(ping)) => {
                 let reply = self.build_ping_reply(&ping);
@@ -151,7 +161,12 @@ impl VoicePlane {
                     None => Vec::new(),
                 }
             }
-            Ok(UdpMessage::Audio(audio)) => self.reflect_loopback(user, audio, addr),
+            Ok(UdpMessage::Audio(audio)) => {
+                // This user is reachable over UDP again, so its own audio should
+                // go back out that way (REF `Server::run`: `u->aiUdpFlag = 1`).
+                user.set_udp_mode(true);
+                route_client_audio(&self.state, user, &audio, Instant::now())
+            }
             Err(error) => {
                 eprintln!(
                     "voxloom-server: bad UDP envelope from session {}: {error}",
@@ -159,35 +174,6 @@ impl VoicePlane {
                 );
                 Vec::new()
             }
-        }
-    }
-
-    /// Reflect a loopback audio packet (target 31) back to its sender. Any other
-    /// target has no route in P3 and is dropped (real routing is P4).
-    fn reflect_loopback(
-        &self,
-        user: &Arc<UserEntry>,
-        audio: udp::Audio,
-        addr: SocketAddr,
-    ) -> Vec<(Vec<u8>, SocketAddr)> {
-        let target = match audio.header {
-            Some(udp::audio::Header::Target(target)) => target,
-            // Server->client audio uses `context`; a client should never send it.
-            _ => {
-                return Vec::new();
-            }
-        };
-        if target != LOOPBACK_TARGET {
-            // Normal talking (target 0) and whisper/shout targets need the audio
-            // routing graph, which is P4. Drop quietly.
-            return Vec::new();
-        }
-
-        let reflected = server_audio_for_tunnel(&audio, user.session);
-        let plaintext = encode_udp(&UdpMessage::Audio(reflected));
-        match encrypt(user, &plaintext) {
-            Some(sealed) => vec![(sealed, addr)],
-            None => Vec::new(),
         }
     }
 
@@ -206,20 +192,48 @@ impl VoicePlane {
     }
 }
 
-/// Turn a client-sent Audio packet into the server->client form: drop the target
-/// header, mark the context as normal speech, and stamp the sender session so the
-/// client can attribute the stream (§14.1). The Opus payload is untouched (§15.2).
-/// Shared by the UDP plane and the TCP tunnel fallback (`connection.rs`).
-pub fn server_audio_for_tunnel(source: &udp::Audio, sender_session: u32) -> udp::Audio {
-    udp::Audio {
-        header: Some(udp::audio::Header::Context(0)),
-        sender_session,
-        frame_number: source.frame_number,
-        opus_data: source.opus_data.clone(),
-        positional_data: source.positional_data.clone(),
-        volume_adjustment: 0.0,
-        is_terminator: source.is_terminator,
+/// Route one client-sent voice packet, whichever transport it arrived on.
+///
+/// Shared by the UDP plane and the TCP tunnel so both ingress paths apply the
+/// same budget, the same target vocabulary and the same routing table. Every
+/// path ends in an explicit outcome (L4): datagrams to send, a queued tunnel
+/// message, or a logged drop.
+pub fn route_client_audio(
+    state: &SharedState,
+    user: &UserEntry,
+    audio: &udp::Audio,
+    now: Instant,
+) -> Vec<(Vec<u8>, SocketAddr)> {
+    if !user.allow_voice_packet(now) {
+        eprintln!(
+            "voxloom-server: session {}: voice packet dropped, budget exhausted",
+            user.session
+        );
+        return Vec::new();
     }
+
+    let Some(target) = routing::client_target(audio) else {
+        // Server-to-client audio carries `context`; a client sending it is
+        // malformed. Refuse rather than guess an intent.
+        eprintln!(
+            "voxloom-server: session {}: voice packet without a target",
+            user.session
+        );
+        return Vec::new();
+    };
+
+    if let AudioTarget::Registered(raw) = target {
+        // Shout and whisper targets are registered with a `VoiceTarget` control
+        // message, which is refused (see `drop_unsupported`). Routing them as
+        // normal speech would deliver voice the client never asked to send here.
+        eprintln!(
+            "voxloom-server: session {}: refusing unregistered voice target {raw}",
+            user.session
+        );
+        return Vec::new();
+    }
+
+    routing::deliver_audio(state, user.session, audio, target)
 }
 
 /// Try to decrypt a datagram against a user's OCB2 state. `None` if the user has
@@ -231,7 +245,7 @@ fn try_decrypt(user: &UserEntry, datagram: &[u8]) -> Option<Vec<u8>> {
 }
 
 /// Encrypt a plaintext voice packet with a user's OCB2 state.
-fn encrypt(user: &UserEntry, plaintext: &[u8]) -> Option<Vec<u8>> {
+pub(crate) fn encrypt(user: &UserEntry, plaintext: &[u8]) -> Option<Vec<u8>> {
     let mut guard = user.crypto.lock().ok()?;
     guard.as_mut()?.encrypt(plaintext)
 }

@@ -13,14 +13,17 @@
 
 use std::collections::{BTreeMap, HashMap};
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 use tokio::sync::mpsc;
+use voxloom_audio::{AudioRoutingSnapshot, Participant, RoutingDomainId, compile};
 use voxloom_crypto::CryptState;
 use voxloom_protocol::ControlMessage;
 
 use crate::config::ServerConfig;
+use crate::limits::VoiceBudget;
 
 /// A Mumble user session id. Monotonic per process (spec §9.1).
 pub type SessionId = u32;
@@ -64,6 +67,19 @@ pub struct UserEntry {
     /// The UDP address bound to this session by cryptographic proof, if any. The
     /// IP alone never selects the session (spec §11.3).
     pub udp_addr: Mutex<Option<SocketAddr>>,
+    /// Whether audio for this user should go out over UDP rather than the TCP
+    /// tunnel. It follows the transport the user last sent audio on, which is
+    /// exactly the real server's rule.
+    ///
+    /// REF: references/mumble/src/murmur/ServerUser.cpp : `aiUdpFlag = 1` at
+    ///   construction.
+    /// REF: references/mumble/src/murmur/Server.cpp : `u->aiUdpFlag = 1` when a
+    ///   UDP audio packet is accepted, `u->aiUdpFlag = 0` in the `UDPTunnel`
+    ///   branch, and `sendMessage` picks UDP only when the flag is set and the
+    ///   user has a UDP socket.
+    pub udp_mode: AtomicBool,
+    /// Per-connection voice packet budget (spec 15.7).
+    pub voice_budget: Mutex<VoiceBudget>,
 }
 
 impl UserEntry {
@@ -87,6 +103,34 @@ impl UserEntry {
             Err(_) => (0, 0, 0),
         }
     }
+
+    /// Where audio for this user should be sent: its bound UDP address, or
+    /// `None` meaning "use the TCP tunnel".
+    ///
+    /// Both conditions of the real server are required: the user must have
+    /// proven a UDP address *and* have last spoken over UDP. A user that fell
+    /// back to the tunnel keeps receiving over the tunnel until its own
+    /// datagrams reach us again.
+    pub fn udp_destination(&self) -> Option<SocketAddr> {
+        if !self.udp_mode.load(Ordering::Relaxed) {
+            return None;
+        }
+        self.udp_addr.lock().ok().and_then(|guard| *guard)
+    }
+
+    /// Record which transport this user last sent audio on (`aiUdpFlag`).
+    pub fn set_udp_mode(&self, over_udp: bool) {
+        self.udp_mode.store(over_udp, Ordering::Relaxed);
+    }
+
+    /// Take one packet's worth of voice budget. `false` means drop (spec 15.7).
+    pub fn allow_voice_packet(&self, now: Instant) -> bool {
+        match self.voice_budget.lock() {
+            Ok(mut budget) => budget.allow(now),
+            // A poisoned budget must not become an unlimited one.
+            Err(_) => false,
+        }
+    }
 }
 
 /// The mutable part of the server state, guarded by one mutex.
@@ -95,6 +139,30 @@ struct Registry {
     /// Reverse index address -> session for fast UDP correlation of a peer that
     /// has already proven itself.
     udp_bindings: HashMap<SocketAddr, SessionId>,
+    /// The published routing table. Recompiled here, inside the same critical
+    /// section that changes membership, so a reader can never observe a snapshot
+    /// that disagrees with the user list it was built from.
+    routes: Arc<AudioRoutingSnapshot>,
+}
+
+impl Registry {
+    /// Recompile the routing table from the current membership (ADR-005's cold
+    /// path). Called on every membership change and nowhere else: the packet
+    /// path reads the result, it never triggers this.
+    fn republish_routes(&mut self, generation: u64) {
+        let participants: Vec<Participant> = self
+            .users
+            .keys()
+            .map(|session| {
+                Participant::new(
+                    voxloom_audio::SessionId::new(*session),
+                    // One domain until partitioning becomes real (Phase 7).
+                    RoutingDomainId::DEFAULT,
+                )
+            })
+            .collect();
+        self.routes = Arc::new(compile(&participants, generation));
+    }
 }
 
 /// Shared server state handed to every connection task and the voice plane.
@@ -105,6 +173,8 @@ pub struct SharedState {
     next_session: AtomicU32,
     config: ServerConfig,
     channels: Vec<ChannelDef>,
+    /// Monotonic generation stamped onto each published routing table.
+    route_generation: AtomicU64,
 }
 
 impl SharedState {
@@ -126,11 +196,27 @@ impl SharedState {
             registry: Mutex::new(Registry {
                 users: BTreeMap::new(),
                 udp_bindings: HashMap::new(),
+                routes: Arc::new(compile(&[], 0)),
             }),
             next_session: AtomicU32::new(1),
             config,
             channels,
+            route_generation: AtomicU64::new(0),
         })
+    }
+
+    /// The current routing table (spec 23.2).
+    ///
+    /// This is the publication mechanism: the reader clones an `Arc` out of the
+    /// registry and works from an immutable generation that cannot change under
+    /// it. The lock is held only for that clone, never across an await and never
+    /// while a packet is being routed.
+    pub fn routing_snapshot(&self) -> Arc<AudioRoutingSnapshot> {
+        let registry = match self.registry.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        Arc::clone(&registry.routes)
     }
 
     pub fn config(&self) -> &ServerConfig {
@@ -156,6 +242,8 @@ impl SharedState {
         };
         let others: Vec<Arc<UserEntry>> = registry.users.values().cloned().collect();
         registry.users.insert(entry.session, entry);
+        let generation = self.route_generation.fetch_add(1, Ordering::Relaxed) + 1;
+        registry.republish_routes(generation);
         others
     }
 
@@ -167,6 +255,31 @@ impl SharedState {
         };
         registry.users.remove(&session);
         registry.udp_bindings.retain(|_, bound| *bound != session);
+        let generation = self.route_generation.fetch_add(1, Ordering::Relaxed) + 1;
+        registry.republish_routes(generation);
+    }
+
+    /// Resolve a routing table's recipient list to live connections, taking the
+    /// registry lock once for the whole packet rather than once per recipient.
+    /// Sessions that left between compilation and delivery are simply absent.
+    pub fn users_for(&self, sessions: &[voxloom_audio::SessionId]) -> Vec<Arc<UserEntry>> {
+        let registry = match self.registry.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        sessions
+            .iter()
+            .filter_map(|session| registry.users.get(&session.get()).cloned())
+            .collect()
+    }
+
+    /// Look up one connected user by session.
+    pub fn user(&self, session: SessionId) -> Option<Arc<UserEntry>> {
+        let registry = match self.registry.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        registry.users.get(&session).cloned()
     }
 
     /// All currently connected users.

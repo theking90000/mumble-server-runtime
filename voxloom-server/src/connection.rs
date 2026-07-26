@@ -5,28 +5,39 @@
 //! then service the connection — pings, TCP-tunnelled loopback audio, and
 //! presence updates pushed from other connections — until it closes.
 
+use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::Instant;
 
 use anyhow::{Context, Result};
 use ring::rand::SystemRandom;
 use tokio::io::{AsyncReadExt, AsyncWriteExt, ReadHalf, WriteHalf};
-use tokio::net::TcpStream;
+use tokio::net::{TcpStream, UdpSocket};
 use tokio::sync::mpsc;
 use tokio_rustls::TlsAcceptor;
 use tokio_rustls::server::TlsStream;
 use voxloom_protocol::messages::tcp;
 use voxloom_protocol::{
-    ControlMessage, UdpMessage, decode_frame, decode_udp, encode_frame, encode_udp, parse_frame,
+    ControlMessage, UdpMessage, decode_frame, decode_udp, encode_frame, parse_frame,
 };
 
 use crate::handshake::{self, OtherUser};
+use crate::limits;
 use crate::state::{SessionId, SharedState, UserEntry};
-use crate::voice::{self, LOOPBACK_TARGET};
+use crate::voice;
 
 /// Serve one accepted TCP connection to completion. Errors (TLS failure, a
 /// malformed frame, a dropped socket) end the connection cleanly: the user is
 /// removed and its departure broadcast.
-pub async fn serve(tcp: TcpStream, acceptor: TlsAcceptor, state: Arc<SharedState>) -> Result<()> {
+///
+/// The UDP socket is needed even on this path: a client speaking through the TCP
+/// tunnel may have listeners who are on UDP, and they must still be reached.
+pub async fn serve(
+    tcp: TcpStream,
+    acceptor: TlsAcceptor,
+    state: Arc<SharedState>,
+    udp: Arc<UdpSocket>,
+) -> Result<()> {
     // A fresh randomness handle per connection; `SystemRandom` is a cheap ZST.
     let rng = SystemRandom::new();
     // Nagle off: control latency matters more than coalescing small frames.
@@ -63,6 +74,10 @@ pub async fn serve(tcp: TcpStream, acceptor: TlsAcceptor, state: Arc<SharedState
         outbound: outbound_tx,
         crypto: std::sync::Mutex::new(Some(crypt_state)),
         udp_addr: std::sync::Mutex::new(None),
+        // Optimistic, like the real server: assume UDP until the client tells
+        // us otherwise by tunnelling audio (REF `ServerUser.cpp`).
+        udp_mode: std::sync::atomic::AtomicBool::new(true),
+        voice_budget: std::sync::Mutex::new(crate::limits::VoiceBudget::new(Instant::now())),
     });
 
     // Register atomically and learn who was already present.
@@ -103,7 +118,15 @@ pub async fn serve(tcp: TcpStream, acceptor: TlsAcceptor, state: Arc<SharedState
 
     // Service the connection. On any exit path we deregister and announce the
     // departure, so this is wrapped to run the cleanup unconditionally.
-    let result = service_loop(&mut reader, &mut writer, &mut outbound_rx, &user).await;
+    let result = service_loop(
+        &mut reader,
+        &mut writer,
+        &mut outbound_rx,
+        &user,
+        &state,
+        &udp,
+    )
+    .await;
 
     state.remove_user(session);
     let departure = ControlMessage::UserRemove(tcp::UserRemove {
@@ -124,6 +147,8 @@ async fn service_loop(
     writer: &mut WriteHalf<TlsStream<TcpStream>>,
     outbound_rx: &mut mpsc::UnboundedReceiver<ControlMessage>,
     user: &UserEntry,
+    state: &SharedState,
+    udp: &UdpSocket,
 ) -> Result<()> {
     loop {
         tokio::select! {
@@ -133,6 +158,16 @@ async fn service_loop(
             incoming = reader.next() => {
                 match incoming? {
                     None => return Ok(()), // client closed the connection
+                    // Tunnelled audio is routed like any other voice packet, so
+                    // its recipients may well be on UDP.
+                    Some(ControlMessage::UdpTunnel(raw)) => {
+                        for (datagram, addr) in tunnel_audio(state, user, &raw) {
+                            if let Err(error) = udp.send_to(&datagram, addr).await {
+                                // One failed send never ends the connection.
+                                eprintln!("voxloom-server: UDP send to {addr} failed: {error}");
+                            }
+                        }
+                    }
                     Some(message) => {
                         for reply in handle_control(message, user) {
                             write_message(writer, &reply).await?;
@@ -174,13 +209,6 @@ fn handle_control(message: ControlMessage, user: &UserEntry) -> Vec<ControlMessa
         // plus our own crypt counters.
         ControlMessage::Ping(ping) => vec![ControlMessage::Ping(ping_reply(&ping, user))],
 
-        // Audio tunnelled over TCP (UDP fallback, §15.6): the payload is the
-        // plaintext UDP packet. Reflect loopback (target 31) back over the tunnel.
-        ControlMessage::UdpTunnel(raw) => match tunnel_loopback(&raw, session) {
-            Some(reply) => vec![reply],
-            None => Vec::new(),
-        },
-
         // Everything else a client may send is, in P3, either a self-state change
         // we do not yet reflect or an action we refuse by default (spec §16.5-16.8,
         // §16.11...). Drop it explicitly rather than acting on it (fail closed).
@@ -219,24 +247,49 @@ fn ping_reply(request: &tcp::Ping, user: &UserEntry) -> tcp::Ping {
     }
 }
 
-/// Reflect a TCP-tunnelled loopback audio packet, or `None` if it is not
-/// loopback (target 31) or is malformed.
-fn tunnel_loopback(raw: &[u8], session: SessionId) -> Option<ControlMessage> {
-    let audio = match decode_udp(raw) {
-        Ok(UdpMessage::Audio(audio)) => audio,
-        _ => return None,
-    };
-    let target = match audio.header {
-        Some(voxloom_protocol::messages::udp::audio::Header::Target(target)) => target,
-        _ => return None,
-    };
-    if target != LOOPBACK_TARGET {
-        return None;
+/// Route a TCP-tunnelled voice packet (the UDP fallback of spec 15.6).
+///
+/// The payload is a plaintext UDP packet, so once decoded it goes through the
+/// very same routing as a datagram. Returned datagrams are for recipients that
+/// are themselves on UDP; recipients on the tunnel are queued inside
+/// [`crate::routing::deliver_audio`], including this sender's own loopback.
+fn tunnel_audio(state: &SharedState, user: &UserEntry, raw: &[u8]) -> Vec<(Vec<u8>, SocketAddr)> {
+    // The client is telling us its UDP does not work, so its audio goes back
+    // over the tunnel until a datagram from it reaches us again.
+    // REF: references/mumble/src/murmur/Server.cpp : the `UDPTunnel` branch sets
+    //   `u->aiUdpFlag = 0`.
+    user.set_udp_mode(false);
+
+    if !limits::is_acceptable_size(raw.len()) {
+        eprintln!(
+            "voxloom-server: session {}: dropping {}-byte tunnelled packet (outside the accepted size band)",
+            user.session,
+            raw.len()
+        );
+        return Vec::new();
     }
-    let reflected = voice::server_audio_for_tunnel(&audio, session);
-    Some(ControlMessage::UdpTunnel(encode_udp(&UdpMessage::Audio(
-        reflected,
-    ))))
+
+    match decode_udp(raw) {
+        Ok(UdpMessage::Audio(audio)) => {
+            voice::route_client_audio(state, user, &audio, Instant::now())
+        }
+        Ok(UdpMessage::Ping(_)) => {
+            // Connectivity pings belong on the UDP socket; one arriving here
+            // measures nothing useful, so it is refused rather than answered.
+            eprintln!(
+                "voxloom-server: session {}: refusing a ping through the TCP tunnel",
+                user.session
+            );
+            Vec::new()
+        }
+        Err(error) => {
+            eprintln!(
+                "voxloom-server: session {}: bad tunnelled envelope: {error}",
+                user.session
+            );
+            Vec::new()
+        }
+    }
 }
 
 /// Log an unsupported client intent. Named so the drop is auditable rather than

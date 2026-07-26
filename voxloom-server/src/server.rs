@@ -81,10 +81,11 @@ impl Server {
             let (tcp, peer) = self.tcp.accept().await.context("TCP accept")?;
             let acceptor = self.acceptor.clone();
             let state = Arc::clone(&self.state);
+            let udp = Arc::clone(&self.udp);
             // Detached on purpose: a connection's lifetime is its own; its state
             // is deregistered inside `serve` on every exit path.
             tokio::spawn(async move {
-                if let Err(error) = connection::serve(tcp, acceptor, state).await {
+                if let Err(error) = connection::serve(tcp, acceptor, state, udp).await {
                     eprintln!("voxloom-server: connection {peer} ended: {error}");
                 }
             });

@@ -354,6 +354,232 @@ async fn tcp_tunnel_loopback_fallback() {
     handle.shutdown();
 }
 
+// ---------------------------------------------------------------------------
+// Phase 4: routing between two clients, on both transports.
+// ---------------------------------------------------------------------------
+
+const NORMAL_TARGET: u32 = 0;
+
+/// One connected test client: its control stream, its OCB2 state, its session
+/// and a UDP socket of its own.
+struct Client {
+    reader: FramedReader,
+    writer: WriteHalf<TlsStream<TcpStream>>,
+    crypt: CryptState,
+    session: u32,
+    sock: UdpSocket,
+}
+
+/// Connect, authenticate and take the crypto material.
+async fn join(handle: &ServerHandle, name: &str) -> Client {
+    let (mut reader, mut writer) = connect(handle).await;
+    let messages = do_handshake(&mut reader, &mut writer, name).await;
+    let (crypt, _) = client_crypt(&find_crypt_setup(&messages));
+    Client {
+        reader,
+        writer,
+        crypt,
+        session: session_of(&messages),
+        sock: UdpSocket::bind("127.0.0.1:0").await.expect("bind udp"),
+    }
+}
+
+/// Prove ownership of the UDP address by pinging, so the server binds it. The
+/// reply also confirms the association actually happened.
+async fn associate_udp(client: &mut Client, udp_addr: std::net::SocketAddr) {
+    let sealed = client
+        .crypt
+        .encrypt(&encode_udp(&UdpMessage::Ping(udp::Ping {
+            timestamp: 1,
+            ..Default::default()
+        })))
+        .expect("encrypt ping");
+    client.sock.send_to(&sealed, udp_addr).await.expect("send");
+
+    let mut buf = vec![0u8; 2048];
+    let (len, _from) =
+        tokio::time::timeout(Duration::from_secs(5), client.sock.recv_from(&mut buf))
+            .await
+            .expect("no UDP ping reply before timeout")
+            .expect("recv");
+    client
+        .crypt
+        .decrypt(&buf[..len])
+        .expect("decrypt ping reply");
+}
+
+fn speech(target: u32, opus: &[u8]) -> Vec<u8> {
+    encode_udp(&UdpMessage::Audio(udp::Audio {
+        header: Some(udp::audio::Header::Target(target)),
+        frame_number: 11,
+        opus_data: opus.to_vec(),
+        ..Default::default()
+    }))
+}
+
+/// Receive one datagram and decrypt it as audio.
+async fn recv_audio(client: &mut Client) -> udp::Audio {
+    let mut buf = vec![0u8; 2048];
+    let (len, _from) =
+        tokio::time::timeout(Duration::from_secs(5), client.sock.recv_from(&mut buf))
+            .await
+            .expect("no UDP audio before timeout")
+            .expect("recv");
+    let plain = client.crypt.decrypt(&buf[..len]).expect("decrypt audio");
+    match decode_udp(&plain).expect("decode audio") {
+        UdpMessage::Audio(audio) => audio,
+        other => panic!("expected Audio, got {other:?}"),
+    }
+}
+
+/// Read control frames until a tunnelled audio packet arrives.
+async fn recv_tunnelled_audio(client: &mut Client) -> udp::Audio {
+    loop {
+        match tokio::time::timeout(Duration::from_secs(5), client.reader.next()).await {
+            Ok(Some(ControlMessage::UdpTunnel(bytes))) => {
+                match decode_udp(&bytes).expect("decode tunnelled audio") {
+                    UdpMessage::Audio(audio) => return audio,
+                    other => panic!("expected Audio in tunnel, got {other:?}"),
+                }
+            }
+            Ok(Some(_)) => continue,
+            _ => panic!("no tunnelled audio before timeout"),
+        }
+    }
+}
+
+/// Normal speech (target 0) reaches the other connected client, carries the
+/// authenticated sender session and a context header, and never comes back to
+/// its own sender.
+#[tokio::test]
+async fn two_clients_hear_each_other_over_udp() {
+    let handle = start_server().await;
+    let udp_addr = handle.udp_addr;
+    let mut alice = join(&handle, "alice").await;
+    let mut bob = join(&handle, "bob").await;
+    associate_udp(&mut alice, udp_addr).await;
+    associate_udp(&mut bob, udp_addr).await;
+
+    let opus = vec![0x11u8, 0x22, 0x33, 0x44];
+    let sealed = alice
+        .crypt
+        .encrypt(&speech(NORMAL_TARGET, &opus))
+        .expect("encrypt");
+    alice.sock.send_to(&sealed, udp_addr).await.expect("send");
+
+    let heard = recv_audio(&mut bob).await;
+    assert_eq!(heard.opus_data, opus, "Opus survives the relay");
+    assert_eq!(
+        heard.sender_session, alice.session,
+        "the packet is attributed to the authenticated sender"
+    );
+    assert_eq!(
+        heard.header,
+        Some(udp::audio::Header::Context(0)),
+        "server-to-client audio carries context, not target"
+    );
+
+    // Bob already has it, so anything destined for Alice would have been sent
+    // before that; her socket must be empty.
+    let mut buf = vec![0u8; 2048];
+    let echo =
+        tokio::time::timeout(Duration::from_millis(250), alice.sock.recv_from(&mut buf)).await;
+    assert!(echo.is_err(), "normal speech must not echo to its sender");
+
+    handle.shutdown();
+}
+
+/// A client whose UDP does not work speaks through the tunnel; a listener on UDP
+/// still hears it. This is the cross-transport half of spec 15.6.
+#[tokio::test]
+async fn tunnelled_speech_reaches_a_udp_listener() {
+    let handle = start_server().await;
+    let udp_addr = handle.udp_addr;
+    let mut alice = join(&handle, "alice").await;
+    let mut bob = join(&handle, "bob").await;
+    associate_udp(&mut bob, udp_addr).await;
+
+    let opus = vec![0x55u8, 0x66];
+    send(
+        &mut alice.writer,
+        &ControlMessage::UdpTunnel(speech(NORMAL_TARGET, &opus)),
+    )
+    .await;
+
+    let heard = recv_audio(&mut bob).await;
+    assert_eq!(heard.opus_data, opus);
+    assert_eq!(heard.sender_session, alice.session);
+
+    handle.shutdown();
+}
+
+/// The mirror case: the speaker is on UDP, the listener fell back to the tunnel.
+/// Tunnelling audio is what tells the server the listener's UDP is unusable.
+#[tokio::test]
+async fn udp_speech_reaches_a_tunnelled_listener() {
+    let handle = start_server().await;
+    let udp_addr = handle.udp_addr;
+    let mut alice = join(&handle, "alice").await;
+    let mut bob = join(&handle, "bob").await;
+    associate_udp(&mut alice, udp_addr).await;
+    associate_udp(&mut bob, udp_addr).await;
+
+    // Bob tunnels a packet, which marks him as TCP-bound from now on.
+    send(
+        &mut bob.writer,
+        &ControlMessage::UdpTunnel(speech(NORMAL_TARGET, &[0x01])),
+    )
+    .await;
+    // Alice hears that one over UDP, which also proves the server processed it
+    // and therefore recorded Bob's transport before we speak to him.
+    let _first = recv_audio(&mut alice).await;
+
+    let opus = vec![0x77u8, 0x88, 0x99];
+    let sealed = alice
+        .crypt
+        .encrypt(&speech(NORMAL_TARGET, &opus))
+        .expect("encrypt");
+    alice.sock.send_to(&sealed, udp_addr).await.expect("send");
+
+    let heard = recv_tunnelled_audio(&mut bob).await;
+    assert_eq!(heard.opus_data, opus);
+    assert_eq!(heard.sender_session, alice.session);
+
+    handle.shutdown();
+}
+
+/// Shout and whisper targets are registered with `VoiceTarget`, which the server
+/// refuses. Routing one as if it were normal speech would deliver voice the
+/// client never asked to send to those listeners.
+#[tokio::test]
+async fn an_unregistered_voice_target_is_not_routed() {
+    let handle = start_server().await;
+    let udp_addr = handle.udp_addr;
+    let mut alice = join(&handle, "alice").await;
+    let mut bob = join(&handle, "bob").await;
+    associate_udp(&mut alice, udp_addr).await;
+    associate_udp(&mut bob, udp_addr).await;
+
+    let sealed = alice.crypt.encrypt(&speech(7, &[0xAB])).expect("encrypt");
+    alice.sock.send_to(&sealed, udp_addr).await.expect("send");
+
+    let mut buf = vec![0u8; 2048];
+    let delivered =
+        tokio::time::timeout(Duration::from_millis(250), bob.sock.recv_from(&mut buf)).await;
+    assert!(delivered.is_err(), "target 7 must not be routed");
+
+    // The plane is still alive: normal speech right after still gets through.
+    let sealed = alice
+        .crypt
+        .encrypt(&speech(NORMAL_TARGET, &[0xCD]))
+        .expect("encrypt");
+    alice.sock.send_to(&sealed, udp_addr).await.expect("send");
+    let heard = recv_audio(&mut bob).await;
+    assert_eq!(heard.opus_data, vec![0xCD]);
+
+    handle.shutdown();
+}
+
 /// Minimal framed reader over a TLS client stream.
 struct FramedReader {
     read: ReadHalf<TlsStream<TcpStream>>,
