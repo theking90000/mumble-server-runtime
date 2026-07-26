@@ -10,16 +10,16 @@
 //! Each invariant is enforced by its own named `check_*` method, so a mutation
 //! that deletes one check is visible and testable in isolation.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
-use voxloom_protocol::ControlMessage;
-use voxloom_protocol::messages::tcp;
+use voxloom_protocol::messages::{tcp, udp};
+use voxloom_protocol::{ControlMessage, UdpMessage, decode_udp};
 
 /// The root channel is always id 0 (spec §11.2, §20 invariant 1).
 pub const ROOT_CHANNEL_ID: u32 = 0;
 
 /// A channel as the client models it.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModelChannel {
     pub id: u32,
     /// Parent channel id; `None` for the root.
@@ -28,7 +28,7 @@ pub struct ModelChannel {
 }
 
 /// A user as the client models it.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModelUser {
     pub session: u32,
     pub name: String,
@@ -47,6 +47,8 @@ pub struct ClientModel {
     pub users: BTreeMap<u32, ModelUser>,
     /// Effective root permissions from `ServerSync`.
     pub root_permissions: Option<u64>,
+    retired_channels: BTreeSet<u32>,
+    retired_sessions: BTreeSet<u32>,
 }
 
 impl ClientModel {
@@ -56,18 +58,82 @@ impl ClientModel {
 
     /// Apply one server->client control message, enforcing every §20 invariant it
     /// touches. Panics on any violation (the model's contract, §26.6).
+    ///
+    // REF: references/mumble/src/Mumble.proto:ChannelState, UserState, TextMessage,
+    // PermissionDenied, ACL, ContextAction, UserList, VoiceTarget, PermissionQuery,
+    // UserStats, RequestBlob, and PluginDataTransmission entity reference fields.
     pub fn apply(&mut self, message: &ControlMessage) {
         match message {
+            ControlMessage::UdpTunnel(bytes) => {
+                let message = decode_udp(bytes)
+                    .unwrap_or_else(|error| panic!("invalid tunneled UDP message: {error}"));
+                if let UdpMessage::Audio(audio) = message {
+                    self.apply_audio(&audio);
+                }
+            }
             ControlMessage::ChannelState(cs) => self.apply_channel_state(cs),
             ControlMessage::ChannelRemove(cr) => self.apply_channel_remove(cr),
             ControlMessage::UserState(us) => self.apply_user_state(us),
             ControlMessage::UserRemove(ur) => self.apply_user_remove(ur),
             ControlMessage::ServerSync(sync) => self.apply_server_sync(sync),
-            // Other messages (Version, CryptSetup, CodecVersion, ServerConfig,
-            // Ping, PermissionQuery...) carry no §20 structural invariant for the
-            // client model to enforce here; they are accepted.
+            ControlMessage::TextMessage(message) => self.check_text_references(message),
+            ControlMessage::PermissionDenied(message) => {
+                self.check_optional_channel(message.channel_id, "PermissionDenied");
+                self.check_optional_session(message.session, "PermissionDenied");
+            }
+            ControlMessage::Acl(message) => {
+                self.check_channel_reference(message.channel_id, "ACL");
+            }
+            ControlMessage::ContextAction(message) => {
+                self.check_optional_session(message.session, "ContextAction");
+                self.check_optional_channel(message.channel_id, "ContextAction");
+            }
+            ControlMessage::UserList(message) => {
+                for user in &message.users {
+                    self.check_optional_channel(user.last_channel, "UserList.last_channel");
+                }
+            }
+            ControlMessage::VoiceTarget(message) => {
+                for target in &message.targets {
+                    self.check_sessions(&target.session, "VoiceTarget.session");
+                    self.check_optional_channel(target.channel_id, "VoiceTarget.channel_id");
+                }
+            }
+            ControlMessage::PermissionQuery(message) => {
+                self.check_optional_channel(message.channel_id, "PermissionQuery");
+            }
+            ControlMessage::UserStats(message) => {
+                self.check_optional_session(message.session, "UserStats");
+            }
+            ControlMessage::RequestBlob(message) => {
+                self.check_sessions(&message.session_texture, "RequestBlob.session_texture");
+                self.check_sessions(&message.session_comment, "RequestBlob.session_comment");
+                self.check_channels(
+                    &message.channel_description,
+                    "RequestBlob.channel_description",
+                );
+            }
+            ControlMessage::PluginDataTransmission(message) => {
+                self.check_optional_session(
+                    message.sender_session,
+                    "PluginDataTransmission.sender_session",
+                );
+                self.check_sessions(
+                    &message.receiver_sessions,
+                    "PluginDataTransmission.receiver_sessions",
+                );
+            }
+            // These messages carry no channel or session reference.
             _ => {}
         }
+    }
+
+    /// Apply one server-to-client audio message.
+    ///
+    // REF: references/mumble/src/MumbleUDP.proto:Audio.sender_session
+    // REF: references/mumble/src/mumble/ServerHandler.cpp:handleVoicePacket
+    pub fn apply_audio(&self, audio: &udp::Audio) {
+        self.check_session_reference(audio.sender_session, "Audio.sender_session");
     }
 
     fn apply_channel_state(&mut self, cs: &tcp::ChannelState) {
@@ -80,10 +146,21 @@ impl ClientModel {
 
         let is_new = !self.channels.contains_key(&id);
         if is_new {
+            if self.retired_channels.contains(&id) {
+                panic!("§20 invariant 12: retired channel id {id} was reused");
+            }
             // Invariant 3: a new child channel must reference an already-visible
             // parent (the root, id 0, is the only channel allowed to have none).
             self.check_parent_visible(id, cs.parent);
+            if id != ROOT_CHANNEL_ID && cs.name.is_none() {
+                panic!("§20: new channel {id} has no name");
+            }
+        } else {
+            self.check_optional_channel(cs.parent, "ChannelState.parent");
         }
+        self.check_channels(&cs.links, "ChannelState.links");
+        self.check_channels(&cs.links_add, "ChannelState.links_add");
+        self.check_channels(&cs.links_remove, "ChannelState.links_remove");
 
         let entry = self.channels.entry(id).or_insert_with(|| ModelChannel {
             id,
@@ -113,9 +190,21 @@ impl ClientModel {
         if id == ROOT_CHANNEL_ID {
             panic!("§20 invariant 2: server tried to remove the root channel");
         }
+        self.check_channel_reference(id, "ChannelRemove.channel_id");
         // Invariant 8: an occupied channel is never removed.
         self.check_channel_empty(id);
+        if let Some(child) = self
+            .channels
+            .values()
+            .find(|channel| channel.parent == Some(id))
+        {
+            panic!(
+                "§20 invariant 10: channel {id} removed before child {}",
+                child.id
+            );
+        }
         self.channels.remove(&id);
+        self.retired_channels.insert(id);
     }
 
     fn apply_user_state(&mut self, us: &tcp::UserState) {
@@ -123,10 +212,26 @@ impl ClientModel {
             Some(session) => session,
             None => panic!("§20: UserState without a session id"),
         };
+        let is_new = !self.users.contains_key(&session);
+        if is_new && self.retired_sessions.contains(&session) {
+            panic!("§20 invariant 12: retired session id {session} was reused");
+        }
+        if is_new && us.name.is_none() {
+            panic!("§20: new session {session} has no name");
+        }
 
         // Invariant 15: an actor, if named, must be a visible session.
-        if let Some(actor) = us.actor {
-            self.check_actor_visible(actor);
+        self.check_optional_session(us.actor, "UserState.actor");
+        self.check_channels(&us.listening_channel_add, "UserState.listening_channel_add");
+        self.check_channels(
+            &us.listening_channel_remove,
+            "UserState.listening_channel_remove",
+        );
+        for adjustment in &us.listening_volume_adjustment {
+            self.check_optional_channel(
+                adjustment.listening_channel,
+                "UserState.VolumeAdjustment.listening_channel",
+            );
         }
 
         // The channel defaults to root when the server omits channel_id.
@@ -151,9 +256,12 @@ impl ClientModel {
     }
 
     fn apply_user_remove(&mut self, ur: &tcp::UserRemove) {
+        self.check_session_reference(ur.session, "UserRemove.session");
+        self.check_optional_session(ur.actor, "UserRemove.actor");
         // Removing our own session is a disconnect; removing another is a normal
         // presence update. Either way, drop it from the view.
         self.users.remove(&ur.session);
+        self.retired_sessions.insert(ur.session);
     }
 
     fn apply_server_sync(&mut self, sync: &tcp::ServerSync) {
@@ -212,11 +320,49 @@ impl ClientModel {
         }
     }
 
-    /// Invariant 15: a referenced actor session must be visible.
-    fn check_actor_visible(&self, actor: u32) {
-        if !self.users.contains_key(&actor) {
-            panic!("§20 invariant 15: message references invisible actor session {actor}");
+    /// Invariants 14 and 15: every referenced session is visible to this client.
+    fn check_session_reference(&self, session: u32, context: &str) {
+        if !self.users.contains_key(&session) {
+            panic!("§20 invariants 14/15: {context} references invisible session {session}");
         }
+    }
+
+    fn check_optional_session(&self, session: Option<u32>, context: &str) {
+        if let Some(session) = session {
+            self.check_session_reference(session, context);
+        }
+    }
+
+    fn check_sessions(&self, sessions: &[u32], context: &str) {
+        for session in sessions {
+            self.check_session_reference(*session, context);
+        }
+    }
+
+    /// Invariant 14: every referenced channel is visible to this client.
+    fn check_channel_reference(&self, channel: u32, context: &str) {
+        if !self.channels.contains_key(&channel) {
+            panic!("§20 invariant 14: {context} references invisible channel {channel}");
+        }
+    }
+
+    fn check_optional_channel(&self, channel: Option<u32>, context: &str) {
+        if let Some(channel) = channel {
+            self.check_channel_reference(channel, context);
+        }
+    }
+
+    fn check_channels(&self, channels: &[u32], context: &str) {
+        for channel in channels {
+            self.check_channel_reference(*channel, context);
+        }
+    }
+
+    fn check_text_references(&self, message: &tcp::TextMessage) {
+        self.check_optional_session(message.actor, "TextMessage.actor");
+        self.check_sessions(&message.session, "TextMessage.session");
+        self.check_channels(&message.channel_id, "TextMessage.channel_id");
+        self.check_channels(&message.tree_id, "TextMessage.tree_id");
     }
 
     /// Invariant 4: the channel parent chain contains no cycle. Walks from every
@@ -272,6 +418,20 @@ mod tests {
             session: Some(session),
             ..Default::default()
         })
+    }
+
+    fn synced_model() -> ClientModel {
+        let mut model = ClientModel::new();
+        model.apply(&channel(ROOT_CHANNEL_ID, None));
+        model.apply(&user(1, Some(ROOT_CHANNEL_ID)));
+        model.apply(&sync(1));
+        model
+    }
+
+    fn rejects_invisible_reference(label: &str, message: ControlMessage) {
+        let mut model = synced_model();
+        let result = std::panic::catch_unwind(move || model.apply(&message));
+        assert!(result.is_err(), "{label} accepted an invisible reference");
     }
 
     #[test]
@@ -351,15 +511,334 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "invariant 15")]
+    #[should_panic(expected = "invariants 14/15")]
     fn invisible_actor_panics() {
         let mut model = ClientModel::new();
         model.apply(&channel(0, None));
         model.apply(&ControlMessage::UserState(tcp::UserState {
             session: Some(1),
             actor: Some(42), // session 42 is not visible
+            name: Some("user1".to_string()),
             channel_id: Some(0),
             ..Default::default()
         }));
+    }
+
+    #[test]
+    #[should_panic(expected = "invariant 4")]
+    fn cyclic_channel_move_panics() {
+        let mut model = ClientModel::new();
+        model.apply(&channel(ROOT_CHANNEL_ID, None));
+        model.apply(&channel(1, Some(ROOT_CHANNEL_ID)));
+        model.apply(&channel(2, Some(1)));
+        model.apply(&ControlMessage::ChannelState(tcp::ChannelState {
+            channel_id: Some(1),
+            parent: Some(2),
+            ..Default::default()
+        }));
+    }
+
+    #[test]
+    #[should_panic(expected = "invariant 10")]
+    fn parent_removed_before_child_panics() {
+        let mut model = ClientModel::new();
+        model.apply(&channel(ROOT_CHANNEL_ID, None));
+        model.apply(&channel(1, Some(ROOT_CHANNEL_ID)));
+        model.apply(&channel(2, Some(1)));
+        model.apply(&ControlMessage::ChannelRemove(tcp::ChannelRemove {
+            channel_id: 1,
+        }));
+    }
+
+    #[test]
+    #[should_panic(expected = "invariant 12")]
+    fn retired_channel_id_reuse_panics() {
+        let mut model = ClientModel::new();
+        model.apply(&channel(ROOT_CHANNEL_ID, None));
+        model.apply(&channel(1, Some(ROOT_CHANNEL_ID)));
+        model.apply(&ControlMessage::ChannelRemove(tcp::ChannelRemove {
+            channel_id: 1,
+        }));
+        model.apply(&channel(1, Some(ROOT_CHANNEL_ID)));
+    }
+
+    #[test]
+    #[should_panic(expected = "invariant 12")]
+    fn retired_session_id_reuse_panics() {
+        let mut model = ClientModel::new();
+        model.apply(&channel(ROOT_CHANNEL_ID, None));
+        model.apply(&user(1, Some(ROOT_CHANNEL_ID)));
+        model.apply(&ControlMessage::UserRemove(tcp::UserRemove {
+            session: 1,
+            ..Default::default()
+        }));
+        model.apply(&user(1, Some(ROOT_CHANNEL_ID)));
+    }
+
+    #[test]
+    fn every_control_entity_reference_is_checked() {
+        let invisible = 99;
+        let cases = vec![
+            (
+                "ChannelRemove.channel_id",
+                ControlMessage::ChannelRemove(tcp::ChannelRemove {
+                    channel_id: invisible,
+                }),
+            ),
+            (
+                "ChannelState.parent",
+                ControlMessage::ChannelState(tcp::ChannelState {
+                    channel_id: Some(ROOT_CHANNEL_ID),
+                    parent: Some(invisible),
+                    ..Default::default()
+                }),
+            ),
+            (
+                "ChannelState.links",
+                ControlMessage::ChannelState(tcp::ChannelState {
+                    channel_id: Some(ROOT_CHANNEL_ID),
+                    links: vec![invisible],
+                    ..Default::default()
+                }),
+            ),
+            (
+                "ChannelState.links_add",
+                ControlMessage::ChannelState(tcp::ChannelState {
+                    channel_id: Some(ROOT_CHANNEL_ID),
+                    links_add: vec![invisible],
+                    ..Default::default()
+                }),
+            ),
+            (
+                "ChannelState.links_remove",
+                ControlMessage::ChannelState(tcp::ChannelState {
+                    channel_id: Some(ROOT_CHANNEL_ID),
+                    links_remove: vec![invisible],
+                    ..Default::default()
+                }),
+            ),
+            (
+                "UserState.actor",
+                ControlMessage::UserState(tcp::UserState {
+                    session: Some(1),
+                    actor: Some(invisible),
+                    ..Default::default()
+                }),
+            ),
+            (
+                "UserState.channel_id",
+                ControlMessage::UserState(tcp::UserState {
+                    session: Some(1),
+                    channel_id: Some(invisible),
+                    ..Default::default()
+                }),
+            ),
+            (
+                "UserState.listening_channel_add",
+                ControlMessage::UserState(tcp::UserState {
+                    session: Some(1),
+                    listening_channel_add: vec![invisible],
+                    ..Default::default()
+                }),
+            ),
+            (
+                "UserState.listening_channel_remove",
+                ControlMessage::UserState(tcp::UserState {
+                    session: Some(1),
+                    listening_channel_remove: vec![invisible],
+                    ..Default::default()
+                }),
+            ),
+            (
+                "UserState.VolumeAdjustment.listening_channel",
+                ControlMessage::UserState(tcp::UserState {
+                    session: Some(1),
+                    listening_volume_adjustment: vec![tcp::user_state::VolumeAdjustment {
+                        listening_channel: Some(invisible),
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                }),
+            ),
+            (
+                "UserRemove.session",
+                ControlMessage::UserRemove(tcp::UserRemove {
+                    session: invisible,
+                    ..Default::default()
+                }),
+            ),
+            (
+                "UserRemove.actor",
+                ControlMessage::UserRemove(tcp::UserRemove {
+                    session: 1,
+                    actor: Some(invisible),
+                    ..Default::default()
+                }),
+            ),
+            (
+                "TextMessage.actor",
+                ControlMessage::TextMessage(tcp::TextMessage {
+                    actor: Some(invisible),
+                    ..Default::default()
+                }),
+            ),
+            (
+                "TextMessage.session",
+                ControlMessage::TextMessage(tcp::TextMessage {
+                    session: vec![invisible],
+                    ..Default::default()
+                }),
+            ),
+            (
+                "TextMessage.channel_id",
+                ControlMessage::TextMessage(tcp::TextMessage {
+                    channel_id: vec![invisible],
+                    ..Default::default()
+                }),
+            ),
+            (
+                "TextMessage.tree_id",
+                ControlMessage::TextMessage(tcp::TextMessage {
+                    tree_id: vec![invisible],
+                    ..Default::default()
+                }),
+            ),
+            (
+                "PermissionDenied.channel_id",
+                ControlMessage::PermissionDenied(tcp::PermissionDenied {
+                    channel_id: Some(invisible),
+                    ..Default::default()
+                }),
+            ),
+            (
+                "PermissionDenied.session",
+                ControlMessage::PermissionDenied(tcp::PermissionDenied {
+                    session: Some(invisible),
+                    ..Default::default()
+                }),
+            ),
+            (
+                "ACL.channel_id",
+                ControlMessage::Acl(tcp::Acl {
+                    channel_id: invisible,
+                    ..Default::default()
+                }),
+            ),
+            (
+                "ContextAction.session",
+                ControlMessage::ContextAction(tcp::ContextAction {
+                    session: Some(invisible),
+                    ..Default::default()
+                }),
+            ),
+            (
+                "ContextAction.channel_id",
+                ControlMessage::ContextAction(tcp::ContextAction {
+                    channel_id: Some(invisible),
+                    ..Default::default()
+                }),
+            ),
+            (
+                "UserList.last_channel",
+                ControlMessage::UserList(tcp::UserList {
+                    users: vec![tcp::user_list::User {
+                        last_channel: Some(invisible),
+                        ..Default::default()
+                    }],
+                }),
+            ),
+            (
+                "VoiceTarget.session",
+                ControlMessage::VoiceTarget(tcp::VoiceTarget {
+                    targets: vec![tcp::voice_target::Target {
+                        session: vec![invisible],
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                }),
+            ),
+            (
+                "VoiceTarget.channel_id",
+                ControlMessage::VoiceTarget(tcp::VoiceTarget {
+                    targets: vec![tcp::voice_target::Target {
+                        channel_id: Some(invisible),
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                }),
+            ),
+            (
+                "PermissionQuery.channel_id",
+                ControlMessage::PermissionQuery(tcp::PermissionQuery {
+                    channel_id: Some(invisible),
+                    ..Default::default()
+                }),
+            ),
+            (
+                "UserStats.session",
+                ControlMessage::UserStats(tcp::UserStats {
+                    session: Some(invisible),
+                    ..Default::default()
+                }),
+            ),
+            (
+                "RequestBlob.session_texture",
+                ControlMessage::RequestBlob(tcp::RequestBlob {
+                    session_texture: vec![invisible],
+                    ..Default::default()
+                }),
+            ),
+            (
+                "RequestBlob.session_comment",
+                ControlMessage::RequestBlob(tcp::RequestBlob {
+                    session_comment: vec![invisible],
+                    ..Default::default()
+                }),
+            ),
+            (
+                "RequestBlob.channel_description",
+                ControlMessage::RequestBlob(tcp::RequestBlob {
+                    channel_description: vec![invisible],
+                    ..Default::default()
+                }),
+            ),
+            (
+                "PluginDataTransmission.sender_session",
+                ControlMessage::PluginDataTransmission(tcp::PluginDataTransmission {
+                    sender_session: Some(invisible),
+                    ..Default::default()
+                }),
+            ),
+            (
+                "PluginDataTransmission.receiver_sessions",
+                ControlMessage::PluginDataTransmission(tcp::PluginDataTransmission {
+                    receiver_sessions: vec![invisible],
+                    ..Default::default()
+                }),
+            ),
+        ];
+
+        for (label, message) in cases {
+            rejects_invisible_reference(label, message);
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "Audio.sender_session")]
+    fn udp_audio_from_invisible_sender_panics() {
+        synced_model().apply_audio(&udp::Audio {
+            sender_session: 99,
+            ..Default::default()
+        });
+    }
+
+    #[test]
+    #[should_panic(expected = "Audio.sender_session")]
+    fn tunneled_audio_from_invisible_sender_panics() {
+        let bytes = voxloom_protocol::encode_udp(&UdpMessage::Audio(udp::Audio {
+            sender_session: 99,
+            ..Default::default()
+        }));
+        synced_model().apply(&ControlMessage::UdpTunnel(bytes));
     }
 }

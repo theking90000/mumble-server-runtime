@@ -66,11 +66,12 @@ async fn n_clients_relay_voice_without_internal_loss() {
         clients.push(client);
     }
 
-    // Let the presence broadcasts settle so every client's model holds all the
-    // others before any voice moves. A §20 violation in those messages panics
-    // inside the model, which is the judge doing its other job.
+    // Wait for every model to hold all participants before any voice moves.
     for client in &mut clients {
-        client.pump(Duration::from_millis(200)).await.expect("pump");
+        client
+            .wait_until(DELIVERY_TIMEOUT, |model| model.users.len() == CLIENTS)
+            .await
+            .expect("complete participant view");
     }
     for (index, client) in clients.iter().enumerate() {
         assert_eq!(

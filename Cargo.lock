@@ -1235,7 +1235,10 @@ dependencies = [
  "tokio-rustls",
  "voxloom-crypto",
  "voxloom-protocol",
+ "voxloom-reconcile",
+ "voxloom-render",
  "voxloom-server",
+ "voxloom-session",
 ]
 
 [[package]]
