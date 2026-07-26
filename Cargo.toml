@@ -46,8 +46,8 @@ members = [
     # Le snapshot métier reste opaque ; seules les sorties sémantiques de vue et
     # de routage traversent cette frontière.
     "voxloom-flavor",
-    # Phase 7 T2 : rendu complet d'un snapshot métier opaque pour toutes les
-    # connexions. Pur et sans effet de publication avant les tranches T3/T4.
+    # Phase 7 T2/T3 : rendu complet d'un snapshot métier opaque puis validation
+    # des vues, routes et interactions. Pur et sans effet avant la tranche T4.
     "voxloom-control",
     # Phase 3 : serveur minimal — accepte la TLS, déroule le handshake sans
     # Murmur, associe l'UDP par preuve cryptographique, répond aux pings et

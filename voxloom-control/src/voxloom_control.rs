@@ -13,6 +13,13 @@ use std::sync::Arc;
 
 use voxloom_flavor::{ConnectionId, FlavorError, FlavorRevision, RenderOutput, VoiceFlavor};
 
+mod validation;
+
+pub use validation::{
+    AudioRouteValidationError, DesiredViewValidationError, FlavorOutputValidationError,
+    InteractionRegistryValidationError, ValidatedSnapshot, validate_rendered_snapshot,
+};
+
 /// Complete render result for one immutable flavor snapshot.
 ///
 /// Keeping the `Arc` alongside the outputs makes the exact source snapshot
@@ -77,7 +84,7 @@ where
 mod snapshot_publication {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
-    use voxloom_flavor::{DesiredClientView, RenderOutput};
+    use voxloom_flavor::{DesiredClientView, InteractionRegistry, RenderOutput};
 
     use super::*;
 
@@ -117,6 +124,7 @@ mod snapshot_publication {
             Ok(RenderOutput::new(
                 DesiredClientView::empty(),
                 BTreeSet::new(),
+                InteractionRegistry::default(),
             ))
         }
     }

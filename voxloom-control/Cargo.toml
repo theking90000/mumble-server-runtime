@@ -13,6 +13,7 @@ name = "voxloom_control"
 path = "src/voxloom_control.rs"
 
 [dependencies]
+thiserror = "2"
 voxloom-flavor = { path = "../voxloom-flavor" }
 
 [lints]

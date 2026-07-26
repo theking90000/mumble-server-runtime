@@ -93,11 +93,36 @@ impl DesiredClientView {
     }
 }
 
-/// One directional voice authorization before connection-to-session resolution.
+/// One receiver-owned directional authorization before session-id resolution.
+///
+/// The output rendered for `receiver` may include `sender -> receiver` only
+/// when its desired view also projects the sender.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct DesiredAudioRoute {
     pub sender: ConnectionId,
     pub receiver: ConnectionId,
+}
+
+/// Context actions that may be dispatched for one rendered connection.
+///
+/// The registry carries stable identities only. The concrete flavor remains
+/// responsible for interpreting an action after Voxloom resolves and
+/// revalidates an invocation against the published generation.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct InteractionRegistry {
+    actions: BTreeSet<ActionKey>,
+}
+
+impl InteractionRegistry {
+    #[must_use]
+    pub fn new(actions: BTreeSet<ActionKey>) -> Self {
+        Self { actions }
+    }
+
+    #[must_use]
+    pub fn actions(&self) -> &BTreeSet<ActionKey> {
+        &self.actions
+    }
 }
 
 /// Declarative voice outputs for one connection and one snapshot revision.
@@ -109,14 +134,20 @@ pub struct DesiredAudioRoute {
 pub struct RenderOutput {
     client_view: DesiredClientView,
     audio_routes: BTreeSet<DesiredAudioRoute>,
+    interactions: InteractionRegistry,
 }
 
 impl RenderOutput {
     #[must_use]
-    pub fn new(client_view: DesiredClientView, audio_routes: BTreeSet<DesiredAudioRoute>) -> Self {
+    pub fn new(
+        client_view: DesiredClientView,
+        audio_routes: BTreeSet<DesiredAudioRoute>,
+        interactions: InteractionRegistry,
+    ) -> Self {
         Self {
             client_view,
             audio_routes,
+            interactions,
         }
     }
 
@@ -131,7 +162,18 @@ impl RenderOutput {
     }
 
     #[must_use]
-    pub fn into_parts(self) -> (DesiredClientView, BTreeSet<DesiredAudioRoute>) {
-        (self.client_view, self.audio_routes)
+    pub fn interactions(&self) -> &InteractionRegistry {
+        &self.interactions
+    }
+
+    #[must_use]
+    pub fn into_parts(
+        self,
+    ) -> (
+        DesiredClientView,
+        BTreeSet<DesiredAudioRoute>,
+        InteractionRegistry,
+    ) {
+        (self.client_view, self.audio_routes, self.interactions)
     }
 }

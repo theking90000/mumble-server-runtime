@@ -15,7 +15,7 @@ mod output;
 
 pub use output::{
     DesiredAudioRoute, DesiredChannel, DesiredClientView, DesiredListenerRelation, DesiredUser,
-    RenderOutput,
+    InteractionRegistry, RenderOutput,
 };
 pub use voxloom_render::{
     ActionKey, ActionTarget, BlobRef, ChannelKey, ContextActionView, PermissionBits, SemanticKey,
@@ -148,10 +148,14 @@ mod tests {
             }
 
             let routes = BTreeSet::from([DesiredAudioRoute {
-                sender: connection,
-                receiver: ConnectionId::new(8),
+                sender: ConnectionId::new(8),
+                receiver: connection,
             }]);
-            Ok(RenderOutput::new(DesiredClientView::empty(), routes))
+            Ok(RenderOutput::new(
+                DesiredClientView::empty(),
+                routes,
+                InteractionRegistry::default(),
+            ))
         }
     }
 
@@ -188,13 +192,15 @@ mod tests {
                 assert_eq!(
                     output.audio_routes(),
                     &BTreeSet::from([DesiredAudioRoute {
-                        sender: ConnectionId::new(7),
-                        receiver: ConnectionId::new(8),
+                        sender: ConnectionId::new(8),
+                        receiver: ConnectionId::new(7),
                     }])
                 );
-                let (view, routes) = output.into_parts();
+                assert_eq!(output.interactions(), &InteractionRegistry::default());
+                let (view, routes, interactions) = output.into_parts();
                 assert_eq!(view, DesiredClientView::empty());
                 assert_eq!(routes.len(), 1);
+                assert_eq!(interactions, InteractionRegistry::default());
             }
             Err(error) => panic!("render unexpectedly failed: {error}"),
         }

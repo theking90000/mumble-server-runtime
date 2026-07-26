@@ -1951,9 +1951,11 @@ trait VoiceFlavor: Send + Sync + 'static {
 }
 ```
 
-`RenderOutput` porte une `DesiredClientView` basée sur des clés sémantiques et
-des routes entre `ConnectionId`. Les `ChannelId` et `SessionId` numériques sont
-attribués ensuite par Voxloom et ne traversent jamais la frontière du flavor.
+`RenderOutput` porte une `DesiredClientView` basée sur des clés sémantiques, des
+routes entre `ConnectionId` et un `InteractionRegistry`. Chaque route est
+déclarée par sa connexion receveuse et n'est valide que si sa vue projette
+l'émetteur. Les `ChannelId` et `SessionId` numériques sont attribués ensuite par
+Voxloom et ne traversent jamais la frontière du flavor.
 
 Une publication P7 fournit uniquement un `Arc<F::Snapshot>` ; le runtime rend
 toutes les connexions. Une éventuelle sélection ciblée reste une optimisation
@@ -1965,10 +1967,16 @@ struct RenderedSnapshot<S> {
     flavor_revision: FlavorRevision,
     outputs: BTreeMap<ConnectionId, RenderOutput>,
 }
+
+struct ValidatedSnapshot<S> {
+    rendered: RenderedSnapshot<S>,
+}
 ```
 
-Cette valeur reste sans effet tant que sa validation et sa publication ne sont
-pas terminées.
+La validation vérifie séparément toutes les vues désirées, toutes les routes
+audio et tous les registres d'interactions. Une erreur rejette la génération
+entière. `RenderedSnapshot` et `ValidatedSnapshot` restent sans effet ; seule la
+publication atomique de la tranche suivante peut modifier l'état vocal engagé.
 
 Le runtime émet vers le flavor :
 
