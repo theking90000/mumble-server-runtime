@@ -71,6 +71,9 @@ impl ConnectionView {
     /// The method never falls back to a global lookup. A guessed id therefore
     /// has exactly one outcome: [`InboundError::InvisibleChannel`] or
     /// [`InboundError::InvisibleSession`].
+    ///
+    /// REF: references/vendored/Mumble.proto:UserState
+    /// REF: references/vendored/Mumble.proto:PermissionQuery
     pub fn resolve_inbound(
         &self,
         message: &ControlMessage,
@@ -127,6 +130,11 @@ impl ConnectionView {
                 Ok(unsupported(UnsupportedKind::VoiceTarget))
             }
             ControlMessage::PermissionQuery(query) => {
+                if query.permissions.is_some() || query.flush.is_some() {
+                    return Err(InboundError::Malformed(
+                        "PermissionQuery request contains server-only fields",
+                    ));
+                }
                 let raw = query.channel_id.ok_or(InboundError::Malformed(
                     "PermissionQuery.channel_id is required",
                 ))?;
@@ -174,25 +182,34 @@ impl ConnectionView {
         }
     }
 
+    /// REF: references/vendored/Mumble.proto:UserState
+    /// REF: references/mumble/src/mumble/ServerHandler.cpp:ServerHandler::setSelfMuteDeafState
     fn resolve_user_state(&self, state: &tcp::UserState) -> Result<InboundCommand, InboundError> {
-        if let Some(session) = state.session
+        let targets_peer = if let Some(session) = state.session
             && session != self.self_session().0
         {
-            // Even a visible peer is not a valid target for an ordinary
-            // UserState: changing another user is an administrative action.
-            return Err(InboundError::InvisibleSession(session));
-        }
+            self.resolve_session(session)?;
+            true
+        } else {
+            false
+        };
         self.resolve_optional_session(state.actor)?;
         self.resolve_channels(&state.listening_channel_add)?;
         self.resolve_channels(&state.listening_channel_remove)?;
         for adjustment in &state.listening_volume_adjustment {
             self.resolve_optional_channel(adjustment.listening_channel)?;
         }
+        let channel = state
+            .channel_id
+            .map(|channel_id| self.resolve_channel(channel_id))
+            .transpose()?;
+        if targets_peer {
+            return Ok(unsupported(UnsupportedKind::Administration));
+        }
 
-        let Some(channel_id) = state.channel_id else {
+        let Some(channel) = channel else {
             return Ok(unsupported(UnsupportedKind::UserState));
         };
-        let channel = self.resolve_channel(channel_id)?;
         if !is_pure_self_move(state) {
             return Ok(unsupported(UnsupportedKind::UserState));
         }
@@ -228,8 +245,11 @@ impl ConnectionView {
         raw.map(|id| self.resolve_channel(id)).transpose()
     }
 
-    fn resolve_channels(&self, raw: &[u32]) -> Result<Vec<ChannelKey>, InboundError> {
-        raw.iter().map(|id| self.resolve_channel(*id)).collect()
+    fn resolve_channels(&self, raw: &[u32]) -> Result<(), InboundError> {
+        for id in raw {
+            self.resolve_channel(*id)?;
+        }
+        Ok(())
     }
 
     fn resolve_session(&self, raw: u32) -> Result<SessionId, InboundError> {
@@ -248,8 +268,11 @@ impl ConnectionView {
         raw.map(|id| self.resolve_session(id)).transpose()
     }
 
-    fn resolve_sessions(&self, raw: &[u32]) -> Result<Vec<SessionId>, InboundError> {
-        raw.iter().map(|id| self.resolve_session(*id)).collect()
+    fn resolve_sessions(&self, raw: &[u32]) -> Result<(), InboundError> {
+        for id in raw {
+            self.resolve_session(*id)?;
+        }
+        Ok(())
     }
 
     fn resolve_action(&self, raw: &str) -> Result<ActionKey, InboundError> {
@@ -275,6 +298,8 @@ fn wire_action_key(key: &ActionKey) -> String {
 
 /// A move request is intentionally narrow. Ignoring an extra mutation field
 /// would turn an unsupported action into a silent success (R6).
+///
+/// REF: references/vendored/Mumble.proto:UserState
 fn is_pure_self_move(state: &tcp::UserState) -> bool {
     state.actor.is_none()
         && state.name.is_none()
@@ -301,6 +326,7 @@ fn is_pure_self_move(state: &tcp::UserState) -> bool {
 
 #[cfg(test)]
 mod tests {
+    // Test setup uses explicit expectations to keep failures local and readable.
     #![allow(clippy::expect_used)]
 
     use std::collections::{BTreeMap, BTreeSet};
@@ -474,5 +500,52 @@ mod tests {
                 permissions: PermissionBits(PermissionBits::ENTER),
             }
         );
+    }
+
+    #[test]
+    fn permission_query_rejects_server_only_fields() {
+        let (connection, id, _key) = committed_connection();
+        let error = connection
+            .resolve_inbound(&ControlMessage::PermissionQuery(tcp::PermissionQuery {
+                channel_id: Some(id.0),
+                permissions: Some(1),
+                ..Default::default()
+            }))
+            .expect_err("a server-shaped response is not a client request");
+
+        assert_eq!(
+            error,
+            InboundError::Malformed("PermissionQuery request contains server-only fields")
+        );
+    }
+
+    #[test]
+    fn targeting_a_visible_peer_is_validated_then_refused_as_administration() {
+        let (connection, _id, _key) = committed_connection();
+        assert_eq!(
+            connection
+                .resolve_inbound(&ControlMessage::UserState(tcp::UserState {
+                    session: Some(PEER.0),
+                    mute: Some(true),
+                    ..Default::default()
+                }))
+                .expect("the peer is visible before the action is refused"),
+            unsupported(UnsupportedKind::Administration)
+        );
+    }
+
+    #[test]
+    fn peer_administration_still_resolves_every_embedded_channel() {
+        let (connection, _id, _key) = committed_connection();
+        let error = connection
+            .resolve_inbound(&ControlMessage::UserState(tcp::UserState {
+                session: Some(PEER.0),
+                channel_id: Some(999),
+                mute: Some(true),
+                ..Default::default()
+            }))
+            .expect_err("a hidden channel cannot hide inside administration");
+
+        assert_eq!(error, InboundError::InvisibleChannel(999));
     }
 }

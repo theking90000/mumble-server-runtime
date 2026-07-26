@@ -57,6 +57,9 @@ pub struct ChannelDef {
 pub struct UserEntry {
     pub session: SessionId,
     pub name: String,
+    /// SHA-1 digest of the immediate TLS client certificate, when supplied.
+    /// This is presentation identity only and never an authorization input.
+    pub certificate_hash: Option<String>,
     /// Current deterministic-scenario realm. Stored atomically because the
     /// packet path only needs a cheap copied value and never waits on it.
     realm: AtomicU32,
@@ -377,6 +380,7 @@ impl SharedState {
             .map(|entry| ScenarioUser {
                 session: entry.session,
                 name: entry.name.clone(),
+                certificate_hash: entry.certificate_hash.clone(),
                 realm: entry.realm(),
             })
             .collect()
@@ -528,6 +532,7 @@ impl UserEntry {
     pub fn new(
         session: SessionId,
         name: String,
+        certificate_hash: Option<String>,
         realm: Realm,
         outbound: OutboundQueue,
         crypt_state: CryptState,
@@ -536,6 +541,7 @@ impl UserEntry {
         Self {
             session,
             name,
+            certificate_hash,
             realm: AtomicU32::new(realm.routing_id()),
             view: Mutex::new(ConnectionView::new(ViewSessionId(session))),
             view_live: AtomicBool::new(false),

@@ -29,6 +29,12 @@ use crate::projection;
 use crate::state::{SessionId, SharedState, UserEntry};
 use crate::voice;
 
+#[derive(Debug, thiserror::Error)]
+enum ConnectionStateError {
+    #[error("session {session} view lock poisoned")]
+    ViewPoisoned { session: SessionId },
+}
+
 /// Serve one accepted TCP connection to completion. Errors (TLS failure, a
 /// malformed frame, a dropped socket) end the connection cleanly: the user is
 /// removed and its departure broadcast.
@@ -46,6 +52,7 @@ pub async fn serve(
     // Nagle off: control latency matters more than coalescing small frames.
     let _ignored = tcp.set_nodelay(true);
     let tls = acceptor.accept(tcp).await.context("TLS handshake")?;
+    let certificate_hash = crate::tls::client_certificate_hash(&tls);
     let (read_half, write_half) = tokio::io::split(tls);
     let mut reader = FrameReader::new(read_half);
     let mut writer = write_half;
@@ -74,6 +81,7 @@ pub async fn serve(
     let user = Arc::new(UserEntry::new(
         session,
         name.clone(),
+        certificate_hash,
         realm,
         outbound,
         crypt_state,
@@ -200,7 +208,10 @@ async fn wait_for_authenticate(reader: &mut FrameReader) -> Result<Option<tcp::A
 
 /// Handle one control message from the client, returning replies to send back on
 /// the same connection. Every branch ends in an explicit outcome (L4): a reply,
-/// or an intentional (logged) drop for intents P3 does not support.
+/// or an intentional logged refusal for intents P6 does not support.
+///
+/// REF: references/vendored/Mumble.proto:UserState
+/// REF: references/vendored/Mumble.proto:PermissionQuery
 fn handle_control(
     message: ControlMessage,
     user: &Arc<UserEntry>,
@@ -228,14 +239,18 @@ fn handle_control(
                     channel,
                     permissions,
                 }) => {
-                    let channel_id = view
+                    let Some(channel_id) = view
                         .committed()
                         .channels
                         .values()
                         .find(|candidate| candidate.key == channel)
-                        .map(|candidate| candidate.id.0);
+                        .map(|candidate| candidate.id.0)
+                    else {
+                        user.outbound.mark_fatal();
+                        return Vec::new();
+                    };
                     vec![ControlMessage::PermissionQuery(tcp::PermissionQuery {
-                        channel_id,
+                        channel_id: Some(channel_id),
                         permissions: Some(wire_permissions(permissions)),
                         ..Default::default()
                     })]
@@ -253,6 +268,7 @@ fn handle_control(
     }
 }
 
+/// REF: references/vendored/Mumble.proto:PermissionDenied
 fn permission_denied(session: SessionId) -> ControlMessage {
     ControlMessage::PermissionDenied(tcp::PermissionDenied {
         session: Some(session),
@@ -350,7 +366,7 @@ fn drop_unsupported(message: &ControlMessage, session: SessionId) {
         ControlMessage::PermissionQuery(_) => "PermissionQuery",
         _ => "unsupported message",
     };
-    eprintln!("voxloom-server: session {session}: refusing unsupported {kind} (P3)");
+    eprintln!("voxloom-server: session {session}: refusing unsupported {kind} (P6)");
 }
 
 async fn write_initial_view(
@@ -367,7 +383,9 @@ async fn write_initial_view(
         let mut view = user
             .view
             .lock()
-            .map_err(|_| anyhow::anyhow!("session {} view lock poisoned", user.session))?;
+            .map_err(|_| ConnectionStateError::ViewPoisoned {
+                session: user.session,
+            })?;
         let (desired, routes) = projection::render(&mut view, viewer, &scenario, state.config())
             .context("rendering view")?;
         view.prepare(&desired, &routes)
@@ -391,7 +409,9 @@ async fn write_initial_view(
     }
     user.view
         .lock()
-        .map_err(|_| anyhow::anyhow!("session {} view lock poisoned", user.session))?
+        .map_err(|_| ConnectionStateError::ViewPoisoned {
+            session: user.session,
+        })?
         .commit(token)
         .context("committing initial view")?;
     for route in enables {

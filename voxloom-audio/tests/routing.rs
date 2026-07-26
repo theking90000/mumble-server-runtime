@@ -15,6 +15,7 @@
 //! by the reconciler's planner tests and keeps the crate free of test-only
 //! dependencies.
 
+// Property tests use explicit expectations for local invariant failures.
 #![allow(clippy::expect_used)]
 
 use std::collections::BTreeSet;

@@ -70,16 +70,19 @@ impl Realm {
 pub struct ScenarioUser {
     pub session: u32,
     pub name: String,
+    pub certificate_hash: Option<String>,
     pub realm: Realm,
 }
 
 /// Parse the optional deterministic-scenario suffix.
+///
+/// REF: docs/voxloom-specification-technique-v0.1.md:10.5
 pub fn scenario_identity(raw: &str) -> (String, Realm) {
     let lower = raw.to_ascii_lowercase();
-    let (display, realm) = if lower.ends_with("@borealis") {
-        (&raw[..raw.len() - "@borealis".len()], Realm::Borealis)
-    } else if lower.ends_with("@aurora") {
-        (&raw[..raw.len() - "@aurora".len()], Realm::Aurora)
+    let (display, realm) = if let Some(display) = strip_suffix(raw, &lower, "@borealis") {
+        (display, Realm::Borealis)
+    } else if let Some(display) = strip_suffix(raw, &lower, "@aurora") {
+        (display, Realm::Aurora)
     } else {
         (raw, Realm::Aurora)
     };
@@ -92,6 +95,14 @@ pub fn scenario_identity(raw: &str) -> (String, Realm) {
         },
         realm,
     )
+}
+
+fn strip_suffix<'a>(raw: &'a str, lower: &str, suffix: &str) -> Option<&'a str> {
+    if !lower.ends_with(suffix) {
+        return None;
+    }
+    let prefix_length = raw.len().checked_sub(suffix.len())?;
+    raw.get(..prefix_length)
 }
 
 /// Convert a resolved semantic channel key into the scenario realm it denotes.
@@ -110,16 +121,13 @@ pub fn render(
     users: &[ScenarioUser],
     config: &ServerConfig,
 ) -> Result<(ClientView, BTreeSet<AudioRoute>), IdError> {
-    let mut channels = BTreeMap::new();
-    let mut root = ClientView::empty()
-        .channels
-        .remove(&ChannelId::ROOT)
-        .unwrap_or_else(|| unreachable!("ClientView::empty always contains root"));
-    root.name = config.server_name.clone();
-    channels.insert(ChannelId::ROOT, root);
+    let mut channels = ClientView::empty().channels;
+    channels
+        .entry(ChannelId::ROOT)
+        .and_modify(|root| root.name = config.server_name.clone());
 
     let mut channel_ids = BTreeMap::new();
-    for (position, realm) in Realm::ALL.into_iter().enumerate() {
+    for realm in Realm::ALL {
         let key = realm.key();
         let id = connection
             .ids_mut()
@@ -138,7 +146,10 @@ pub fn render(
                 parent: ChannelId::ROOT,
                 name: format!("{relation} · {}", realm.label()),
                 description: None,
-                position: i32::try_from(position).unwrap_or(0),
+                position: match realm {
+                    Realm::Aurora => 0,
+                    Realm::Borealis => 1,
+                },
                 temporary: false,
                 max_users: None,
                 enter_restricted: false,
@@ -167,7 +178,7 @@ pub fn render(
                 name: user.name.clone(),
                 channel,
                 user_id: None,
-                certificate_hash: None,
+                certificate_hash: user.certificate_hash.clone(),
                 mute: false,
                 deaf: false,
                 suppress: false,
@@ -222,6 +233,7 @@ pub fn render(
 
 #[cfg(test)]
 mod tests {
+    // Test setup uses explicit expectations to keep failures local and readable.
     #![allow(clippy::expect_used)]
 
     use super::*;
@@ -240,6 +252,10 @@ mod tests {
             scenario_identity("carol"),
             ("carol".to_owned(), Realm::Aurora)
         );
+        assert_eq!(
+            scenario_identity("Élodie@aurora"),
+            ("Élodie".to_owned(), Realm::Aurora)
+        );
     }
 
     #[test]
@@ -248,11 +264,13 @@ mod tests {
             ScenarioUser {
                 session: 1,
                 name: "alice".to_owned(),
+                certificate_hash: Some("alice-cert".to_owned()),
                 realm: Realm::Aurora,
             },
             ScenarioUser {
                 session: 2,
                 name: "bob".to_owned(),
+                certificate_hash: Some("bob-cert".to_owned()),
                 realm: Realm::Borealis,
             },
         ];
@@ -284,11 +302,13 @@ mod tests {
             ScenarioUser {
                 session: 1,
                 name: "alice".to_owned(),
+                certificate_hash: Some("alice-cert".to_owned()),
                 realm: Realm::Aurora,
             },
             ScenarioUser {
                 session: 2,
                 name: "bob".to_owned(),
+                certificate_hash: Some("bob-cert".to_owned()),
                 realm: Realm::Aurora,
             },
         ];
