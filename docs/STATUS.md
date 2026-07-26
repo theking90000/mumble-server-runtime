@@ -4,8 +4,10 @@
 > reprend doit savoir. Autorité : la spec et la roadmap (`docs/`) ; ce fichier ne
 > fait que pointer l'état courant. Mettre à jour à chaque fin de tâche.
 
-**Phase courante : P6 (vues par connexion en live) : T1 à T7 faits ; checklist
-humaine T8 prête mais non signée (`docs/checklists/p6-live-views.md`).
+**Phase courante : P7 (état canonique, partitions, intégration).
+P6 est close : T1 à T8 verts, checklist humaine signée le 2026-07-26 sur deux
+clients officiels macOS et Windows (`docs/checklists/p6-live-views.md`, serveur
+`9b59527`).
 P4 est close : T1 à T6 verts en CI et checklist humaine signée le 2026-07-26
 (`docs/checklists/p4-audio-routing.md`, serveur `dcf4916`) — deux vrais clients
 s'entendent dans les deux sens, en UDP, en repli tunnel d'un seul côté et des
@@ -407,7 +409,7 @@ destinataire. Aucun correctif n'a été nécessaire.
   reproduit. Le scénario réel (pare-feu bloquant **avant** la connexion) bascule
   bien, au bout de ~20 s. Rien à corriger ; la checklist porte le détail.
 
-### Phase 6 : vues par connexion en live (T1 à T7 faits, checkpoint humain en attente)
+### Phase 6 : vues par connexion en live (close, T1 à T8 faits)
 
 Brancher le moteur pur de P5 sur les connexions réelles. Décisions de conception
 arrêtées avec l'humain avant d'écrire du code, et **consignées dans les modules
@@ -422,7 +424,7 @@ concernés** plutôt qu'ici, pour qu'elles survivent à ce document :
 | T5 | Scénario déterministe + domaine de routage par realm | **fait** |
 | T6 | Couplage audio asymétrique (coupure eager, activation gated) | **fait** |
 | T7 | Vérificateur R2 : file adverse, convergence, « aucune entité hors vue » | **fait** |
-| T8 | Checklist humaine P6 | **prête, à signer** |
+| T8 | Checklist humaine P6 | **fait, signée** |
 
 **T1 — `voxloom-session/src/emit.rs`** (écrit dans `voxloom-server`, déménagé en T3). `emit_transaction(transaction, committed,
 self_session)` rend des `EmittedStep` ordonnés : soit un `ControlMessage`, soit
@@ -571,11 +573,11 @@ Done-commands : `cargo test -p voxloom-session`, `cargo test -p voxloom-server`,
 `cargo test -p voxloom-testkit` et `cargo test --workspace`, tous verts sous
 `RUSTFLAGS="-D warnings"`.
 
-**T8 : `docs/checklists/p6-live-views.md`.** Checklist prête : arbres divergents,
-renommage et déplacement à chaud, ordre vue/audio, IDs déterministes à la
-reconnexion et survie des surnoms ou volumes locaux. Elle exige deux clients
-officiels avec des certificats clients persistants et reste à signer par
-l'humain ; P6 n'est donc pas encore close.
+**T8 : `docs/checklists/p6-live-views.md`.** Checklist signée le 2026-07-26 sur
+deux clients officiels macOS et Windows : arbres divergents, renommage et
+déplacement à chaud, ordre vue/audio, IDs déterministes à la reconnexion et
+survie des surnoms ou volumes locaux. Les dix cas sont validés sans défaut
+observé. P6 est close.
 
 ---
 
@@ -699,9 +701,9 @@ Note : `voxloom-render`/`voxloom-reconcile` sont sur `main` (P5 mergé le
 
 ### Après P4
 
-P4 est close (T1–T6 verts, checkpoint humain signé). **P6 est implémentée et
-verte en machine jusqu'à T7 ; son checkpoint humain T8 reste à dérouler et
-signer.** P5 peut aussi être clôturé en branchant son proptest sur le
+P4 est close (T1–T6 verts, checkpoint humain signé). **P6 est close : T1 à T7
+verts en CI et checkpoint humain T8 signé sur macOS et Windows. P7 est la
+prochaine phase.** P5 peut aussi être clôturé en branchant son proptest sur le
 `SimulatedMumbleClient`, qui sait désormais juger le plan voix et toutes les
 références de sortie (cf. « Reste à faire » §3). Voir la roadmap.
 

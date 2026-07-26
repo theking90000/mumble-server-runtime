@@ -67,36 +67,36 @@ alloués dans un ordre fixe à chaque connexion.
 
 ## Checklist
 
-- [ ] **Vues initiales divergentes.** Alice voit `Your realm · Aurora` et
+- [x] **Vues initiales divergentes.** Alice voit `Your realm · Aurora` et
       `Switch to · Borealis` ; Bob voit les libellés inverses. Chacun ne voit que
       lui-même dans la liste d'utilisateurs.
-- [ ] **Isolation initiale.** Alice et Bob parlent en mode normal : aucun
+- [x] **Isolation initiale.** Alice et Bob parlent en mode normal : aucun
       n'entend l'autre. Le loopback serveur reste fonctionnel séparément.
-- [ ] **Déplacement à chaud.** Bob double-clique le canal Aurora. Il n'y a
+- [x] **Déplacement à chaud.** Bob double-clique le canal Aurora. Il n'y a
       aucune reconnexion TLS ni nouveau dialogue de certificat. Ses deux canaux
       sont renommés à chaud : `Your realm` et `Switch to` s'inversent.
-- [ ] **Convergence visuelle.** Alice voit Bob apparaître dans Aurora et Bob voit
+- [x] **Convergence visuelle.** Alice voit Bob apparaître dans Aurora et Bob voit
       Alice. Aucun utilisateur n'apparaît dans un canal inexistant, aucune
       erreur client et aucun arbre cassé ne sont observés.
-- [ ] **Activation audio après la vue.** Une fois les deux utilisateurs
+- [x] **Activation audio après la vue.** Une fois les deux utilisateurs
       visibles, ils s'entendent dans les deux sens, avec attribution au bon nom
       et sans écho vers soi.
-- [ ] **Préférences pendant le churn.** Alice attribue à Bob un surnom local et
+- [x] **Préférences pendant le churn.** Alice attribue à Bob un surnom local et
       un volume individuel. Bob passe dans Borealis puis revient dans Aurora :
       le surnom et le volume sont toujours présents après sa réintroduction.
-- [ ] **Coupure avant retrait.** Bob repart dans Borealis. Dès qu'il disparaît
+- [x] **Coupure avant retrait.** Bob repart dans Borealis. Dès qu'il disparaît
       de la vue d'Alice, sa voix n'est plus audible ; aucun fragment tardif ne
       doit arriver après le retrait.
-- [ ] **Reconnexion et IDs déterministes.** Bob ferme puis reconnecte le client
+- [x] **Reconnexion et IDs déterministes.** Bob ferme puis reconnecte le client
       avec `bob@borealis` et le même certificat, avant de revenir dans Aurora.
       Les deux canaux gardent leur signification, aucun cache de canal ne migre
       vers l'autre realm, et le surnom ou volume local de Bob survit à la
       nouvelle session.
-- [ ] **Répétition sans churn anormal.** Répéter trois allers-retours
+- [x] **Répétition sans churn anormal.** Répéter trois allers-retours
       Aurora/Borealis. Noter les notifications ou TTS de présence produites par
       le client ; aucune déconnexion réelle, UI bloquée, canal fantôme ou
       préférence attribuée au mauvais utilisateur n'est acceptable.
-- [ ] **Déconnexion propre.** Fermer Bob depuis n'importe quel realm : les vues
+- [x] **Déconnexion propre.** Fermer Bob depuis n'importe quel realm : les vues
       restantes convergent et Alice continue à utiliser le serveur.
 
 Réserves attendues en P6 :
@@ -113,14 +113,19 @@ Réserves attendues en P6 :
 
 ## Signature
 
-- Version du serveur (commit) : `________________`
-- Version des clients / OS : `________________`
-- Date : `________________`
-- Validé par : `________________`
-- Résultat : `OK / ÉCHEC`
-- Notes / artefacts observés :
+**OK.** Les dix cases ont été validées avec deux clients officiels Mumble, l'un
+sur macOS et l'autre sur Windows.
 
-  `________________________________________________________________________`
+- Version du serveur (commit) : `9b59527`
+- Version des clients Mumble : non relevée
+- Systèmes : macOS et Windows, versions non relevées
+- Date : 2026-07-26
+- Validé par : theking90000
+- Résultat : **OK**
+- Notes : arbres divergents et convergence à chaud sans reconnexion, isolation
+  puis activation audio correctes, coupure avant retrait, préférences locales
+  conservées pendant le churn et après reconnexion, aucune erreur client,
+  déconnexion ou entité fantôme observée.
 
-Tant que cette section n'est pas signée `OK`, P6 reste ouverte malgré les
-critères machine verts.
+Le point de contrôle humain de P6 est validé. Avec les critères machine verts,
+P6 est close.
