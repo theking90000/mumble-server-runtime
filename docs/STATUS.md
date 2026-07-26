@@ -414,7 +414,7 @@ concernés** plutôt qu'ici, pour qu'elles survivent à ce document :
 
 | Tranche | Livrable | État |
 |---|---|---|
-| T1 | Émetteur `PlanOp` → `ControlMessage` (pur, sans réseau) | à faire |
+| T1 | Émetteur `PlanOp` → `ControlMessage` (pur, sans réseau) | **fait** |
 | T2 | File de sortie bornée, admission différenciée voix/contrôle | **fait** |
 | T3 | `voxloom-session` (crate pur) : vue engagée, commit atomique, ADR-009 | à faire |
 | T4 | Résolution ID→clé des commandes entrantes (invariants 13/14/16/17) | à faire |
@@ -422,6 +422,46 @@ concernés** plutôt qu'ici, pour qu'elles survivent à ce document :
 | T6 | Couplage audio asymétrique (coupure eager, activation gated) | à faire |
 | T7 | Vérificateur R2 : file adverse, convergence, « aucune entité hors vue » | à faire |
 | T8 | Checklist humaine P6 | à faire |
+
+**T1 — `voxloom-server/src/emit.rs`.** `emit_transaction(transaction, committed,
+self_session)` rend des `EmittedStep` ordonnés : soit un `ControlMessage`, soit
+un basculement de route audio (qui ne porte aucune frame). Les deux sont dans la
+**même** séquence, parce que c'est l'ordre qui porte §12.6 — coupure avant la
+vue (inv. 18), activation après (inv. 19) ; les séparer en deux listes perdrait
+exactement ça. Le `match` sur `PlanOp` n'a **pas** de bras joker : ajouter une
+variante casse la compilation au lieu de produire une transition muette.
+
+- **Une seule voie de traduction.** Le handshake reste une séquence de cycle de
+  vie avec un trou en forme de plan (Version/CryptSetup/CodecVersion, puis
+  `emit_transaction`, puis ServerSync/ServerConfig). La contrainte que le plan ne
+  sait pas exprimer — **self avant les autres** (inv. 6) — est appliquée *dans
+  l'émetteur*, par réordonnancement **à l'intérieur du run d'`AddUser`
+  consécutifs**, jamais sur tout le plan : hisser self en tête placerait
+  l'utilisateur avant le `CreateChannel` de son canal, cassant l'inv. 5 pour
+  satisfaire l'inv. 6. Le planificateur groupe bien les ajouts d'utilisateurs
+  (§12.5 étape 4), donc le run est exactement l'ensemble où l'ordre est libre.
+  Rien n'entre dans `voxloom-reconcile` : « self » est une notion de connexion,
+  pas de vue.
+- **Refus plutôt qu'invention (L1/L4).** Les champs adossés à un blob
+  (description de canal, commentaire et texture d'utilisateur) refusent la
+  transition **entière** — cohérent avec l'atomicité de l'inv. 20. Il n'y a pas
+  de magasin de blobs, et inventer un encodage pour les champs `*_hash`
+  annoncerait au client du contenu que le serveur ne sait pas servir.
+- **Piège vérifié en source :** le client traite `ChannelState.links` comme un
+  remplacement complet, **mais seulement si la liste est non vide** (tout le
+  bloc est sous `if (msg.links_size())`). Une liste vide est un no-op, pas un
+  « délie tout » : effacer le dernier lien s'exprime donc en `links_remove`
+  explicite, calculé depuis la vue engagée. C'est la seule raison pour laquelle
+  l'émetteur reçoit la vue engagée. REF `mumble/Messages.cpp::msgChannelState`.
+- **Permissions :** le masque canonique de §19.1 et les bits ACL Mumble
+  coïncident sur les douze premiers drapeaux puis divergent — la référence
+  réserve `0x1000`..`0x8000` et reprend les permissions root-only à `0x10000`,
+  là où le canonique continue au bit 12. Un décalage global accorderait
+  silencieusement `Kick` à qui a reçu `Listen`. Table explicite + test qui
+  vérifie les 17 valeurs contre `ACL.h`.
+
+Done-command : `cargo test -p voxloom-server` — 31 tests (23 unitaires dont 10
+neufs sur l'émetteur, 8 d'intégration inchangés).
 
 **T2 — `voxloom-server/src/outbound.rs`.** La file était un
 `mpsc::UnboundedSender` : un client lent faisait croître la mémoire du serveur
