@@ -4,7 +4,8 @@
 > reprend doit savoir. Autorité : la spec et la roadmap (`docs/`) ; ce fichier ne
 > fait que pointer l'état courant. Mettre à jour à chaque fin de tâche.
 
-**Phase courante : P6 (vues par connexion en live) — T1, T2 et T3 faits ; T4 à T8 à faire.
+**Phase courante : P6 (vues par connexion en live) : T1 à T7 faits ; checklist
+humaine T8 prête mais non signée (`docs/checklists/p6-live-views.md`).
 P4 est close : T1 à T6 verts en CI et checklist humaine signée le 2026-07-26
 (`docs/checklists/p4-audio-routing.md`, serveur `dcf4916`) — deux vrais clients
 s'entendent dans les deux sens, en UDP, en repli tunnel d'un seul côté et des
@@ -406,7 +407,7 @@ destinataire. Aucun correctif n'a été nécessaire.
   reproduit. Le scénario réel (pare-feu bloquant **avant** la connexion) bascule
   bien, au bout de ~20 s. Rien à corriger ; la checklist porte le détail.
 
-### Phase 6 — vues par connexion en live (en cours, T2 fait)
+### Phase 6 : vues par connexion en live (T1 à T7 faits, checkpoint humain en attente)
 
 Brancher le moteur pur de P5 sur les connexions réelles. Décisions de conception
 arrêtées avec l'humain avant d'écrire du code, et **consignées dans les modules
@@ -417,11 +418,11 @@ concernés** plutôt qu'ici, pour qu'elles survivent à ce document :
 | T1 | Émetteur `PlanOp` → `ControlMessage` (pur, sans réseau) | **fait** |
 | T2 | File de sortie bornée, admission différenciée voix/contrôle | **fait** |
 | T3 | `voxloom-session` (crate pur) : vue engagée, commit atomique, ADR-009 | **fait** |
-| T4 | Résolution ID→clé des commandes entrantes (invariants 13/14/16/17) | à faire |
-| T5 | Scénario déterministe + domaine de routage par realm | à faire |
-| T6 | Couplage audio asymétrique (coupure eager, activation gated) | à faire |
-| T7 | Vérificateur R2 : file adverse, convergence, « aucune entité hors vue » | à faire |
-| T8 | Checklist humaine P6 | à faire |
+| T4 | Résolution ID→clé des commandes entrantes (invariants 13/14/16/17) | **fait** |
+| T5 | Scénario déterministe + domaine de routage par realm | **fait** |
+| T6 | Couplage audio asymétrique (coupure eager, activation gated) | **fait** |
+| T7 | Vérificateur R2 : file adverse, convergence, « aucune entité hors vue » | **fait** |
+| T8 | Checklist humaine P6 | **prête, à signer** |
 
 **T1 — `voxloom-session/src/emit.rs`** (écrit dans `voxloom-server`, déménagé en T3). `emit_transaction(transaction, committed,
 self_session)` rend des `EmittedStep` ordonnés : soit un `ControlMessage`, soit
@@ -528,6 +529,53 @@ une décision explicite (R6).
 
 Done-command : `cargo test -p voxloom-server` — 21 tests (13 unitaires dont 5
 neufs sur l'admission, 8 d'intégration inchangés, dont les 4 de routage P4).
+
+**T4 : `voxloom-session/src/inbound.rs`.** Toute référence fournie par le client
+est résolue dans la vue engagée de cette connexion : Channel ID vers clé
+sémantique, session vers utilisateur visible. Une clé allouée pour une
+transition refusée ne devient pas visible. Les listes de références sont
+validées une par une sans allocation proportionnelle à une entrée attaquante.
+Les commandes blob et administration valident leurs cibles puis sont refusées
+sans lookup global, afin qu'un ID deviné ne serve pas d'oracle d'existence.
+Seuls le déplacement de self et la requête de permissions effectives ont un
+comportement P6 ; une requête `PermissionQuery` portant des champs réservés au
+serveur est rejetée comme malformée.
+
+**T5/T6 : `voxloom-server/src/{projection,state,connection,tls}.rs` et
+`voxloom-audio/src/snapshot.rs`.** Le scénario vertical déterministe expose
+Aurora/Borealis (`<nom>@aurora`, `<nom>@borealis`) avec libellés relatifs au
+viewer, utilisateurs visibles uniquement dans leur realm et déplacement à chaud
+par le `UserState` officiel. Chaque connexion possède sa `ConnectionView` ; la
+vue initiale passe elle aussi par le planner et émet toujours la racine avant ses
+enfants. Les rafraîchissements complets sont sérialisés avant capture du modèle,
+donc un ancien snapshot concurrent ne peut pas être committé après le plus
+récent.
+
+Les routes sont explicitement directionnelles et doublées d'un contrôle de
+realm. Un changement de realm republie immédiatement le snapshot audio, donc la
+coupure est eager, tandis qu'une nouvelle route n'est publiée qu'après admission
+atomique et commit de la vue destinataire. Le serveur demande le certificat TLS
+client de façon optionnelle et publie, comme Murmur, le SHA-1 en minuscules du
+DER du certificat immédiat dans `UserState.hash`. Cette identité de présentation
+reste stable entre sessions si le client réutilise son certificat, sans jamais
+servir à l'autorisation.
+
+**T7 : `voxloom-testkit/tests/p6_live_views.rs` et juge étendu.** Le vérificateur
+indépendant rejoue avec deux clients simulés la divergence, la convergence puis
+la re-divergence sans reconnexion et juge l'isolation, l'activation et la
+révocation audio. Une vraie `OutboundQueue` presque pleine refuse tout le plan
+puis converge vers le dernier désiré après drainage. Le juge contrôle les
+références sur toutes les sorties contrôle, l'audio UDP et le tunnel TCP.
+
+Done-commands : `cargo test -p voxloom-session`, `cargo test -p voxloom-server`,
+`cargo test -p voxloom-testkit` et `cargo test --workspace`, tous verts sous
+`RUSTFLAGS="-D warnings"`.
+
+**T8 : `docs/checklists/p6-live-views.md`.** Checklist prête : arbres divergents,
+renommage et déplacement à chaud, ordre vue/audio, IDs déterministes à la
+reconnexion et survie des surnoms ou volumes locaux. Elle exige deux clients
+officiels avec des certificats clients persistants et reste à signer par
+l'humain ; P6 n'est donc pas encore close.
 
 ---
 
@@ -651,11 +699,11 @@ Note : `voxloom-render`/`voxloom-reconcile` sont sur `main` (P5 mergé le
 
 ### Après P4
 
-P4 est close (T1–T6 verts, checkpoint humain signé). La prochaine phase est
-**P6 (vues par connexion en live)**, qui branche le moteur pur de P5 sur les
-connexions réelles. P5 peut aussi être clôturé en branchant son proptest sur le
-`SimulatedMumbleClient`, qui sait désormais aussi juger le plan voix (cf.
-« Reste à faire » §3). Voir la roadmap.
+P4 est close (T1–T6 verts, checkpoint humain signé). **P6 est implémentée et
+verte en machine jusqu'à T7 ; son checkpoint humain T8 reste à dérouler et
+signer.** P5 peut aussi être clôturé en branchant son proptest sur le
+`SimulatedMumbleClient`, qui sait désormais juger le plan voix et toutes les
+références de sortie (cf. « Reste à faire » §3). Voir la roadmap.
 
 Pièges P4 à retenir : (1) les gates `audio/no-render-dep` et `audio/no-state-dep`
 grep les **chaînes** `voxloom[_-]render` / `voxloom[_-]state` sur tout

@@ -8,7 +8,8 @@ roadmap.
 **Statut : phases P0 à P4 closes** (infrastructure de vérité, codec pur, proxy
 oracle, serveur minimal, routage audio) ; deux vrais clients Mumble se
 connectent, se voient et s'entendent, en UDP comme en repli tunnel TCP. Le cœur
-pur de P5 (moteur de vues) est fait. Prochaine phase : P6. L'avancement détaillé
+pur de P5 (moteur de vues) est fait. P6 est verte en machine jusqu'à T7 ; son
+checkpoint humain T8 reste à signer. L'avancement détaillé
 fait foi dans `docs/STATUS.md` ; les règles de travail sont dans `AGENT.md`.
 
 ## Structure
