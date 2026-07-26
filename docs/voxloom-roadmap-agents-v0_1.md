@@ -173,9 +173,11 @@ le snapshot audio dans l'ordre de sécurité.
 ### T1. Contrat minimal de flavor
 
 Créer `voxloom-flavor` avec les types génériques `VoiceFlavor`,
-`FlavorRevision`, `RenderOutput` et `FlavorError`. L'API est statique, sans ABI
-dynamique, callback dans le hot path ni concepts joueur, realm, équipe, position
-ou radio.
+`ConnectionId`, `FlavorRevision`, `RenderOutput` et `FlavorError`. Les vues
+utilisent des clés sémantiques et les routes utilisent des `ConnectionId` :
+aucun ID numérique local à une vue ne traverse la frontière. L'API est statique,
+sans ABI dynamique, callback dans le hot path ni concepts joueur, realm, équipe,
+position ou radio.
 
 **Done :** `cargo test -p voxloom-flavor`.
 

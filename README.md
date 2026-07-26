@@ -10,8 +10,9 @@ oracle, serveur minimal, routage audio) ; deux vrais clients Mumble se
 connectent, se voient et s'entendent, en UDP comme en repli tunnel TCP. Le cœur
 pur de P5 (moteur de vues) est fait. P6 est close : les vues divergentes,
 transitions à chaud, préférences locales et routes audio ont été validées en CI
-et sur des clients officiels macOS et Windows. Prochaine phase : P7, contrat de
-flavor et publication atomique.
+et sur des clients officiels macOS et Windows. P7 est en cours : T1 fournit le
+contrat statique de flavor et ses sorties sémantiques ; T2 branchera la
+publication d'un snapshot opaque.
 L'avancement détaillé fait foi dans `docs/STATUS.md` ; les règles de travail sont
 dans `AGENT.md`.
 
@@ -33,6 +34,7 @@ voxloom-render/              vue normalisée, normalize, validate     (pur)
 voxloom-reconcile/           diff, planificateur, ViewIdMapping      (pur)
 voxloom-audio/               routage audio : compile, may_receive    (pur)
 voxloom-session/             vue engagée d'une connexion, plan → wire (pur)
+voxloom-flavor/              contrat statique et sorties sémantiques (pur)
 voxloom-server/              serveur minimal + routage voix
 voxloom-testkit/             client simulé et juge des invariants (R2)
 ```

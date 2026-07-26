@@ -25,6 +25,13 @@ Voxloom possède l'état vocal, tandis que chaque flavor compilé possède son �
 métier. La roadmap détaille désormais T1 à T8, du contrat minimal au checkpoint
 live du flavor de référence.
 
+**P7 T1 est implémentée.** `voxloom-flavor` définit `VoiceFlavor`, son
+`Snapshot` opaque, `ConnectionId`, `FlavorRevision`, `RenderOutput` et
+`FlavorError`. Les vues et routes retournées utilisent uniquement des clés
+sémantiques et des identités de connexion ; les IDs numériques par connexion
+restent donc la propriété du runtime. Prochaine tranche : **P7 T2, publication
+d'un `Arc<F::Snapshot>` et rendu complet de toutes les connexions.**
+
 **P5 (moteur de vues pur) — cœur pur implémenté et vérifié en CI, mergé sur
 `main` le 2026-07-24.** `voxloom-render` (vue normalisée, normalize, validate) et
 `voxloom-reconcile` (diff, planificateur, résolution clé→ID) sont faits ; il reste
@@ -694,6 +701,8 @@ voxloom-reconcile/        P5 : diff, planificateur (§12.5/12.6), ViewIdMapping 
 voxloom-audio/            P4 : routage pur (compile, may_receive, enveloppe)  (pur)
 voxloom-session/          P6 : vue engagée d'UNE connexion, clé→ID, plan→wire,
                           commit atomique (§12.7)                        (pur)
+voxloom-flavor/           P7 T1 : contrat statique, snapshot opaque,
+                          vue et routes sémantiques                      (pur)
 voxloom-server/           P3+P4 : serveur minimal + routage voix, limites §15.7
 voxloom-testkit/          P3+P4 : SimulatedMumbleClient (§20 + plan voix), juge (R2)
 fuzz/                     cibles cargo-fuzz (workspace détaché, nightly)
@@ -707,9 +716,9 @@ Note : `voxloom-render`/`voxloom-reconcile` sont sur `main` (P5 mergé le
 ### Après P6
 
 P4 est close (T1–T6 verts, checkpoint humain signé). **P6 est close : T1 à T7
-verts en CI et checkpoint humain T8 signé sur macOS et Windows. P7 est la
-prochaine phase : contrat de flavor générique, rendu depuis un snapshot métier
-opaque et publication atomique.** P5 peut aussi être clôturé en branchant son proptest sur le
+verts en CI et checkpoint humain T8 signé sur macOS et Windows. P7 est en
+cours : T1 fournit le contrat de flavor générique ; T2 doit publier un snapshot
+métier opaque et rerendre toutes les connexions.** P5 peut aussi être clôturé en branchant son proptest sur le
 `SimulatedMumbleClient`, qui sait désormais juger le plan voix et toutes les
 références de sortie (cf. « Reste à faire » §3). Voir la roadmap.
 

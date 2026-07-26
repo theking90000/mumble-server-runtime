@@ -42,6 +42,10 @@ members = [
     # contrôle, et règle de commit atomique (§12.7, invariant 20). Crate pur :
     # ni runtime, ni socket, ni file d'attente.
     "voxloom-session",
+    # Phase 7 T1 : contrat statique entre le runtime vocal et un flavor compilé.
+    # Le snapshot métier reste opaque ; seules les sorties sémantiques de vue et
+    # de routage traversent cette frontière.
+    "voxloom-flavor",
     # Phase 3 : serveur minimal — accepte la TLS, déroule le handshake sans
     # Murmur, associe l'UDP par preuve cryptographique, répond aux pings et
     # réfléchit l'audio de loopback (target 31). Dépend des crates purs P1.
