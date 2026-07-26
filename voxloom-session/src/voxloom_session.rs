@@ -21,9 +21,11 @@
 #![forbid(unsafe_code)]
 
 pub mod emit;
+pub mod inbound;
 pub mod view;
 
-pub use emit::{EmitError, EmittedStep, emit_transaction};
+pub use emit::{EmitError, EmittedStep, emit_transaction, wire_permissions};
+pub use inbound::{InboundCommand, InboundError, UnsupportedKind};
 pub use view::{CommitToken, ConnectionView, PendingTransition, TransitionError};
 
 // Re-exported so a consumer can name what comes out of a transition without

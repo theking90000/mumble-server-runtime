@@ -74,20 +74,7 @@ pub fn build_handshake(
     crypt_setup: tcp::CryptSetup,
     others: &[OtherUser],
 ) -> Vec<ControlMessage> {
-    let mut out = Vec::new();
-
-    // 1. UDP crypto setup.
-    out.push(ControlMessage::CryptSetup(crypt_setup));
-
-    // 2. Codec negotiation. Opus-only server (spec §3.3/§4): CELT alpha/beta stay
-    //    at their reset values, opus is advertised. REF Server.cpp: reset state
-    //    is `iCodecAlpha = iCodecBeta = 0; bPreferAlpha = false;`.
-    out.push(ControlMessage::CodecVersion(tcp::CodecVersion {
-        alpha: 0,
-        beta: 0,
-        prefer_alpha: false,
-        opus: Some(true),
-    }));
+    let mut out = handshake_prelude(crypt_setup);
 
     // 3. Channel tree, parents strictly before children (§20 invariants 3, 9).
     for channel in channel_emission_order(channels) {
@@ -102,30 +89,51 @@ pub fn build_handshake(
         out.push(other_user_state(other));
     }
 
-    // 6. Synchronisation: the client learns its own session id here.
-    out.push(ControlMessage::ServerSync(tcp::ServerSync {
-        session: Some(self_session),
-        max_bandwidth: Some(config.max_bandwidth),
-        welcome_text: if config.welcome_text.is_empty() {
-            None
-        } else {
-            Some(config.welcome_text.clone())
-        },
-        permissions: Some(u64::from(perm::ROOT_DEFAULT)),
-    }));
-
-    // 7. Server configuration.
-    out.push(ControlMessage::ServerConfig(tcp::ServerConfig {
-        max_bandwidth: Some(config.max_bandwidth),
-        welcome_text: None,
-        allow_html: Some(config.allow_html),
-        message_length: Some(config.message_length),
-        image_message_length: None,
-        max_users: Some(config.max_users),
-        recording_allowed: Some(config.recording_allowed),
-    }));
-
+    out.extend(handshake_completion(config, self_session));
     out
+}
+
+/// Lifecycle messages that precede the connection-specific view.
+pub fn handshake_prelude(crypt_setup: tcp::CryptSetup) -> Vec<ControlMessage> {
+    vec![
+        // UDP crypto setup.
+        ControlMessage::CryptSetup(crypt_setup),
+        // Opus-only codec negotiation. REF Server.cpp: reset state is
+        // `iCodecAlpha = iCodecBeta = 0; bPreferAlpha = false;`.
+        ControlMessage::CodecVersion(tcp::CodecVersion {
+            alpha: 0,
+            beta: 0,
+            prefer_alpha: false,
+            opus: Some(true),
+        }),
+    ]
+}
+
+/// Lifecycle messages that complete the connection-specific view.
+pub fn handshake_completion(config: &ServerConfig, self_session: SessionId) -> Vec<ControlMessage> {
+    vec![
+        // Synchronisation: the client learns its own session id here.
+        ControlMessage::ServerSync(tcp::ServerSync {
+            session: Some(self_session),
+            max_bandwidth: Some(config.max_bandwidth),
+            welcome_text: if config.welcome_text.is_empty() {
+                None
+            } else {
+                Some(config.welcome_text.clone())
+            },
+            permissions: Some(u64::from(perm::ROOT_DEFAULT)),
+        }),
+        // Server configuration.
+        ControlMessage::ServerConfig(tcp::ServerConfig {
+            max_bandwidth: Some(config.max_bandwidth),
+            welcome_text: None,
+            allow_html: Some(config.allow_html),
+            message_length: Some(config.message_length),
+            image_message_length: None,
+            max_users: Some(config.max_users),
+            recording_allowed: Some(config.recording_allowed),
+        }),
+    ]
 }
 
 /// Order channels so every channel appears after its parent (topological, root

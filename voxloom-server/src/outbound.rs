@@ -274,6 +274,14 @@ impl OutboundQueue {
         self.must_close.load(Ordering::Relaxed)
     }
 
+    /// Mark a connection for teardown after an internal state divergence.
+    ///
+    /// This is ADR-009's common escape hatch for failures that happen after the
+    /// protocol-specific code has already logged a precise reason.
+    pub fn mark_fatal(&self) {
+        self.must_close.store(true, Ordering::Relaxed);
+    }
+
     /// Messages currently queued.
     pub fn depth(&self) -> usize {
         self.sender

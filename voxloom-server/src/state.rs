@@ -11,18 +11,24 @@
 //! lookups, `Arc` clones, OCB2 on one datagram — a few microseconds) and never
 //! across an `.await`. Socket writes happen after the lock is released.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use voxloom_audio::{AudioRoutingSnapshot, Participant, RoutingDomainId, compile};
+use voxloom_audio::{
+    AudioRoutingSnapshot, DirectedRoute, Participant, RoutingDomainId, compile_authorized,
+};
 use voxloom_crypto::CryptState;
+use voxloom_reconcile::AudioRoute;
+use voxloom_render::SessionId as ViewSessionId;
+use voxloom_session::{ConnectionView, EmittedStep};
 
 use crate::config::ServerConfig;
 use crate::limits::VoiceBudget;
-use crate::outbound::OutboundQueue;
+use crate::outbound::{OutboundQueue, TransitionRefused};
+use crate::projection::{self, Realm, ScenarioUser};
 
 /// A Mumble user session id. Monotonic per process (spec §9.1).
 pub type SessionId = u32;
@@ -51,9 +57,15 @@ pub struct ChannelDef {
 pub struct UserEntry {
     pub session: SessionId,
     pub name: String,
-    /// Channel the user is shown in. Fixed to the root in P3 (moves are refused,
-    /// fail-closed) but kept as state for later phases.
-    pub channel_id: u32,
+    /// Current deterministic-scenario realm. Stored atomically because the
+    /// packet path only needs a cheap copied value and never waits on it.
+    realm: AtomicU32,
+    /// Per-connection committed view and stable local id mapping (P6).
+    pub view: Mutex<ConnectionView>,
+    /// False while the initial handshake is still writing its view. Other
+    /// connections may already exist, but no dynamic update may overtake
+    /// `ServerSync` on this one.
+    view_live: AtomicBool,
     /// Queue to this user's TCP writer. Other connections push presence updates
     /// (`UserState`/`UserRemove`) here; the voice plane pushes tunnelled audio.
     /// It is bounded and refuses the two classes differently — see
@@ -80,6 +92,25 @@ pub struct UserEntry {
 }
 
 impl UserEntry {
+    pub fn realm(&self) -> Realm {
+        match self.realm.load(Ordering::Acquire) {
+            1 => Realm::Borealis,
+            _ => Realm::Aurora,
+        }
+    }
+
+    fn set_realm(&self, realm: Realm) {
+        self.realm.store(realm.routing_id(), Ordering::Release);
+    }
+
+    pub fn mark_view_live(&self) {
+        self.view_live.store(true, Ordering::Release);
+    }
+
+    fn view_is_live(&self) -> bool {
+        self.view_live.load(Ordering::Acquire)
+    }
+
     /// Whether this user has completed UDP crypto setup and can be routed audio.
     pub fn has_crypto(&self) -> bool {
         self.crypto
@@ -140,6 +171,9 @@ struct Registry {
     /// section that changes membership, so a reader can never observe a snapshot
     /// that disagrees with the user list it was built from.
     routes: Arc<AudioRoutingSnapshot>,
+    /// Directional authorizations that have crossed the P6 view-commit gate.
+    /// Realm equality is checked again by `compile_authorized`.
+    enabled_routes: BTreeSet<AudioRoute>,
 }
 
 impl Registry {
@@ -153,12 +187,26 @@ impl Registry {
             .map(|session| {
                 Participant::new(
                     voxloom_audio::SessionId::new(*session),
-                    // One domain until partitioning becomes real (Phase 7).
-                    RoutingDomainId::DEFAULT,
+                    RoutingDomainId::new(
+                        self.users
+                            .get(session)
+                            .map(|entry| entry.realm().routing_id())
+                            .unwrap_or(u32::MAX),
+                    ),
                 )
             })
             .collect();
-        self.routes = Arc::new(compile(&participants, generation));
+        let routes: Vec<DirectedRoute> = self
+            .enabled_routes
+            .iter()
+            .map(|route| {
+                DirectedRoute::new(
+                    voxloom_audio::SessionId::new(route.sender.0),
+                    voxloom_audio::SessionId::new(route.receiver.0),
+                )
+            })
+            .collect();
+        self.routes = Arc::new(compile_authorized(&participants, &routes, generation));
     }
 }
 
@@ -193,7 +241,8 @@ impl SharedState {
             registry: Mutex::new(Registry {
                 users: BTreeMap::new(),
                 udp_bindings: HashMap::new(),
-                routes: Arc::new(compile(&[], 0)),
+                routes: Arc::new(compile_authorized(&[], &[], 0)),
+                enabled_routes: BTreeSet::new(),
             }),
             next_session: AtomicU32::new(1),
             config,
@@ -252,6 +301,9 @@ impl SharedState {
         };
         registry.users.remove(&session);
         registry.udp_bindings.retain(|_, bound| *bound != session);
+        registry
+            .enabled_routes
+            .retain(|route| route.sender.0 != session && route.receiver.0 != session);
         let generation = self.route_generation.fetch_add(1, Ordering::Relaxed) + 1;
         registry.republish_routes(generation);
     }
@@ -310,5 +362,188 @@ impl SharedState {
             *slot = Some(addr);
         }
         registry.udp_bindings.insert(addr, session);
+    }
+
+    /// Build a coherent copy of the facts used by the deterministic renderer.
+    /// The registry lock is released before any connection view is locked.
+    pub fn scenario_users(&self) -> Vec<ScenarioUser> {
+        let registry = match self.registry.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        registry
+            .users
+            .values()
+            .map(|entry| ScenarioUser {
+                session: entry.session,
+                name: entry.name.clone(),
+                realm: entry.realm(),
+            })
+            .collect()
+    }
+
+    /// Move a live user between deterministic realms and rerender every
+    /// connection. Republishing the audio table happens before the first view
+    /// update, so stale cross-realm flows are cut eagerly (invariant 18).
+    pub fn move_to_realm(&self, session: SessionId, realm: Realm) -> bool {
+        let user = self.user(session);
+        let Some(user) = user else {
+            return false;
+        };
+        if user.realm() == realm {
+            return true;
+        }
+        user.set_realm(realm);
+        self.republish_routes();
+        self.refresh_views();
+        true
+    }
+
+    /// Rerender every live connection from one shared scenario snapshot.
+    pub fn refresh_views(&self) {
+        let users = self.users();
+        let scenario = self.scenario_users();
+        for user in users {
+            self.refresh_view_from(&user, &scenario);
+        }
+    }
+
+    /// Retry one connection after its writer drained a queued message.
+    pub fn refresh_view(&self, user: &Arc<UserEntry>) {
+        let scenario = self.scenario_users();
+        self.refresh_view_from(user, &scenario);
+    }
+
+    fn refresh_view_from(&self, user: &Arc<UserEntry>, scenario: &[ScenarioUser]) {
+        if !user.view_is_live() {
+            return;
+        }
+        let Some(viewer) = scenario
+            .iter()
+            .find(|candidate| candidate.session == user.session)
+        else {
+            return;
+        };
+        let mut view = match user.view.lock() {
+            Ok(guard) => guard,
+            Err(_) => {
+                user.outbound.mark_fatal();
+                return;
+            }
+        };
+        let (desired, desired_routes) =
+            match projection::render(&mut view, viewer, scenario, &self.config) {
+                Ok(rendered) => rendered,
+                Err(error) => {
+                    eprintln!(
+                        "voxloom-server: session {}: view id allocation failed: {error}",
+                        user.session
+                    );
+                    user.outbound.mark_fatal();
+                    return;
+                }
+            };
+        let pending = match view.prepare(&desired, &desired_routes) {
+            Ok(Some(pending)) => pending,
+            Ok(None) => return,
+            Err(error) => {
+                eprintln!(
+                    "voxloom-server: session {}: desired view refused: {error}",
+                    user.session
+                );
+                return;
+            }
+        };
+        let (steps, token) = pending.split();
+
+        // Revocations take effect even if the visual transition is currently
+        // congested. Newly allowed flows are held until every control message
+        // has been atomically admitted.
+        let mut messages = Vec::new();
+        let mut enables = Vec::new();
+        for step in steps {
+            match step {
+                EmittedStep::Message(message) => messages.push(message),
+                EmittedStep::RouteChange {
+                    route,
+                    enabled: false,
+                } => self.set_route(route, false),
+                EmittedStep::RouteChange {
+                    route,
+                    enabled: true,
+                } => enables.push(route),
+            }
+        }
+
+        match user.outbound.send_transition(messages) {
+            Ok(()) => {
+                if let Err(error) = view.commit(token) {
+                    eprintln!(
+                        "voxloom-server: session {}: committed queue but view token failed: {error}",
+                        user.session
+                    );
+                    user.outbound.mark_fatal();
+                    return;
+                }
+                for route in enables {
+                    self.set_route(route, true);
+                }
+            }
+            Err(TransitionRefused::Congested { .. }) => {
+                // The writer retries after each drained message. The view stays
+                // committed at its old revision; intermediate desires may be
+                // skipped exactly as documented by `ConnectionView`.
+            }
+            Err(TransitionRefused::TooLarge { .. } | TransitionRefused::Closed) => {}
+        }
+    }
+
+    /// Apply one ordered route toggle from a view transaction.
+    pub fn set_route(&self, route: AudioRoute, enabled: bool) {
+        let mut registry = match self.registry.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        if enabled {
+            registry.enabled_routes.insert(route);
+        } else {
+            registry.enabled_routes.remove(&route);
+        }
+        let generation = self.route_generation.fetch_add(1, Ordering::Relaxed) + 1;
+        registry.republish_routes(generation);
+    }
+
+    fn republish_routes(&self) {
+        let mut registry = match self.registry.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        let generation = self.route_generation.fetch_add(1, Ordering::Relaxed) + 1;
+        registry.republish_routes(generation);
+    }
+}
+
+impl UserEntry {
+    /// Construct the server-owned live state for one authenticated connection.
+    pub fn new(
+        session: SessionId,
+        name: String,
+        realm: Realm,
+        outbound: OutboundQueue,
+        crypt_state: CryptState,
+        now: Instant,
+    ) -> Self {
+        Self {
+            session,
+            name,
+            realm: AtomicU32::new(realm.routing_id()),
+            view: Mutex::new(ConnectionView::new(ViewSessionId(session))),
+            view_live: AtomicBool::new(false),
+            outbound,
+            crypto: Mutex::new(Some(crypt_state)),
+            udp_addr: Mutex::new(None),
+            udp_mode: AtomicBool::new(true),
+            voice_budget: Mutex::new(VoiceBudget::new(now)),
+        }
     }
 }

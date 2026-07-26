@@ -20,8 +20,8 @@
 use std::collections::BTreeSet;
 
 use voxloom_audio::{
-    AudioContext, AudioDecision, AudioTarget, Participant, RoutingDomainId, SessionId, compile,
-    may_receive, outgoing_audio,
+    AudioContext, AudioDecision, AudioTarget, DirectedRoute, Participant, RoutingDomainId,
+    SessionId, compile, compile_authorized, may_receive, outgoing_audio,
 };
 use voxloom_protocol::messages::udp;
 
@@ -73,6 +73,35 @@ fn participants(seed: u64) -> Vec<Participant> {
 }
 
 const SEEDS: u64 = 4000;
+
+#[test]
+fn explicit_routes_are_directional_and_still_cannot_cross_domains() {
+    let alice = SessionId::new(1);
+    let bob = SessionId::new(2);
+    let outsider = SessionId::new(3);
+    let snapshot = compile_authorized(
+        &[
+            Participant::new(alice, RoutingDomainId::new(0)),
+            Participant::new(bob, RoutingDomainId::new(0)),
+            Participant::new(outsider, RoutingDomainId::new(1)),
+        ],
+        &[
+            DirectedRoute::new(alice, bob),
+            DirectedRoute::new(bob, outsider),
+        ],
+        1,
+    );
+
+    assert_eq!(
+        snapshot.receivers(alice, AudioTarget::Normal),
+        &[bob],
+        "the authorized direction is published"
+    );
+    assert!(
+        snapshot.receivers(bob, AudioTarget::Normal).is_empty(),
+        "the reverse direction is not implied and cross-domain authorization is refused"
+    );
+}
 
 /// The sessions the snapshot actually routes. A session the generator declared
 /// in two domains is deliberately absent (see

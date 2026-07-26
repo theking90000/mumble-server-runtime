@@ -72,6 +72,24 @@ impl Participant {
     }
 }
 
+/// One explicitly authorized directional flow.
+///
+/// The receiver's connection owns this authorization: publishing
+/// `sender -> receiver` means that receiver's committed view is ready to accept
+/// audio attributed to the sender. Realm equality remains a second mandatory
+/// check, so an accidentally stale authorization cannot cross a partition.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct DirectedRoute {
+    pub sender: SessionId,
+    pub receiver: SessionId,
+}
+
+impl DirectedRoute {
+    pub const fn new(sender: SessionId, receiver: SessionId) -> Self {
+        Self { sender, receiver }
+    }
+}
+
 /// Where each sender's recipients live inside the flat buffer.
 #[derive(Debug, Clone, Copy)]
 struct Entry {
@@ -207,6 +225,29 @@ impl AudioRoutingSnapshot {
 /// to whichever declaration happened to sort first would make partition
 /// isolation depend on input ordering.
 pub fn compile(participants: &[Participant], generation: u64) -> AudioRoutingSnapshot {
+    compile_inner(participants, None, generation)
+}
+
+/// Compile only the explicitly authorized directional routes.
+///
+/// This is the Phase 6 cold path. A route is included iff both endpoints are
+/// known, belong to the same routing domain, are distinct, and the exact
+/// direction appears in `authorized`. Missing or contradictory input therefore
+/// produces silence rather than broadening delivery.
+pub fn compile_authorized(
+    participants: &[Participant],
+    authorized: &[DirectedRoute],
+    generation: u64,
+) -> AudioRoutingSnapshot {
+    let authorized = authorized.iter().copied().collect();
+    compile_inner(participants, Some(&authorized), generation)
+}
+
+fn compile_inner(
+    participants: &[Participant],
+    authorized: Option<&std::collections::HashSet<DirectedRoute>>,
+    generation: u64,
+) -> AudioRoutingSnapshot {
     let mut ordered = participants.to_vec();
     ordered.sort_by(|left, right| {
         left.session
@@ -235,7 +276,12 @@ pub fn compile(participants: &[Participant], generation: u64) -> AudioRoutingSna
         let start = entries.len();
         entries.push(participant.session);
         for other in &sorted {
-            if other.session != participant.session && other.domain == participant.domain {
+            let route = DirectedRoute::new(participant.session, other.session);
+            let explicitly_allowed = authorized.is_none_or(|routes| routes.contains(&route));
+            if other.session != participant.session
+                && other.domain == participant.domain
+                && explicitly_allowed
+            {
                 entries.push(other.session);
             }
         }

@@ -32,6 +32,7 @@ pub mod connection;
 pub mod handshake;
 pub mod limits;
 pub mod outbound;
+pub mod projection;
 pub mod routing;
 pub mod server;
 pub mod state;

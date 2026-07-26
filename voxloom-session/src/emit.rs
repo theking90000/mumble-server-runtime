@@ -463,7 +463,7 @@ fn permission_query(update: &PermissionUpdate) -> tcp::PermissionQuery {
 ///
 /// REF: references/mumble/src/ACL.h : `enum Perm` (Write 0x1 .. Listen 0x800,
 ///   then Kick 0x10000 .. ResetUserContent 0x100000).
-fn wire_permissions(permissions: PermissionBits) -> u32 {
+pub fn wire_permissions(permissions: PermissionBits) -> u32 {
     const MAPPING: [(u32, u32); 17] = [
         (PermissionBits::WRITE, 0x1),
         (PermissionBits::TRAVERSE, 0x2),

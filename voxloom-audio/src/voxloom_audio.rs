@@ -35,6 +35,6 @@ mod snapshot;
 pub use envelope::outgoing_audio;
 pub use policy::{AudioContext, AudioDecision, AudioTarget, may_receive};
 pub use snapshot::{
-    AudioRoutingSnapshot, Participant, RouteMatrix, RoutingDomainId, SenderMetadata, SessionId,
-    compile,
+    AudioRoutingSnapshot, DirectedRoute, Participant, RouteMatrix, RoutingDomainId, SenderMetadata,
+    SessionId, compile, compile_authorized,
 };
