@@ -103,7 +103,7 @@ pub async fn serve(tcp: TcpStream, acceptor: TlsAcceptor, state: Arc<SharedState
 
     // Service the connection. On any exit path we deregister and announce the
     // departure, so this is wrapped to run the cleanup unconditionally.
-    let result = service_loop(&mut reader, &mut writer, &mut outbound_rx, session).await;
+    let result = service_loop(&mut reader, &mut writer, &mut outbound_rx, &user).await;
 
     state.remove_user(session);
     let departure = ControlMessage::UserRemove(tcp::UserRemove {
@@ -123,7 +123,7 @@ async fn service_loop(
     reader: &mut FrameReader,
     writer: &mut WriteHalf<TlsStream<TcpStream>>,
     outbound_rx: &mut mpsc::UnboundedReceiver<ControlMessage>,
-    session: SessionId,
+    user: &UserEntry,
 ) -> Result<()> {
     loop {
         tokio::select! {
@@ -134,7 +134,7 @@ async fn service_loop(
                 match incoming? {
                     None => return Ok(()), // client closed the connection
                     Some(message) => {
-                        for reply in handle_control(message, session) {
+                        for reply in handle_control(message, user) {
                             write_message(writer, &reply).await?;
                         }
                     }
@@ -167,13 +167,12 @@ async fn wait_for_authenticate(reader: &mut FrameReader) -> Result<Option<tcp::A
 /// Handle one control message from the client, returning replies to send back on
 /// the same connection. Every branch ends in an explicit outcome (L4): a reply,
 /// or an intentional (logged) drop for intents P3 does not support.
-fn handle_control(message: ControlMessage, session: SessionId) -> Vec<ControlMessage> {
+fn handle_control(message: ControlMessage, user: &UserEntry) -> Vec<ControlMessage> {
+    let session = user.session;
     match message {
-        // TCP ping: echo the timestamp so the client can measure RTT (§16.3).
-        ControlMessage::Ping(ping) => vec![ControlMessage::Ping(tcp::Ping {
-            timestamp: ping.timestamp,
-            ..Default::default()
-        })],
+        // TCP ping: echo the timestamp so the client can measure RTT (§16.3),
+        // plus our own crypt counters.
+        ControlMessage::Ping(ping) => vec![ControlMessage::Ping(ping_reply(&ping, user))],
 
         // Audio tunnelled over TCP (UDP fallback, §15.6): the payload is the
         // plaintext UDP packet. Reflect loopback (target 31) back over the tunnel.
@@ -189,6 +188,34 @@ fn handle_control(message: ControlMessage, session: SessionId) -> Vec<ControlMes
             drop_unsupported(&other, session);
             Vec::new()
         }
+    }
+}
+
+/// Build the reply to a TCP `Ping`: the echoed timestamp plus the OCB2 counters
+/// for the datagrams this user has sent us.
+///
+/// Reporting `good` is not optional bookkeeping: the client reads it as
+/// `uiRemoteGood` and, if it is still zero 20 seconds into the session, decides
+/// its UDP never reaches us and permanently falls back to the TCP tunnel — even
+/// while the UDP plane is working in both directions.
+///
+/// REF: references/mumble/src/murmur/Messages.cpp : `Server::msgPing` — clears
+///   the request and answers with timestamp, `uiGood`, `uiLate`, `uiLost`,
+///   `uiResync`.
+/// REF: references/mumble/src/mumble/ServerHandler.cpp : `ServerHandler::message`,
+///   `TCPMessageType::Ping` — `(uiRemoteGood == 0 || uiGood == 0) && bUdp &&
+///   elapsed > 20000000` disables UDP mode.
+fn ping_reply(request: &tcp::Ping, user: &UserEntry) -> tcp::Ping {
+    let (good, late, lost) = user.crypt_counters();
+    tcp::Ping {
+        timestamp: request.timestamp,
+        good: Some(good),
+        late: Some(late),
+        lost: Some(lost),
+        // Nonce resync is refused in P3 (see `drop_unsupported`), so zero is the
+        // true count rather than a placeholder.
+        resync: Some(0),
+        ..Default::default()
     }
 }
 

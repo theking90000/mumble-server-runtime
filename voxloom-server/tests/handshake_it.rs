@@ -244,6 +244,78 @@ async fn udp_association_and_loopback() {
     handle.shutdown();
 }
 
+/// A real client reads `Ping.good` as `uiRemoteGood` and drops to TCP mode when
+/// it is still zero after 20 seconds, so the reply must count the datagrams we
+/// actually decrypted.
+/// REF: references/mumble/src/mumble/ServerHandler.cpp : `ServerHandler::message`,
+///   `TCPMessageType::Ping`.
+#[tokio::test]
+async fn tcp_ping_reply_reports_udp_crypt_counters() {
+    let handle = start_server().await;
+    let udp_addr = handle.udp_addr;
+    let (mut reader, mut writer) = connect(&handle).await;
+    let messages = do_handshake(&mut reader, &mut writer, "dave").await;
+    let (mut crypt, _) = client_crypt(&find_crypt_setup(&messages));
+
+    // Before any UDP traffic the server has decrypted nothing, and says so.
+    send(
+        &mut writer,
+        &ControlMessage::Ping(tcp::Ping {
+            timestamp: Some(1),
+            ..Default::default()
+        }),
+    )
+    .await;
+    let first = next_ping(&mut reader).await;
+    assert_eq!(first.timestamp, Some(1), "timestamp echoed");
+    assert_eq!(first.good, Some(0), "no datagram decrypted yet");
+
+    // One UDP ping, encrypted: the server decrypts it and replies.
+    let sealed = crypt
+        .encrypt(&encode_udp(&UdpMessage::Ping(udp::Ping {
+            timestamp: 7,
+            ..Default::default()
+        })))
+        .expect("encrypt udp ping");
+    let sock = UdpSocket::bind("127.0.0.1:0").await.expect("bind udp");
+    sock.send_to(&sealed, udp_addr).await.expect("send udp");
+    let mut buf = vec![0u8; 2048];
+    let (len, _from) = tokio::time::timeout(Duration::from_secs(5), sock.recv_from(&mut buf))
+        .await
+        .expect("no UDP reply before timeout")
+        .expect("recv");
+    crypt.decrypt(&buf[..len]).expect("decrypt udp ping reply");
+
+    // The next TCP ping must report that datagram.
+    send(
+        &mut writer,
+        &ControlMessage::Ping(tcp::Ping {
+            timestamp: Some(2),
+            ..Default::default()
+        }),
+    )
+    .await;
+    let second = next_ping(&mut reader).await;
+    assert_eq!(second.timestamp, Some(2), "timestamp echoed");
+    assert_eq!(second.good, Some(1), "the decrypted datagram is counted");
+    assert_eq!(second.late, Some(0));
+    assert_eq!(second.lost, Some(0));
+    assert_eq!(second.resync, Some(0), "no resync is implemented in P3");
+
+    handle.shutdown();
+}
+
+/// Read frames until a `Ping` arrives.
+async fn next_ping(reader: &mut FramedReader) -> tcp::Ping {
+    loop {
+        match tokio::time::timeout(Duration::from_secs(5), reader.next()).await {
+            Ok(Some(ControlMessage::Ping(ping))) => return ping,
+            Ok(Some(_)) => continue,
+            _ => panic!("no Ping reply before timeout"),
+        }
+    }
+}
+
 #[tokio::test]
 async fn tcp_tunnel_loopback_fallback() {
     let handle = start_server().await;

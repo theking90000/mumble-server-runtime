@@ -74,6 +74,19 @@ impl UserEntry {
             .map(|guard| guard.is_some())
             .unwrap_or(false)
     }
+
+    /// The OCB2 counters `(good, late, lost)` for datagrams received from this
+    /// user, or zeros if it has no crypto state yet. Reported back in the TCP
+    /// `Ping` reply so the client can tell whether its UDP reaches us.
+    pub fn crypt_counters(&self) -> (u32, u32, u32) {
+        match self.crypto.lock() {
+            Ok(guard) => match guard.as_ref() {
+                Some(state) => (state.good, state.late, state.lost),
+                None => (0, 0, 0),
+            },
+            Err(_) => (0, 0, 0),
+        }
+    }
 }
 
 /// The mutable part of the server state, guarded by one mutex.
