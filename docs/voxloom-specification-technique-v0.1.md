@@ -7,6 +7,12 @@
 **Compatibilité ciblée :** clients Mumble standards, avec une première cible recommandée Mumble 1.5+ et Opus uniquement  
 **Nature du projet :** nouvelle implémentation serveur compatible avec le protocole Mumble, sans chercher à reproduire la sémantique interne de Murmur
 
+> **Amendement d'architecture :** la décision
+> `docs/decisions/0002-flavor-owns-business-state.md` précise que l'état métier
+> appartient au flavor compilé, pas au runtime Voxloom. Le terme historique
+> `CanonicalState` désigne ici le snapshot d'un flavor, jamais un modèle imposé
+> par le cœur.
+
 ---
 
 ## 1. Nommage
@@ -17,13 +23,16 @@
 
 - *vox*, la voix ;
 - *loom*, le métier à tisser ;
-- l’idée qu’un même état canonique est « tissé » en vues, relations d’audibilité et interfaces différentes pour chaque connexion.
+- l’idée qu’un snapshot métier fourni par un flavor est « tissé » en vues,
+  relations d’audibilité et interfaces différentes pour chaque connexion.
 
 Tagline proposée :
 
 > **A declarative Mumble-compatible voice runtime.**
 
-Le nom reste assez abstrait pour ne pas enfermer le projet dans Minecraft, tout en reflétant son principe fondamental : construire des environnements vocaux projetés à partir d’un état métier.
+Le nom reste assez abstrait pour ne pas enfermer le projet dans Minecraft, tout
+en reflétant son principe fondamental : construire des environnements vocaux
+projetés à partir d'un snapshot métier opaque fourni par une intégration.
 
 ### 1.2 Autres noms envisageables
 
@@ -44,9 +53,9 @@ Le reste du document utilise **Voxloom** comme nom de travail.
 
 Voxloom est une nouvelle implémentation de serveur compatible avec le protocole Mumble. Il ne cherche pas à reproduire Murmur, ses serveurs virtuels, ses ACL historiques ou son modèle « un utilisateur appartient à un canal partagé par tous ».
 
-Le serveur conserve un **état canonique métier** indépendant de Mumble, par exemple :
+Voxloom ne conserve pas l'état métier. Un **flavor compilé** possède cet état et
+publie des snapshots immuables, par exemple pour une application Minecraft :
 
-- connexions ;
 - joueurs Minecraft ;
 - mondes et dimensions ;
 - parties ;
@@ -58,7 +67,8 @@ Le serveur conserve un **état canonique métier** indépendant de Mumble, par e
 - relations de visibilité ;
 - relations d’audibilité.
 
-Pour chaque connexion Mumble, Voxloom calcule ensuite plusieurs projections :
+Pour chaque connexion Mumble, le flavor calcule des sorties déclaratives que
+Voxloom valide et publie :
 
 1. une **vue client**, contenant les canaux, utilisateurs, permissions et actions que le client doit afficher ;
 2. un **graphe d’audibilité**, indiquant quels flux audio cette connexion peut recevoir ;
@@ -68,16 +78,13 @@ Pour chaque connexion Mumble, Voxloom calcule ensuite plusieurs projections :
 Le modèle général est :
 
 ```text
-État canonique
-      │
-      ├── render_view(connection)
-      │        └── DesiredClientView
-      │
-      ├── render_audio_policy()
-      │        └── AudioRoutingSnapshot
-      │
-      └── render_handlers(connection)
-               └── InteractionRegistry
+Snapshot métier opaque + contexte vocal
+                  │
+                  └── flavor.render(connection)
+                            └── RenderOutput
+                                  ├── DesiredClientView
+                                  ├── DesiredAudioRoutes
+                                  └── InteractionRegistry
 ```
 
 Pour chaque connexion :
@@ -135,7 +142,8 @@ Voxloom doit permettre :
 
 Le système doit :
 
-- disposer d’une source de vérité canonique unique ;
+- laisser le flavor posséder l'unique source de vérité métier ;
+- publier une seule révision de flavor par génération Voxloom ;
 - rendre les vues de manière déterministe ;
 - séparer construction de vue, réconciliation et transport ;
 - permettre un rendu complet de référence ;
@@ -188,24 +196,21 @@ Les fonctions non supportées doivent être explicitement refusées ou neutralis
 
 ## 5. Principes fondamentaux
 
-### 5.1 L’état canonique ne dépend pas du protocole Mumble
+### 5.1 L'état métier appartient au flavor
 
-L’état métier peut être représenté ainsi :
+L'intégration choisit librement son modèle métier, sa concurrence et ses
+commandes. Voxloom reçoit seulement une référence immuable vers le type de
+snapshot associé au flavor :
 
 ```rust
-struct CanonicalState {
-    principals: PrincipalStore,
-    connections: ConnectionDirectory,
-    players: PlayerStore,
-    realms: RealmStore,
-    teams: TeamStore,
-    radios: RadioStore,
-    roles: RoleStore,
-    positions: PositionStore,
-    policies: PolicyStore,
-    revision: Revision,
+trait VoiceFlavor: Send + Sync + 'static {
+    type Snapshot: Send + Sync + 'static;
 }
 ```
+
+Le runtime ne peut ni inspecter ni modifier ce snapshot sans passer par le
+flavor. Il possède séparément l'état vocal nécessaire aux connexions, aux vues
+engagées et aux routes audio.
 
 Aucune obligation n’existe d’avoir un objet canonique `Channel` correspondant à chaque canal affiché.
 
@@ -241,31 +246,32 @@ Toute commande du client est une intention :
 ```text
 Commande Mumble
 → résolution dans la vue courante
-→ intention métier
-→ validation
-→ mutation canonique éventuelle
+→ VoiceEvent versionné
+→ validation et mutation par le flavor
+→ nouveau snapshot métier
 → nouveau rendu
 ```
 
-Le client ne modifie jamais directement l’état canonique ou la vue engagée.
+Le client ne modifie jamais directement le snapshot métier ou la vue engagée.
 
 ### 5.4 Le rendu complet est la spécification
 
 La fonction conceptuelle de référence reste :
 
 ```rust
-fn render_full(
+fn render_full<F: VoiceFlavor>(
+    flavor: &F,
     viewer: ConnectionId,
-    state: &CanonicalState,
-) -> RenderOutput;
+    snapshot: &F::Snapshot,
+) -> Result<RenderOutput, FlavorError>;
 ```
 
 Toute optimisation future doit respecter :
 
 ```text
-render_incremental(previous, changes, state)
+render_incremental(previous, changes, snapshot)
 ==
-render_full(state)
+render_full(snapshot)
 ```
 
 après normalisation.
@@ -288,19 +294,18 @@ struct AudioRoutingSnapshot {
 
 ## 6. Terminologie
 
-### Principal
+### Flavor subject
 
-Identité authentifiée liée à une connexion :
+Référence opaque vers l'identité authentifiée que le flavor associe à une
+connexion :
 
 ```rust
-struct Principal {
-    id: PrincipalId,
-    minecraft_uuid: Option<Uuid>,
-    certificate_hash: Option<CertificateHash>,
-    capabilities: CapabilitySet,
-    authentication_method: AuthenticationMethod,
-}
+struct FlavorSubjectRef(OpaqueKey);
 ```
+
+La structure du principal, ses UUID et ses capacités appartiennent au flavor.
+Voxloom peut conserver séparément les preuves vocales nécessaires au protocole,
+comme le hash du certificat présenté.
 
 ### Connection
 
@@ -310,14 +315,14 @@ Connexion réseau Mumble active, comprenant :
 - session Mumble ;
 - état cryptographique UDP ;
 - adresse UDP observée ;
-- principal ;
+- référence de sujet opaque fournie par le flavor ;
 - vue engagée ;
 - registre d’interactions ;
 - file de sortie ordonnée.
 
-### Canonical state
+### Flavor snapshot
 
-État métier autoritaire, indépendant de la présentation Mumble.
+État métier autoritaire, immuable pendant un rendu et opaque pour Voxloom.
 
 ### Desired view
 
@@ -335,7 +340,8 @@ Synonyme conceptuel de la vue spécifique calculée pour une connexion.
 
 ### Realm
 
-Domaine métier regroupant temporairement ou durablement des joueurs :
+Exemple de domaine métier défini par un flavor de jeu et regroupant
+temporairement ou durablement des joueurs :
 
 - partie ;
 - instance ;
@@ -370,20 +376,19 @@ Identifiant numérique ou protocolaire attribué à un élément pour une connex
 
 ```text
 ┌───────────────────────────────┐
-│ Intégration Minecraft / API   │
+│ Application métier            │
+│ - état, commandes, acteurs    │
 └──────────────┬────────────────┘
-               │ commandes et snapshots
+               │ snapshot immuable
                ▼
 ┌───────────────────────────────┐
-│ Canonical State Runtime       │
-│ - joueurs                     │
-│ - realms                      │
-│ - équipes                     │
-│ - rôles                       │
-│ - positions                   │
+│ Flavor compilé                │
+│ - rendu par connexion         │
+│ - politiques audio            │
+│ - traduction des événements  │
 └───────┬──────────────┬────────┘
         │              │
-        │              └──────────────────────┐
+        │ sorties      └──────────────────────┐
         ▼                                     ▼
 ┌───────────────────┐              ┌────────────────────┐
 │ View Renderer     │              │ Audio Compiler     │
@@ -431,16 +436,16 @@ voxloom-session
     état client
 
 voxloom-auth
-    jetons
+    preuves vocales
     certificats
-    principals
-    stratégies d’authentification
+    contexte d'authentification générique
+    résultat opaque pour le flavor
 
-voxloom-state
-    état canonique
-    révisions
-    commandes
-    événements
+voxloom-flavor
+    contrat de flavor compilé
+    snapshots métier opaques
+    sorties de rendu
+    événements vocaux
 
 voxloom-render
     composants
@@ -461,9 +466,10 @@ voxloom-audio
     voice targets
 
 voxloom-control
-    API Rust
-    API réseau éventuelle
-    intégrations externes
+    générations publiées
+    coordination vue/audio
+    invalidation des connexions
+    livraison des événements
 
 voxloom-observe
     métriques
@@ -483,6 +489,8 @@ voxloom-testkit
 ## 8. Modèle de rendu déclaratif
 
 Le format réel ne sera pas JSX. Le modèle mental reste néanmoins proche d’un renderer déclaratif.
+Les helpers métier de cet exemple appartiennent au flavor et ne font pas partie
+de l'API centrale.
 
 ### 8.1 API conceptuelle
 
@@ -749,6 +757,10 @@ Lorsqu’un message contient un `actor`, cette session doit être visible par le
 
 ## 10. Authentification
 
+Les jetons, principals et associations propres à Minecraft décrits ci-dessous
+appartiennent au flavor Minecraft. Voxloom fournit seulement le contexte vocal
+et les preuves protocolaires nécessaires à leur validation.
+
 ### 10.1 Endpoint unique
 
 Un seul endpoint suffit :
@@ -757,7 +769,8 @@ Un seul endpoint suffit :
 voice.example.net:64738
 ```
 
-La vue n’est pas choisie par le port. Elle est calculée après authentification à partir du principal et de l’état canonique.
+La vue n’est pas choisie par le port. Elle est calculée après authentification
+par le flavor à partir de son snapshot métier et de l'identité vocale résolue.
 
 ### 10.2 Jeton à usage unique
 
@@ -893,11 +906,12 @@ L’adresse IP seule ne doit jamais sélectionner la session cryptographique.
 
 À la fermeture TCP :
 
-- retirer la connexion de l’état canonique ;
+- retirer la connexion de l'état vocal du runtime ;
+- émettre l'événement de déconnexion vers le flavor ;
 - invalider les routes audio ;
 - détruire l’état cryptographique ;
 - libérer la vue engagée ;
-- rerendre les connexions affectées ;
+- rerendre toutes les connexions dans la première version ;
 - ne pas conserver un `CommittedView` réutilisable pour une future connexion.
 
 ---
@@ -1040,8 +1054,8 @@ La version initiale devrait préférer la reconnexion lorsqu’une divergence gr
 ### 13.1 Version initiale
 
 ```text
-changement canonique
-→ déterminer les connexions affectées
+publication d'un snapshot de flavor
+→ sélectionner `All` dans la première version
 → rerendre entièrement chaque connexion
 → réconcilier
 ```
@@ -1090,34 +1104,24 @@ Une modification marque :
 
 ### 13.4 Suivi des dépendances
 
-```rust
-enum DependencyKey {
-    Connection(ConnectionId),
-    Principal(PrincipalId),
-    Player(PlayerId),
-    Match(MatchId),
-    Realm(RealmId),
-    Team(TeamId),
-    Radio(RadioId),
-    Role(RoleId),
-}
-```
-
-Pendant le rendu, les lectures sont enregistrées.
+La première version rerend toutes les connexions pour chaque publication. Une
+future invalidation ciblée utilisera des clés opaques définies par le flavor et
+gardera `All` comme fallback correct. Elle relève de la phase d'optimisation et
+ne fait pas partie du contrat P7 initial.
 
 ### 13.5 Retained-mode futur
 
 Un composant coûteux peut conserver un objet de vue :
 
 ```rust
-trait RetainedProjection {
-    fn rebuild(&self, state: &CanonicalState) -> Arc<VNode>;
+trait RetainedProjection<S> {
+    fn rebuild(&self, snapshot: &S) -> Arc<VNode>;
 
     fn try_update(
         &self,
         previous: &Arc<VNode>,
-        change: &CanonicalChange,
-        state: &CanonicalState,
+        change: &FlavorChange,
+        snapshot: &S,
     ) -> Option<Arc<VNode>>;
 }
 ```
@@ -1461,7 +1465,9 @@ Peut résoudre noms et IDs enregistrés. Attention aux fuites d’utilisateurs i
 
 ### 16.13 `ContextAction`
 
-Résoudre l’action dans le registre actuel de la connexion, revérifier l’autorisation et dispatcher une commande canonique.
+Résoudre l'action dans le registre actuel de la connexion, revérifier les
+conditions vocales et émettre un `VoiceEvent` versionné. Le flavor revérifie
+ensuite sa politique métier.
 
 ### 16.14 `UserList`
 
@@ -1484,7 +1490,8 @@ Validation :
 
 Le client demande les permissions effectives d’un canal visible.
 
-Le serveur répond à partir de la politique canonique, pas d’un cache non fiable.
+Le serveur répond à partir de la sortie validée du flavor pour la génération
+courante, pas d'un cache non fiable.
 
 ### 16.17 `UserStats`
 
@@ -1588,8 +1595,10 @@ Pour une demande de déplacement :
 ```text
 Client demande canal B.
 Serveur valide.
-Si accepté : état canonique changé puis UserState publié.
-Si refusé : PermissionDenied, état inchangé.
+Si accepté : VoiceEvent émis vers le flavor.
+Le flavor publie éventuellement un nouveau snapshot.
+Voxloom rend puis publie UserState.
+Si refusé : PermissionDenied, snapshot inchangé.
 ```
 
 Le serveur peut republier un état autoritaire si nécessaire.
@@ -1629,13 +1638,13 @@ Toutes les validations sont donc serveur-side.
 
 ### 19.1 Permissions effectives
 
-Le serveur calcule directement un masque par canal et connexion :
+Le flavor calcule directement un masque par canal et connexion :
 
 ```rust
-fn permissions_for(
-    principal: &Principal,
+fn permissions_for<S, P>(
+    principal: &P,
     channel: ChannelKey,
-    state: &CanonicalState,
+    snapshot: &S,
 ) -> PermissionBits;
 ```
 
@@ -1795,7 +1804,7 @@ Fiables selon le déploiement :
 
 - état Minecraft serveur ;
 - service d’authentification ;
-- état canonique Voxloom ;
+- snapshot métier publié par le flavor via un canal approuvé ;
 - snapshots signés ou transport interne authentifié.
 
 ### 22.2 Position autoritaire
@@ -1868,12 +1877,16 @@ L’implémentation OCB2 doit être :
 
 ### 23.1 Control plane
 
-Approche recommandée :
+L'application et son flavor possèdent la sérialisation des mutations métier :
 
-- un acteur logique sérialisant les mutations canoniques par partition ;
-- événements ordonnés ;
-- numéros de révision ;
-- rendus déclenchés après application atomique d’un batch.
+- acteurs, locks ou transactions métier ;
+- commandes et événements applicatifs ;
+- batching et révisions du snapshot métier.
+
+Voxloom reçoit une révision immuable déjà publiée. Son coordinateur sérialise
+uniquement la génération vocale correspondante : rendus, transitions de vues,
+routes audio et événements `VoiceEvent`. Il ne tient jamais un
+`RwLock<F::Snapshot>` pendant les rendus.
 
 ### 23.2 Data plane
 
@@ -1887,11 +1900,12 @@ publié par swap atomique.
 
 ### 23.3 Cohérence entre vue et audio
 
-Un changement structurel produit :
+Une publication de flavor produit :
 
 ```rust
 struct PublishedGeneration {
     generation: u64,
+    flavor_revision: FlavorRevision,
     views: ViewGeneration,
     audio: AudioRoutingSnapshot,
 }
@@ -1901,7 +1915,7 @@ L’ordre de publication respecte les règles de sécurité.
 
 ### 23.4 Batching
 
-Coalescer les changements d’un même cycle :
+Le flavor peut coalescer les changements d'un même cycle avant publication :
 
 ```text
 changement de partie
@@ -1910,31 +1924,36 @@ changement de partie
 → un seul rendu final
 ```
 
-Une petite fenêtre événementielle ou une transaction explicite est préférable à plusieurs états intermédiaires inutiles.
+Une petite fenêtre événementielle ou une transaction explicite appartient à
+l'intégration. Voxloom ne voit que le snapshot final et ne rend aucun état
+intermédiaire.
 
 ---
 
 ## 24. API d’intégration
 
-### 24.1 Modèle par commandes et snapshots
+### 24.1 Modèle par flavors et snapshots
 
-L’intégration externe envoie :
+L'intégration compile un flavor avec Voxloom. Le flavor possède son snapshot et
+ses commandes. Le runtime ne connaît pas leur structure :
 
 ```rust
-enum CanonicalCommand {
-    ConnectPlayer { ... },
-    DisconnectPlayer { ... },
-    SetRealm { ... },
-    SetTeam { ... },
-    SetRole { ... },
-    SetPosition { ... },
-    SetRadioMembership { ... },
-    MergeRealms { ... },
-    SplitRealm { ... },
+trait VoiceFlavor: Send + Sync + 'static {
+    type Snapshot: Send + Sync + 'static;
+
+    fn revision(&self, snapshot: &Self::Snapshot) -> FlavorRevision;
+
+    fn render(
+        &self,
+        snapshot: &Self::Snapshot,
+        connection: ConnectionId,
+    ) -> Result<RenderOutput, FlavorError>;
 }
 ```
 
-Le runtime émet :
+Une publication P7 fournit uniquement un `Arc<F::Snapshot>` ; le runtime rend
+toutes les connexions. Une éventuelle sélection ciblée reste une optimisation
+P10 avec fallback `All`. Le runtime émet vers le flavor :
 
 ```rust
 enum VoiceEvent {
@@ -1950,34 +1969,25 @@ enum VoiceEvent {
 
 ### 24.2 Intégration embarquée
 
-Une bibliothèque Rust peut enregistrer des composants :
+Un binaire de composition choisit un `VoiceFlavor` à la compilation. La
+dépendance va du flavor vers l'API Voxloom ; aucune crate centrale ne dépend
+d'un flavor concret. Le flavor traite les `VoiceEvent`, modifie son propre état
+selon son modèle de concurrence, puis publie un nouveau snapshot si nécessaire.
 
-```rust
-trait VoiceApplication: Send + Sync + 'static {
-    fn render(
-        &self,
-        ctx: &mut RenderContext,
-        connection: ConnectionId,
-    ) -> RenderOutput;
-
-    fn handle(
-        &self,
-        ctx: &mut CommandContext,
-        event: VoiceEvent,
-    ) -> Result<(), VoiceError>;
-}
-```
+Cette intégration statique n'impose ni ABI de plugin dynamique ni callbacks
+stockés dans le hot path.
 
 ### 24.3 Intégration externe
 
-Une API réseau future peut accepter :
+Une intégration externe future peut envelopper un flavor et accepter :
 
-- snapshots complets versionnés ;
-- patches idempotents ;
-- commandes ;
+- snapshots métier complets versionnés ;
+- patches métier idempotents ;
+- commandes propres au flavor ;
 - abonnements aux événements.
 
-Elle ne doit jamais être appelée depuis le hot path audio.
+Le protocole de cette API appartient au flavor. Il ne doit jamais être appelé
+depuis le hot path audio.
 
 ### 24.4 Handlers stables
 
@@ -1995,7 +2005,9 @@ struct HandlerRef {
 
 - vérifier que le handler existe encore ;
 - vérifier la génération ;
-- revérifier la politique canonique.
+- revérifier les conditions vocales ;
+- laisser le flavor revérifier sa politique métier après réception de
+  l'événement.
 
 ---
 
@@ -2073,7 +2085,8 @@ DENY
 
 ### 25.4 Replay
 
-Journaliser des commandes canoniques déterministes permet de :
+Journaliser les publications de flavor et les `VoiceEvent` déterministes
+permettent de :
 
 - reproduire un bug ;
 - rejouer une séquence ;
@@ -2184,7 +2197,7 @@ Vérifier qu’un utilisateur caché ne fuit jamais via :
 
 1. correction ;
 2. hot path audio précompilé ;
-3. rerender uniquement des connexions affectées ;
+3. rerender complet de toutes les connexions comme oracle ;
 4. cache immuable ;
 5. structural sharing ;
 6. dépendances automatiques ;
@@ -2192,7 +2205,7 @@ Vérifier qu’un utilisateur caché ne fuit jamais via :
 
 ### 27.2 Complexité cible
 
-Rendu structurel :
+Rendu structurel après une éventuelle invalidation ciblée mesurée :
 
 ```text
 O(nombre d’éléments visibles pour les connexions affectées)
@@ -2247,7 +2260,8 @@ Un processus unique :
 ```text
 TCP/TLS acceptor
 UDP socket
-Canonical runtime
+Flavor integration
+Voxloom runtime
 View renderer
 Reconciler
 Audio router
@@ -2274,7 +2288,7 @@ Mumble Edge
 └── client views
 
 Control Cluster
-├── canonical state
+├── flavor state service
 └── render decisions
 
 Audio Workers
@@ -2351,7 +2365,19 @@ Critère : appel vocal stable avec client officiel.
 
 Critère : Alice et Bob voient des arbres différents sans reconnexion.
 
-### Phase 3 : intégration Minecraft
+### Phase 3 : intégration de flavor
+
+- contrat `VoiceFlavor` ;
+- snapshot métier opaque ;
+- rendu complet de toutes les connexions ;
+- publication atomique des vues et routes ;
+- événements vocaux versionnés ;
+- flavor de référence et binaire de composition.
+
+Critère : le scénario Aurora/Borealis de la Phase 2 passe uniquement à travers
+l'API publique de flavor.
+
+### Phase 4 : flavor Minecraft
 
 - jetons ;
 - association UUID ;
@@ -2365,7 +2391,7 @@ Critère : Alice et Bob voient des arbres différents sans reconnexion.
 
 Critère : plusieurs parties isolées sur un endpoint unique.
 
-### Phase 4 : interactions
+### Phase 5 : interactions
 
 - permissions effectives ;
 - context actions ;
@@ -2375,7 +2401,7 @@ Critère : plusieurs parties isolées sur un endpoint unique.
 - listeners traduits ou refusés ;
 - inspecteur et explications.
 
-### Phase 5 : robustesse
+### Phase 6 : robustesse
 
 - property tests ;
 - fuzzing ;
@@ -2385,7 +2411,7 @@ Critère : plusieurs parties isolées sur un endpoint unique.
 - métriques ;
 - tests longue durée.
 
-### Phase 6 : optimisation
+### Phase 7 : optimisation
 
 - invalidation ciblée ;
 - cache de sous-arbres ;
@@ -2393,7 +2419,7 @@ Critère : plusieurs parties isolées sur un endpoint unique.
 - dependency tracking ;
 - retained-mode sur profils coûteux.
 
-### Phase 7 : distribution éventuelle
+### Phase 8 : distribution éventuelle
 
 Uniquement si l’échelle réelle l’exige.
 
@@ -2533,7 +2559,7 @@ Le MVP est réussi lorsque :
 2. ils sont authentifiés par jeton ;
 3. chaque client reçoit une vue différente ;
 4. les vues changent sans reconnexion ;
-5. les canaux synthétiques n’ont pas besoin d’exister dans l’état canonique ;
+5. les canaux synthétiques n’ont pas besoin d’exister dans le snapshot métier ;
 6. le routage audio ne dépend pas des canaux visibles ;
 7. un utilisateur inconnu n’est jamais utilisé comme source audio ;
 8. les transitions ne provoquent aucune violation protocolaire ;
@@ -2548,6 +2574,9 @@ Le MVP est réussi lorsque :
 ---
 
 ## 34. Exemple complet de modèle
+
+Cet exemple vit dans le flavor Minecraft de la Phase 4. Il n'appartient pas aux
+crates centrales de Voxloom.
 
 ```rust
 fn render_voice_world(
@@ -2629,7 +2658,7 @@ Le planificateur prend en charge ces contraintes.
 Voxloom doit être conçu autour de quatre abstractions indépendantes :
 
 ```text
-CanonicalState
+FlavorSnapshot (opaque)
 ProjectedClientView
 AudioRoutingSnapshot
 InteractionRegistry
@@ -2638,10 +2667,9 @@ InteractionRegistry
 Le pipeline de contrôle est :
 
 ```text
-commande
-→ validation
-→ état canonique
-→ rendu
+snapshot publié par le flavor
+→ rendu du flavor
+→ validation Voxloom
 → réconciliation
 → messages Mumble
 ```
@@ -2729,11 +2757,14 @@ Le serveur doit également connaître les anciens formats de paquets suffisammen
 
 ## Annexe C. ADR initiales
 
-### ADR-001 : l’état canonique est indépendant de Mumble
+### ADR-001 : l'état métier est indépendant de Mumble et de Voxloom
 
-**Décision :** les canaux, ACL et serveurs virtuels Murmur ne sont pas le modèle métier.
+**Décision :** les canaux, ACL et serveurs virtuels Murmur ne sont pas le modèle
+métier. Ce modèle appartient au flavor et reste opaque pour le runtime, selon
+`docs/decisions/0002-flavor-owns-business-state.md`.
 
-**Conséquence :** toutes les références client sont résolues vers des objets canoniques ou des commandes.
+**Conséquence :** toutes les références client sont résolues vers des
+`VoiceEvent` ou des clés de flavor avant de quitter le runtime vocal.
 
 ### ADR-002 : le routage audio est indépendant de l’arbre visible
 
@@ -2743,13 +2774,15 @@ Le serveur doit également connaître les anciens formats de paquets suffisammen
 
 ### ADR-003 : full render comme oracle de correction
 
-**Décision :** toute vue doit être reconstructible intégralement depuis l’état canonique.
+**Décision :** toute vue doit être reconstructible intégralement par le flavor
+depuis un snapshot métier immuable.
 
 **Conséquence :** les caches et projections retained peuvent être supprimés sans changer le comportement.
 
 ### ADR-004 : validation avant effet
 
-**Décision :** toute action client est validée avant modification canonique ou émission irréversible.
+**Décision :** toute action client est validée avant émission d'un `VoiceEvent`
+ou effet irréversible. Le flavor valide séparément toute mutation métier.
 
 **Conséquence :** les corrections rétroactives restent un mécanisme de récupération, pas le flux normal.
 

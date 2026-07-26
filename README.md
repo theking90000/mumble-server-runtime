@@ -1,16 +1,17 @@
 # Voxloom
 
 Runtime vocal déclaratif compatible Mumble : un serveur qui parle le protocole
-Mumble au fil, mais dont l'état canonique, les vues par connexion et le routage
-audio sont indépendants du protocole. Voir `docs/` pour la spécification et la
-roadmap.
+Mumble au fil, mais dont les snapshots métier fournis par ses flavors, les vues
+par connexion et le routage audio sont indépendants du protocole. Voxloom ne
+possède pas l'état métier. Voir `docs/` pour la spécification et la roadmap.
 
 **Statut : phases P0 à P4 closes** (infrastructure de vérité, codec pur, proxy
 oracle, serveur minimal, routage audio) ; deux vrais clients Mumble se
 connectent, se voient et s'entendent, en UDP comme en repli tunnel TCP. Le cœur
 pur de P5 (moteur de vues) est fait. P6 est close : les vues divergentes,
 transitions à chaud, préférences locales et routes audio ont été validées en CI
-et sur des clients officiels macOS et Windows. Prochaine phase : P7.
+et sur des clients officiels macOS et Windows. Prochaine phase : P7, contrat de
+flavor et publication atomique.
 L'avancement détaillé fait foi dans `docs/STATUS.md` ; les règles de travail sont
 dans `AGENT.md`.
 

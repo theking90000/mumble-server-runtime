@@ -102,7 +102,8 @@ alloués dans un ordre fixe à chaque connexion.
 Réserves attendues en P6 :
 
 - Ce scénario à deux realms est déterministe et local au serveur ; ce n'est pas
-  encore l'état canonique partitionné de P7.
+  encore un flavor métier de production. P7 fournit son contrat d'intégration et
+  P8 porte le premier flavor Minecraft.
 - Les ACL détaillées, messages texte, blobs, targets whisper et administration
   native restent refusés explicitement.
 - Le certificat client fournit une identité de présentation, pas une

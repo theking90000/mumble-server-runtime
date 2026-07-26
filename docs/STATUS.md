@@ -4,7 +4,7 @@
 > reprend doit savoir. Autorité : la spec et la roadmap (`docs/`) ; ce fichier ne
 > fait que pointer l'état courant. Mettre à jour à chaque fin de tâche.
 
-**Phase courante : P7 (état canonique, partitions, intégration).
+**Phase courante : P7 (intégration de flavors et publication atomique).
 P6 est close : T1 à T8 verts, checklist humaine signée le 2026-07-26 sur deux
 clients officiels macOS et Windows (`docs/checklists/p6-live-views.md`, serveur
 `9b59527`).
@@ -19,6 +19,11 @@ réels qui se voient (humain, `docs/checklists/p3-minimal-server.md`). P2 est cl
 (checklist signée `2fb1e98`). P1 (codec pur) est close. Reste optionnel hérité de
 P1 : le job nightly cargo-fuzz en CI. Les règles R1–R6 (`AGENT.md`) et la
 discipline de code restent la loi.
+
+P7 suit la décision `docs/decisions/0002-flavor-owns-business-state.md` :
+Voxloom possède l'état vocal, tandis que chaque flavor compilé possède son état
+métier. La roadmap détaille désormais T1 à T8, du contrat minimal au checkpoint
+live du flavor de référence.
 
 **P5 (moteur de vues pur) — cœur pur implémenté et vérifié en CI, mergé sur
 `main` le 2026-07-24.** `voxloom-render` (vue normalisée, normalize, validate) et
@@ -622,9 +627,9 @@ phases et n'ont **pas** été inventés ici (R1/R5) :
   simulé actuel modélise le handshake/présence (§20 : 1-6, 8, 15) ; le pilotage
   d'un plan de transition complet (appliquer un `OutputTransaction` de
   `voxloom-reconcile`) reste à câbler côté testkit pour ce proptest.
-- **`render_full` depuis `CanonicalState`.** L'état canonique est **P7** ; le
-  moteur opère pour l'instant sur des `ClientView` déjà résolues. Le rendu depuis
-  composants (§8.1, spécifique Minecraft) est **P8**.
+- **`render_full` depuis `VoiceFlavor::Snapshot`.** Le contrat de flavor et sa
+  publication sont **P7** ; le moteur opère pour l'instant sur des `ClientView`
+  déjà résolues. Le modèle métier concret et son rendu Minecraft sont **P8**.
 - **Invariants hors périmètre du moteur pur** : 7 (session audio sortante = P4),
   13/14/17 (chemin commande entrante = P3/P9). Notés, pas implémentés.
 - **Cibles fuzz `normalize`/`planner`** (testing.md) : à ajouter avec le job
@@ -699,19 +704,20 @@ fixtures/corpus/          7 captures réelles (zone vérificateur R2)
 Note : `voxloom-render`/`voxloom-reconcile` sont sur `main` (P5 mergé le
 2026-07-24). `voxloom-server`/`voxloom-testkit` sur `main` (P3, le 2026-07-24).
 
-### Après P4
+### Après P6
 
 P4 est close (T1–T6 verts, checkpoint humain signé). **P6 est close : T1 à T7
 verts en CI et checkpoint humain T8 signé sur macOS et Windows. P7 est la
-prochaine phase.** P5 peut aussi être clôturé en branchant son proptest sur le
+prochaine phase : contrat de flavor générique, rendu depuis un snapshot métier
+opaque et publication atomique.** P5 peut aussi être clôturé en branchant son proptest sur le
 `SimulatedMumbleClient`, qui sait désormais juger le plan voix et toutes les
 références de sortie (cf. « Reste à faire » §3). Voir la roadmap.
 
-Pièges P4 à retenir : (1) les gates `audio/no-render-dep` et `audio/no-state-dep`
-grep les **chaînes** `voxloom[_-]render` / `voxloom[_-]state` sur tout
+Pièges P4 à retenir : (1) les gates `audio/no-render-dep` et `audio/no-flavor-dep`
+grep les **chaînes** `voxloom[_-]render` / `voxloom[_-]flavor` sur tout
 `voxloom-audio/src`, **commentaires compris** — mentionner ces crates dans une
 doc, même pour expliquer qu'on n'en dépend pas, casse la CI ; formuler en
-concepts (« l'état vivant », « l'état canonique ») ; (2) le chiffrement par
+concepts (« l'état vivant », « le snapshot métier opaque ») ; (2) le chiffrement par
 destinataire impose une allocation par destinataire (sortie OCB2 + enveloppe),
 inhérente à « chiffrer séparément pour chaque destinataire » (§15.2) — c'est ce
 que T6 doit mesurer avant toute optimisation (§27.4) ; (3) **couper l'UDP sous un

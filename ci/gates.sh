@@ -59,15 +59,17 @@ forbid "audio/no-Mutex"        '\b(Mutex|RwLock)\b'                "${audio_file
 forbid "audio/no-await"        '\.await\b'                          "${audio_files[@]}"
 forbid "audio/no-boxed-fn"     'Box<dyn +Fn'                        "${audio_files[@]}"
 forbid "audio/no-render-dep"   'voxloom[_-]render'                  "${audio_files[@]}"
-forbid "audio/no-state-dep"    'voxloom[_-]state'                   "${audio_files[@]}"
+forbid "audio/no-flavor-dep"   'voxloom[_-]flavor'                  "${audio_files[@]}"
 
 # --- voxloom-render : ignore le wire format ---
 mapfile -t render_files < <(crate_src_files voxloom-render)
 forbid "render/no-protocol"    'voxloom[_-]protocol'                "${render_files[@]}"
 
-# --- voxloom-state : pas de types protocolaires Mumble ---
-mapfile -t state_files < <(crate_src_files voxloom-state)
-forbid "state/no-protocol"     'voxloom[_-]protocol'                "${state_files[@]}"
+# --- voxloom-flavor : contrat générique sans types protocolaires Mumble ---
+mapfile -t flavor_files < <(crate_src_files voxloom-flavor)
+forbid "flavor/no-protocol"    'voxloom[_-]protocol'                "${flavor_files[@]}"
+forbid "flavor/no-domain"      '([Mm]inecraft|[Rr]ealm|[Pp]layer|[Tt]eam|[Pp]osition|[Rr]adio)' \
+                                                                    "${flavor_files[@]}"
 
 # --- voxloom-protocol / voxloom-crypto : crates purs, sans runtime ni IO ---
 for pure in voxloom-protocol voxloom-crypto; do
