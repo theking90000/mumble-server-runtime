@@ -16,6 +16,7 @@ use voxloom_audio::{AudioTarget, SessionId, may_receive, outgoing_audio};
 use voxloom_protocol::messages::udp;
 use voxloom_protocol::{ControlMessage, UdpMessage, encode_udp};
 
+use crate::outbound::VoiceAdmission;
 use crate::state::SharedState;
 use crate::voice::encrypt;
 
@@ -68,9 +69,19 @@ pub fn deliver_audio(
                 }
             },
             None => {
-                // TCP tunnel fallback (spec 15.6). A closed queue means the
-                // connection task has already gone; its removal is in flight.
-                let _ignored = entry.outbound.send(ControlMessage::UdpTunnel(plaintext));
+                // TCP tunnel fallback (spec 15.6). The queue is bounded, so this
+                // is an admission decision, not an unconditional push.
+                match entry
+                    .outbound
+                    .push_voice(ControlMessage::UdpTunnel(plaintext))
+                {
+                    VoiceAdmission::Accepted => {}
+                    // Counted and logged by the queue. A gap is the right
+                    // outcome for a recipient already behind: stale voice helps
+                    // nobody, and refusing it here keeps the same connection
+                    // healthy for the control traffic that still matters.
+                    VoiceAdmission::Dropped => {}
+                }
             }
         }
     }

@@ -19,6 +19,10 @@
 //!   session bookkeeping, deliberately NOT the canonical state of P7.
 //! - [`connection`] is the async per-connection task: TLS accept, read
 //!   Version/Authenticate, emit the handshake, then service the connection.
+//! - [`outbound`] is one connection's bounded output queue and the admission
+//!   policy over it: voice is droppable, control is not. It is also the intended
+//!   commit point for the per-connection view transactions of P6, and the module
+//!   documentation records why, so that design is not re-derived from scratch.
 //! - [`voice`] is the UDP voice plane: crypto association by proof, ping replies
 //!   and loopback reflection.
 #![forbid(unsafe_code)]
@@ -27,6 +31,7 @@ pub mod config;
 pub mod connection;
 pub mod handshake;
 pub mod limits;
+pub mod outbound;
 pub mod routing;
 pub mod server;
 pub mod state;

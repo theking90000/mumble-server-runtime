@@ -17,13 +17,12 @@ use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use tokio::sync::mpsc;
 use voxloom_audio::{AudioRoutingSnapshot, Participant, RoutingDomainId, compile};
 use voxloom_crypto::CryptState;
-use voxloom_protocol::ControlMessage;
 
 use crate::config::ServerConfig;
 use crate::limits::VoiceBudget;
+use crate::outbound::OutboundQueue;
 
 /// A Mumble user session id. Monotonic per process (spec §9.1).
 pub type SessionId = u32;
@@ -43,10 +42,6 @@ pub struct ChannelDef {
     pub position: i32,
 }
 
-/// A message queued for a connection's TCP writer. Control frames and
-/// TCP-tunnelled audio (`UDPTunnel`) both travel as [`ControlMessage`].
-pub type Outbound = ControlMessage;
-
 /// One connected, authenticated user.
 ///
 /// Shared behind an `Arc` so the owning connection task, the presence broadcast
@@ -61,7 +56,9 @@ pub struct UserEntry {
     pub channel_id: u32,
     /// Queue to this user's TCP writer. Other connections push presence updates
     /// (`UserState`/`UserRemove`) here; the voice plane pushes tunnelled audio.
-    pub outbound: mpsc::UnboundedSender<Outbound>,
+    /// It is bounded and refuses the two classes differently — see
+    /// [`crate::outbound`], which is also where the reasoning lives.
+    pub outbound: OutboundQueue,
     /// Per-connection OCB2 state. `None` until `CryptSetup` has been sent.
     pub crypto: Mutex<Option<CryptState>>,
     /// The UDP address bound to this session by cryptographic proof, if any. The

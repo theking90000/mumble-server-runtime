@@ -4,12 +4,11 @@
 > reprend doit savoir. Autorité : la spec et la roadmap (`docs/`) ; ce fichier ne
 > fait que pointer l'état courant. Mettre à jour à chaque fin de tâche.
 
-**P4 (routage audio deux clients) est close : T1 à T6 verts en CI et checklist
-humaine signée le 2026-07-26 (`docs/checklists/p4-audio-routing.md`, serveur
-`dcf4916`) — deux vrais clients s'entendent dans les deux sens, en UDP, en repli
-tunnel d'un seul côté et des deux côtés. Prochaine phase : P6 (vues par
-connexion en live), pas encore entamée. P3 est close : checklist
-humaine signée le 2026-07-26.** Les trois critères de P3 sont
+**Phase courante : P6 (vues par connexion en live) — T2 fait, le reste à faire.
+P4 est close : T1 à T6 verts en CI et checklist humaine signée le 2026-07-26
+(`docs/checklists/p4-audio-routing.md`, serveur `dcf4916`) — deux vrais clients
+s'entendent dans les deux sens, en UDP, en repli tunnel d'un seul côté et des
+deux côtés. P3 est close : checklist humaine signée le 2026-07-26.** Les trois critères de P3 sont
 tenus : client simulé rejouant le handshake sans violation §20 (CI), deux clients
 simulés simultanés à vues indépendantes (CI), et vrai client officiel connecté
 avec loopback serveur audible en UDP **et** en repli tunnel TCP, deux clients
@@ -406,6 +405,56 @@ destinataire. Aucun correctif n'a été nécessaire.
   reçu de lui (`aiUdpFlag`, `murmur/Server.cpp`), ce que `voxloom-server`
   reproduit. Le scénario réel (pare-feu bloquant **avant** la connexion) bascule
   bien, au bout de ~20 s. Rien à corriger ; la checklist porte le détail.
+
+### Phase 6 — vues par connexion en live (en cours, T2 fait)
+
+Brancher le moteur pur de P5 sur les connexions réelles. Décisions de conception
+arrêtées avec l'humain avant d'écrire du code, et **consignées dans les modules
+concernés** plutôt qu'ici, pour qu'elles survivent à ce document :
+
+| Tranche | Livrable | État |
+|---|---|---|
+| T1 | Émetteur `PlanOp` → `ControlMessage` (pur, sans réseau) | à faire |
+| T2 | File de sortie bornée, admission différenciée voix/contrôle | **fait** |
+| T3 | `voxloom-session` (crate pur) : vue engagée, commit atomique, ADR-009 | à faire |
+| T4 | Résolution ID→clé des commandes entrantes (invariants 13/14/16/17) | à faire |
+| T5 | Scénario déterministe + domaine de routage par realm | à faire |
+| T6 | Couplage audio asymétrique (coupure eager, activation gated) | à faire |
+| T7 | Vérificateur R2 : file adverse, convergence, « aucune entité hors vue » | à faire |
+| T8 | Checklist humaine P6 | à faire |
+
+**T2 — `voxloom-server/src/outbound.rs`.** La file était un
+`mpsc::UnboundedSender` : un client lent faisait croître la mémoire du serveur
+sans borne, un déni de service latent indépendant de P6. Elle est désormais
+bornée (`CAPACITY = 1024`), avec **une seule file ordonnée et deux politiques
+d'admission** :
+
+- **La voix est jetable**, et bornée en *latence* et non en volume : refusée
+  dès que la profondeur atteint `MAX_DEPTH_FOR_VOICE = 64` (~640 ms d'un
+  locuteur à 10 ms de framing). Un paquet en retard ne vaut rien.
+- **Le contrôle n'est pas jetable** : un `UserState` sauté laisserait le client
+  sur une vue divergente en silence. Un refus marque la connexion pour
+  fermeture — la forme que prendra ADR-009 en T3.
+
+Une seule file, parce que le client **jette l'audio dont il ne connaît pas la
+session émettrice** : le `UserState` qui présente un locuteur doit précéder son
+audio tunnelisé, ce que deux files indépendantes ne garantiraient pas. REF
+`mumble/ServerHandler.cpp::handleVoicePacket` (`ClientUser::get(senderSession)`).
+
+Aucune admission ne bloque : deux connexions qui se poussent mutuellement des
+mises à jour de présence avec les deux files pleines se bloqueraient, et un
+client lent figerait toute tâche voulant le notifier. Le non-blocage rend les
+deux impossibles par construction.
+
+La file est le **point de commit** prévu pour les transactions de vue de T3
+(« dans la queue = commité ») ; le module documente pourquoi et ce que ça impose
+(réservation tout-ou-rien via `try_reserve`, transaction plus grosse que la file
+→ reconnexion ADR-009 et non retry infini, vue engagée intacte sur refus).
+`routing.rs` ne fait plus `let _ignored = ...send(...)` : chaque paquet finit sur
+une décision explicite (R6).
+
+Done-command : `cargo test -p voxloom-server` — 21 tests (13 unitaires dont 5
+neufs sur l'admission, 8 d'intégration inchangés, dont les 4 de routage P4).
 
 ---
 

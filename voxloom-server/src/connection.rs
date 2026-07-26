@@ -23,6 +23,7 @@ use voxloom_protocol::{
 
 use crate::handshake::{self, OtherUser};
 use crate::limits;
+use crate::outbound::{ControlAdmission, OutboundQueue};
 use crate::state::{SessionId, SharedState, UserEntry};
 use crate::voice;
 
@@ -66,12 +67,12 @@ pub async fn serve(
     let session = state.allocate_session();
     let (crypt_setup, crypt_state) = voice::generate_crypt_setup(&rng)?;
 
-    let (outbound_tx, mut outbound_rx) = mpsc::unbounded_channel::<ControlMessage>();
+    let (outbound, mut outbound_rx) = OutboundQueue::new(session);
     let user = Arc::new(UserEntry {
         session,
         name: name.clone(),
         channel_id: crate::state::ROOT_CHANNEL_ID,
-        outbound: outbound_tx,
+        outbound,
         crypto: std::sync::Mutex::new(Some(crypt_state)),
         udp_addr: std::sync::Mutex::new(None),
         // Optimistic, like the real server: assume UDP until the client tells
@@ -113,7 +114,14 @@ pub async fn serve(
         ..Default::default()
     });
     for other in &others {
-        let _ignored = other.outbound.send(announce.clone());
+        match other.outbound.push_control(announce.clone()) {
+            ControlAdmission::Accepted => {}
+            // That peer is too far behind to be told about the newcomer. It has
+            // been marked for teardown by its own queue, and its task will act
+            // on that; skipping it silently here would leave it permanently
+            // blind to this user.
+            ControlAdmission::Refused => {}
+        }
     }
 
     // Service the connection. On any exit path we deregister and announce the
@@ -134,7 +142,13 @@ pub async fn serve(
         ..Default::default()
     });
     for remaining in state.users() {
-        let _ignored = remaining.outbound.send(departure.clone());
+        match remaining.outbound.push_control(departure.clone()) {
+            ControlAdmission::Accepted => {}
+            // Same reasoning as the arrival broadcast: a peer that cannot take
+            // the departure would keep a ghost user forever, so its queue has
+            // already marked it for teardown.
+            ControlAdmission::Refused => {}
+        }
     }
 
     result
@@ -145,12 +159,27 @@ pub async fn serve(
 async fn service_loop(
     reader: &mut FrameReader,
     writer: &mut WriteHalf<TlsStream<TcpStream>>,
-    outbound_rx: &mut mpsc::UnboundedReceiver<ControlMessage>,
+    outbound_rx: &mut mpsc::Receiver<ControlMessage>,
     user: &UserEntry,
     state: &SharedState,
     udp: &UdpSocket,
 ) -> Result<()> {
     loop {
+        // A refused control message means this client is too slow to keep a
+        // correct view, so the connection ends and it can rebuild one by
+        // reconnecting (the shape ADR-009 will take in Phase 6).
+        //
+        // Polling here rather than being woken is sound: the flag is only ever
+        // set when the queue is full, which means there are `CAPACITY` messages
+        // waiting for us, so the queued-message branch below fires immediately
+        // and brings us straight back to this check.
+        if user.outbound.must_close() {
+            anyhow::bail!(
+                "session {}: output queue overflowed, closing rather than diverging",
+                user.session
+            );
+        }
+
         tokio::select! {
             // Cancellation-safety: `FrameReader::next` only reads into an owned
             // buffer and never leaves a half-consumed frame across an await
