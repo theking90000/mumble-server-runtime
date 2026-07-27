@@ -57,9 +57,32 @@ members = [
     # Phase 7 T8 : binaire de composition. Le seul endroit qui nomme à la fois le
     # runtime et un flavor concret ; les crates centrales n'en dépendent jamais.
     "tools/voxloom-aurora",
+    # Runtime à shards (étape 10) : binaire de composition et flavor de
+    # démonstration. Le seul endroit qui nomme à la fois le runtime et un métier
+    # concret : lobby et arène sur deux shards, équipes en portées, admin
+    # invisible en overlay, spectateurs en écoute unidirectionnelle, migration.
+    "tools/voxloom-arena",
+    # Générateur de charge Mumble headless. Déroule le handshake TLS/TCP, tient
+    # un modèle client minimal, établit l'UDP chiffré et exécute des scénarios
+    # extensibles. `arena` exerce les interactions du flavor de démonstration.
+    "tools/voxloom-stress",
     # Phase 7 T8 : mesure du coût d'une publication complète (rendu, validation,
     # planification et commit de N connexions). Lancé par ci/bench-publication.sh.
     "tools/bench-publication",
+    # Contrepartie de bench-publication pour le runtime à shards : même
+    # changement métier, mêmes tailles, même statistique. Les deux tableaux se
+    # lisent côte à côte — c'est la mesure de la thèse du guide.
+    "tools/bench-shard",
+    # Runtime à shards (docs/design/guide-implementation.md, étapes 1 à 7) :
+    # portées, constructeur de vue partagée, planificateur à clé (élément, portée),
+    # composition par connexion (filter/splice/collapse), journal de deltas et
+    # task de shard. Les étapes 1 à 5 sont pures ; 6 et 7 ajoutent la boucle.
+    "voxloom-shard",
+    # Runtime à shards (étapes 8 à 10) : la porte d'entrée. Plan de contrôle TLS,
+    # handshake, routeur de connexions, registre multi-shards, migration, et un
+    # plan vocal UDP qui ne touche jamais une task de shard. Coexiste avec
+    # voxloom-server, qui reste sur le pipeline P5–P7.
+    "voxloom-gateway",
     # Phase 3 : serveur minimal — accepte la TLS, déroule le handshake sans
     # Murmur, associe l'UDP par preuve cryptographique, répond aux pings et
     # réfléchit l'audio de loopback (target 31). Dépend des crates purs P1.

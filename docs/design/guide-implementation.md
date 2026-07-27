@@ -5,7 +5,13 @@
 > on en est arrivé là ; sur le modèle de visibilité, **c'est ce document-ci qui
 > fait foi**.
 >
-> **Statut : PROPOSITION.** Rien n'est implémenté.
+> **Statut : étapes 1 à 10 implémentées.** Le cœur pur et la task de shard dans
+> `voxloom-shard`, la porte d'entrée dans `voxloom-gateway` (plan de contrôle
+> TLS, `ConnectionRouter`, registre multi-shards, migration, plan vocal UDP), et
+> un flavor de démonstration dans `tools/voxloom-arena` — un seul exécutable.
+> Le pipeline P5–P7 existant n'a pas été retiré : les deux modèles coexistent le
+> temps de la bascule, et `voxloom-server` reste sur l'ancien.
+> Écarts assumés et points ouverts : §18.
 > Révision 3 (2026-07-27) — voir §16.
 
 ---
@@ -744,13 +750,18 @@ tout ça ne touche au routage.
 
 ```rust
 async fn shard_task(mut shard: Shard) {
+    let mut prochaine_publication = Instant::now();
     loop {
-        tokio::select! {
-            _   = shard.wake.notified() => {}
-            cmd = shard.mailbox.recv()  => shard.handle(cmd),
+        attendre_un_premier_evenement().await;
+        vider_la_mailbox_sans_attendre(&mut shard);
+
+        if Instant::now() < prochaine_publication {
+            // Les commandes continuent d'être traitées pendant cette attente.
+            absorber_jusqu_a(prochaine_publication, &mut shard).await;
         }
+
         shard.reconcile();
-        tokio::time::sleep(MIN_INTERVAL).await;   // plafond de débit
+        prochaine_publication = Instant::now() + MIN_INTERVAL;
     }
 }
 ```
@@ -758,7 +769,10 @@ async fn shard_task(mut shard: Shard) {
 **Il n'y a aucun tick dans le runtime.** Voxloom ne sait pas pourquoi un flavor
 voudrait un rythme : un flavor qui en veut un lance son propre
 `tokio::interval` et appelle `wake()`. `MIN_INTERVAL` (50 ms pour commencer) est
-le seul réglage, et c'est une **protection**, pas une politique.
+le seul réglage, et c'est une **protection**, pas une politique. Il borne les
+publications à 20 Hz, jamais la consommation de la mailbox : `observe()` reste
+immédiat et toutes les commandes reçues dans la fenêtre sont coalescées dans le
+même `reconcile()`.
 
 ```rust
 enum ShardCommand {
@@ -1176,9 +1190,12 @@ C'est la moitié du système, testable sans rien lancer.
 
 ## 17. Ce qui reste à trancher
 
-1. **Le client Mumble accepte-t-il des identifiants de canaux grands et épars ?**
-   À vérifier dans les sources vendorées. **La question la moins chère et la plus
-   structurante : réponds-y en premier.**
+1. ~~**Le client Mumble accepte-t-il des identifiants de canaux grands et
+   épars ?**~~ **Oui, tranché** : le client indexe ses canaux dans un
+   `QHash< unsigned int, Channel * >` et rien n'y suppose la densité ni un
+   maximum. REF `mumble/src/Channel.h:82` (`c_qhChannels`). L'allocateur peut
+   donc distribuer l'espace des `u32` sans le tasser, ce qui est ce qui rend
+   « un identifiant retiré ne revient jamais » tenable pour tout un runtime.
 2. **Écris `observation()` pour ton UHC réel** — joueur, host, spectateur ×2,
    staff, admin. Si un rôle ne rentre ni dans une portée ni dans un overlay borné,
    il vaut mieux le savoir avant cinq mille lignes.
@@ -1190,3 +1207,126 @@ C'est la moitié du système, testable sans rien lancer.
 5. **Utilisateurs synthétiques** : `Occupant::Synthetic` leur ouvre la porte, mais
    il reste à décider comment leur session est allouée et comment l'audio les
    référence (ou pas).
+
+---
+
+## 18. Ce que l'implémentation a changé au guide
+
+Écarts délibérés entre ce document et `voxloom-shard`. Chacun est motivé, et
+motivé *par une règle du guide lui-même* : là où le pseudo-code et une règle se
+contredisaient, c'est la règle qui a gagné.
+
+| § | le guide dit | le code fait | pourquoi |
+|---|---|---|---|
+| 2.2 | `Scope::child(seg) -> Scope` | `-> Option<Scope>` | Au-delà de `MAX_DEPTH`, saturer rendrait à l'enfant la portée de son parent : une fuite de visibilité déguisée en arrondi. Refuser remonte en `BuildError` et garde la vue précédente (§11.7). |
+| 3.2 | `channel(parent, name, narrow)` | `channel(parent, key, name, narrow)` | Le guide ne dit jamais d'où vient l'**identité** d'un canal. La déduire du nom est exactement le piège du §15 (une horloge dans le nom brûlerait un ID par seconde). Le flavor la déclare, le nom reste un champ. Un utilisateur n'a pas ce problème : l'`Occupant` *est* son identité. |
+| 3.2 | `debug_assert!` sur `channel_link` | `BuildError::LinkAcrossScopes` | Une assertion de debug ne fait rien en release. Fail closed (R6). |
+| 5.1 | `UpdateChannel(ChannelPatch)` avec un jeu de liens | `links_added` / `links_removed` | Le client traite `links` non vide comme un remplacement **total** et ignore une liste vide ; `links_add`/`links_remove` sont traités dans leurs propres blocs. Les jeux incrémentaux composent sur un rejeu et n'exigent pas de connaître la vue engagée. REF `mumble/Messages.cpp::msgChannelState`. |
+| 9.2 | `version += 1` à chaque tour utile | version incrémentée **seulement** si le delta partagé est non vide | Seul le delta partagé va au journal : un replan lit les vues, un overlay se recalcule. Sans ça, une connexion durablement congestionnée fait tourner la version à chaque tour et pousse le `tail` du journal au-delà de ce dont ses pairs ont besoin. |
+| 9.4 | `replan` affecte `conn.see` avant d'envoyer | les trois composantes n'avancent qu'au succès | C'est la règle 6 du §11, que le pseudo-code du §9.4 contredisait. Sinon une connexion congestionnée garderait la nouvelle observation avec l'ancienne vue, et le filtre du tour suivant utiliserait une portée dont le client n'a jamais entendu parler. |
+| 3.5 / 8.3 | « vérifier que `r` voit `s` » sur les arêtes | vérification **par portée distincte**, jamais par paire | Matérialiser les paires d'un domaine est quadratique et tournait à *chaque* rendu. À 500 connexions, ces deux passages en `BTreeSet` coûtaient plus que tout le reste du tour (21,6 ms contre 0,74 ms une fois corrigés). `resolve()` reste la définition, et un test y épingle `compile`. |
+| 4 | allocateur d'identifiants **par shard** | un seul allocateur pour tout le runtime, canaux indexés sur `(shard, clé)` | Dès qu'une connexion peut changer de shard, l'allocation par shard casse la règle 3 du §11 vue du client : le shard A retire le canal 5, le shard B en crée un autre qui porte aussi le 5. Les sessions sont pires — voir la ligne suivante. Comme la session est indexée sur l'`Occupant`, une migration garde la sienne **gratuitement**. |
+| 9.6 | « migrer = détacher de A, attacher à B, **rien d'autre** » | le détachement d'une migration ne pousse **rien** ; A transmet la vue tenue par le client, B planifie une seule transition dessus | Le démontage n'est pas seulement du gaspillage, il **déconnecte le client officiel**. `msgUserRemove` ne retire pas la victime du modèle quand c'est soi (`if (pDst != pSelf)`), donc le `ChannelRemove` qui suit ressemble à la suppression d'un canal occupé ; `msgChannelRemove` journalise « Protocol violation » et appelle `disconnect()`. REF `mumble/Messages.cpp`, `mumble/UserModel.cpp::removeChannel`. |
+| 9.2 | table de routage compilée depuis la vue partagée | compilée depuis la vue partagée **plus la présence propre de chaque overlay** | Une connexion sans présence partagée n'est pas absente du runtime : c'est exactement ce qu'est un vanish. L'omettre transformait silencieusement « entend tout, n'est entendu de personne » en « ne participe pas à l'audio », sans que le flavor puisse distinguer les deux. Qui l'entend reste une autre question, et le rendu refuse déjà une relation dont la réponse est non. |
+| 10.1 | `route(&identity)` | `route(connection, &identity)` | Un `VoiceEvent` ne transporte qu'un `ConnectionId` — délibérément, le runtime n'a pas d'opinion sur ce qu'est un utilisateur. Le routage est donc le seul instant où l'identité et l'identifiant se rencontrent : une application qui veut que son flavor connaisse un nom enregistre la paire là. |
+
+### 18.1 Ce qui n'est pas fait
+
+- **`voxloom-server` n'est pas rebranché.** Le modèle par connexion (P5–P7) reste
+  celui qui tourne. Le rebrancher retirerait le coordinateur de publication et les
+  jetons de commit, et casserait les tests de conformité du testkit qui jugent ce
+  pipeline — or R2 interdit de toucher `voxloom-testkit/` dans le même diff qu'un
+  `voxloom-*/src`. C'est une bascule en deux commits séparés, pas un détail.
+- **Utilisateurs synthétiques** : `Occupant::Synthetic` leur donne une session
+  stable, mais aucune politique n'est inventée pour la façon dont l'audio les
+  référence (§17.5 reste ouvert).
+- **Cibles `VoiceTarget` (shout / whisper)** : refusées et journalisées plutôt
+  que routées comme de la parole normale, ce qui livrerait de la voix à des
+  auditeurs que le client n'a jamais adressés. Leur enregistrement est P9.
+- **Resync de nonce OCB2** : un datagramme d'un pair lié qui ne déchiffre plus
+  est jeté avec un log. Le `resync` du `Ping` TCP vaut donc 0 en vérité.
+- **Messages de contrôle client encore refusés.** Ce qui est traité aujourd'hui :
+  `Ping`, `UserState` (entrée de canal, self-mute, self-deafen), `PermissionQuery`,
+  `UserStats` et `ContextAction`. Tout le reste reçoit un `PermissionDenied`
+  journalisé. Le backlog, par ordre de valeur décroissante :
+
+  | message | ce qu'il demande |
+  |---|---|
+  | `TextMessage` **entrant** | Résoudre les cibles dans la vue de l'émetteur, un événement pour laisser le flavor filtrer ou rerouter, puis la livraison. Le sens sortant existe déjà (`Reply::say`), et l'envoi non fatal que ce point réclamait est en place : `Shard::answer` et `Shard::tell` journalisent et jettent au lieu de fermer. |
+  | `ChannelState` / `ChannelRemove` / `UserRemove` | Créer, renommer, kick. Même forme que `RequestedChannel` (un événement, le flavor tranche), donc bon marché, mais sans utilisateur concret aujourd'hui. |
+  | `UserState` visant une autre session | Mute serveur, déplacement d'autrui. Refusé explicitement, pas par omission. |
+  | `RequestBlob` | La `ShardView` ne porte ni commentaire, ni texture, ni description : il n'y a rien à répondre tant qu'elle ne les porte pas. |
+  | `UserList` / `BanList` / `ACL` / `QueryUsers` | Administration d'utilisateurs enregistrés. Aucun registre n'existe, donc le refus **est** la réponse correcte (spec 16.10 à 16.14). |
+
+  Piège à connaître : `perm::DEFAULT` annonce `TEXT_MESSAGE` au client, alors que
+  `TextMessage` entrant est refusé. La boîte de dialogue existe donc dans
+  l'interface et répond `PermissionDenied`. Retirer le bit serait plus honnête,
+  mais changerait aussi ce que `ServerSync` annonce ; à trancher en même temps que
+  `TextMessage`.
+
+### 18.2 La règle des deux portes
+
+Un flavor a exactement deux surfaces d'écriture, et toute fonctionnalité nouvelle
+entre par l'une des deux plutôt que par une méthode de plus sur `ShardLogic` :
+
+> **Si c'est un état, c'est le rendu. Si c'est un événement daté, c'est `Reply`.**
+
+Un état se redit à chaque tour tant qu'il est vrai, donc il se déclare dans
+`render` et le diff se charge du reste : c'est le cas des canaux, des utilisateurs,
+des drapeaux, et désormais des actions de contexte, déclarées par connexion dans
+`private()` et diffées comme un overlay. Une parole ne se redit pas : elle est dite
+une fois, à une date, et aucun rendu ultérieur ne peut la réémettre ; elle passe
+donc par `Reply` (`say`, `refuse`), que le shard vide une fois `observe` revenu.
+
+Deux conséquences à connaître :
+
+- Un `Add` de `ContextActionModify` crée une **nouvelle** entrée de menu côté
+  client, sans chercher si elle existe déjà. Renommer une action est donc un
+  `Remove` suivi d'un `Add`, jamais un `Add` seul, sinon le joueur se retrouve
+  avec deux boutons identiques.
+- `context_triggered` lit la sélection courante de l'arbre quel que soit le menu
+  d'où vient l'action. Une action serveur arrive donc régulièrement avec une
+  session et un canal qui ne la concernent pas : la cible est choisie par les bits
+  déclarés, du plus spécifique au moins, et non par ce que le message porte.
+
+Le troisième verbe, `Reply::switch`, ne rentre dans aucune des deux portes de la
+même façon : déplacer une connexion est une orchestration entre deux shards que
+seul le runtime connaît. Il est donc enregistré comme un `Effect` et remis à qui a
+câblé le shard (`Shard::route_effects`, appelé par `RuntimeHandle::create_shard`).
+Un shard qui n'appartient à aucun runtime - un test, un banc - le journalise au
+lieu de faire comme si le déplacement avait eu lieu.
+
+Deux points sur ce câblage :
+
+- La fermeture ne tient qu'un `Weak` sur le runtime. Une référence forte fermerait
+  l'anneau *runtime → annuaire → tâche → shard → fermeture*, et le runtime
+  survivrait à toutes ses poignées, pour toujours.
+- Les paroles partent **avant** les effets. Un flavor qui dit au revoir et bascule
+  dans le même souffle a son message sur la socket avant que le déplacement soit
+  demandé.
+
+Aucun flavor n'a donc plus besoin de tenir un `RuntimeHandle` pour migrer : ni le
+lobby, ni l'arène, ni le flavor de test du gateway n'en gardent un.
+- **Le proptest ne consomme pas `SimulatedMumbleClient`** (R2, même raison). Le
+  modèle strict de `voxloom-shard/tests/support/model.rs` applique les vrais
+  messages de contrôle et juge chaque état intermédiaire ; le brancher sur le
+  vérificateur officiel reste à faire.
+
+### 18.3 Mesure
+
+`ci/bench-shard.sh` fait tourner les deux modèles sur le **même** changement
+métier (un membre change de realm), aux mêmes tailles. Apple Silicon, profil
+release, médiane sur 20 tours :
+
+| connexions | tour de shard | par connexion | publication P7 | par connexion |
+|---|---|---|---|---|
+| 2 | 3,42 µs | 1,71 µs | 25,96 µs | 12,98 µs |
+| 10 | 8,88 µs | 887 ns | 156,67 µs | 15,67 µs |
+| 50 | 149,42 µs | 2,99 µs | 1,47 ms | 29,48 µs |
+| 200 | 418,75 µs | 2,09 µs | 21,39 ms | 106,97 µs |
+| 500 | **736,58 µs** | **1,47 µs** | **205,25 ms** | 410,50 µs |
+
+Ce qu'il faut lire n'est pas le facteur 279 à 500 connexions, c'est la colonne
+« par connexion » : elle **descend** dans le modèle à shards (1,71 → 1,47 µs) et
+**monte** d'un facteur 32 dans l'ancien. Le delta partagé fait 2 opérations quelle
+que soit la taille — c'est toute la thèse, et c'est ce que le binaire imprime.

@@ -1,0 +1,37 @@
+[package]
+name = "voxloom-gateway"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "The front door of the shard runtime : TLS control plane, handshake, connection router, multi-shard registry, migration, and a UDP voice plane that never touches a shard task. Implements docs/design/guide-implementation.md steps 8 to 10."
+
+# Library only : the gateway has no flavor of its own, so it has nothing to run.
+# A composition binary (see tools/voxloom-arena) picks one and starts it.
+[lib]
+name = "voxloom_gateway"
+path = "src/voxloom_gateway.rs"
+
+[dependencies]
+voxloom-protocol = { path = "../voxloom-protocol" }
+voxloom-crypto = { path = "../voxloom-crypto" }
+voxloom-shard = { path = "../voxloom-shard" }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "sync", "time", "signal"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12", "logging"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+rcgen = { version = "0.13", default-features = false, features = ["crypto", "ring", "pem"] }
+# ring : source of randomness (SystemRandom) for the per-connection OCB2 key and
+# nonces sent in CryptSetup. Already in the tree via the rustls provider.
+ring = "0.17"
+thiserror = "2"
+anyhow = "1"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-util", "time", "net", "sync", "test-util"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12", "logging"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+
+[lints]
+workspace = true

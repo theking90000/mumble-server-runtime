@@ -1,0 +1,22 @@
+[package]
+name = "bench-shard"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Measures one shard turn: render once, plan once, journal, publish routing, then compose and push to N connections. The counterpart of bench-publication, on the same business change."
+
+[[bin]]
+name = "bench-shard"
+path = "src/main.rs"
+
+[dependencies]
+voxloom-shard = { path = "../../voxloom-shard" }
+voxloom-protocol = { path = "../../voxloom-protocol" }
+tokio = { version = "1", features = ["sync"] }
+anyhow = "1"
+
+[lints]
+workspace = true

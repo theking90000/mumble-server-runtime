@@ -172,8 +172,10 @@ flavor — soit il les a déplacées avant, soit la politique de repli du
 ```rust
 loop {
     dirty.notified().await;        // wake() du flavor, ou un événement runtime
-    reconcile();                   // logic.render(), diff, encodage, journal, push
-    sleep(MIN_INTERVAL).await;     // plafond de débit : tout coalesce dans la fenêtre
+    drain_commands();              // observe() reste immédiat
+    drain_until(next_publication).await; // immédiat si le plafond est déjà passé
+    reconcile();                   // une publication pour toute la fenêtre
+    next_publication = Instant::now() + MIN_INTERVAL;
 }
 ```
 
@@ -589,9 +591,11 @@ tout l'état de contrôle d'un shard**, et le reste communique par message.
 Le rythme, dans la boucle de §3.3 :
 
 ```rust
-dirty.notified().await;     // réveil au premier changement : latence nulle à vide
-reconcile();                // O(W)
-sleep(MIN_INTERVAL).await;  // plafond de débit : tout coalesce dans cette fenêtre
+dirty.notified().await;                 // latence nulle à vide
+drain_commands();                       // observe() immédiat
+drain_until(next_publication).await;     // immédiat après une période inactive
+reconcile();                            // O(W), au plus 20 fois par seconde
+next_publication = Instant::now() + MIN_INTERVAL;
 ```
 
 Réponse immédiate à vide, mise en lot automatique sous charge, plafond dur sur le

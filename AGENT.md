@@ -89,7 +89,13 @@ voxloom-protocol -/->  tokio               voxloom-crypto   -/->  tokio
 `voxloom-transport` (TLS/sockets) · `voxloom-session` · `voxloom-auth` ·
 `voxloom-flavor` (contrat de snapshot/rendu métier opaque) · `voxloom-render` (VDOM/rendu) ·
 `voxloom-reconcile` (diff/plan) · `voxloom-audio` (routage) · `voxloom-control` ·
-`voxloom-observe` · `voxloom-testkit` (client simulé/proptest/fuzz).
+`voxloom-observe` · `voxloom-testkit` (client simulé/proptest/fuzz) ·
+`voxloom-shard` (runtime à shards : portées, journal de deltas, composition par
+connexion — étapes 1 à 7 de `docs/design/guide-implementation.md`) ·
+`voxloom-gateway` (la porte d'entrée du même runtime : plan de contrôle TLS,
+routeur de connexions, registre multi-shards, migration, plan vocal UDP —
+étapes 8 à 10). Les deux coexistent avec le pipeline P5–P7 qu'ils visent à
+remplacer ; `voxloom-server` est encore sur l'ancien.
 
 Le métier concret appartient aux flavors compilés avec l'application, jamais au
 runtime Voxloom. La décision `docs/decisions/0002-flavor-owns-business-state.md`

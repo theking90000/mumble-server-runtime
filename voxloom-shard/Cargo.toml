@@ -1,0 +1,26 @@
+[package]
+name = "voxloom-shard"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Shard runtime : one render per shard, a versioned journal of scoped deltas, and per-connection composition (filter, splice, collapse). Implements docs/design/guide-implementation.md steps 1 to 7."
+
+[lib]
+name = "voxloom_shard"
+path = "src/voxloom_shard.rs"
+
+[dependencies]
+# The shard owns the translation from view mutations to control frames, so it is
+# the one place in this crate that knows the wire vocabulary.
+voxloom-protocol = { path = "../voxloom-protocol" }
+tokio = { version = "1", features = ["rt", "macros", "sync", "time"] }
+thiserror = "2"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "sync", "time", "test-util"] }
+
+[lints]
+workspace = true
