@@ -24,3 +24,9 @@ clap = { version = "4", features = ["derive"] }
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+# The judge, pointed at the composed server: the Aurora scenario end to end.
+voxloom-testkit = { path = "../../voxloom-testkit" }
+voxloom-protocol = { path = "../../voxloom-protocol" }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time"] }

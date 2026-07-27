@@ -72,6 +72,10 @@ pub struct UserEntry {
     pub udp_mode: AtomicBool,
     /// Per-connection voice packet budget (spec 15.7).
     pub voice_budget: Mutex<VoiceBudget>,
+    /// Whether this connection's use of the server loopback target has already
+    /// been reported. Logged once, not per packet: the point is to make an
+    /// audible self-echo explainable, not to flood the log at 50 Hz.
+    pub loopback_reported: AtomicBool,
 }
 
 impl UserEntry {
@@ -207,6 +211,7 @@ impl SharedState {
             udp_addr: Mutex::new(None),
             udp_mode: AtomicBool::new(true),
             voice_budget: Mutex::new(VoiceBudget::new(now)),
+            loopback_reported: AtomicBool::new(false),
         });
 
         {
@@ -214,15 +219,21 @@ impl SharedState {
             registry.users.insert(session, Arc::clone(&entry));
         }
 
+        // Order matters and is not cosmetic: the moment the coordinator knows
+        // this connection, any other task may publish a generation that has to
+        // render it. A flavor that has not been told about it yet refuses, and
+        // one refusal drops the whole generation for everyone.
         let event = {
-            let mut coordinator = self.coordinator();
-            let event = coordinator.connected(connection, name, certificate_hash);
-            if let Err(error) = coordinator.register(connection, ViewSessionId(session)) {
-                eprintln!("voxloom-server: session {session}: cannot register: {error}");
-            }
-            event
+            let coordinator = self.coordinator();
+            coordinator.connected(connection, name, certificate_hash)
         };
         self.flavor.report(&event);
+
+        let mut coordinator = self.coordinator();
+        if let Err(error) = coordinator.register(connection, ViewSessionId(session)) {
+            eprintln!("voxloom-server: session {session}: cannot register: {error}");
+        }
+        drop(coordinator);
         entry
     }
 

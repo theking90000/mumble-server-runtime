@@ -183,13 +183,22 @@ async fn service_loop(
             queued = outbound_rx.recv() => {
                 match queued {
                     Some(message) => {
+                        let was_voice = matches!(message, ControlMessage::UdpTunnel(_));
                         write_message(writer, &message).await?;
                         // A transition refused for ordinary congestion is
                         // retried as capacity returns. Planning always starts
                         // from the still-committed view, so this converges to
                         // the newest desired state rather than replaying stale
                         // intermediate ones.
-                        state.publish_generation();
+                        //
+                        // Draining a tunnelled voice packet frees no control
+                        // capacity worth retrying for, and it happens fifty
+                        // times a second per speaker: re-rendering every
+                        // connection there would put the whole control plane on
+                        // the audio path, which is exactly what ADR-005 forbids.
+                        if !was_voice {
+                            state.publish_generation();
+                        }
                     }
                     None => return Ok(()), // no senders left (cannot happen while we hold the user)
                 }
