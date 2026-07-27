@@ -1,0 +1,32 @@
+[package]
+name = "voxloom-aurora"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Composition binary: compiles the Aurora/Borealis reference flavor with the Voxloom runtime."
+
+[[bin]]
+name = "voxloom-aurora"
+path = "src/main.rs"
+
+[dependencies]
+# The composition point, and the only place both sides are named: the runtime
+# knows no business model and the flavor knows no wire format.
+voxloom-server = { path = "../../voxloom-server" }
+voxloom-flavor = { path = "../../voxloom-flavor" }
+voxloom-flavor-reference = { path = "../../voxloom-flavor-reference" }
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+# The judge, pointed at the composed server: the Aurora scenario end to end.
+voxloom-testkit = { path = "../../voxloom-testkit" }
+voxloom-protocol = { path = "../../voxloom-protocol" }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time"] }

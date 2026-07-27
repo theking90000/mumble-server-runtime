@@ -11,6 +11,7 @@ use tokio_rustls::TlsAcceptor;
 
 use crate::config::ServerConfig;
 use crate::connection;
+use crate::flavor::FlavorRuntime;
 use crate::state::SharedState;
 use crate::tls::{self, Identity};
 use crate::voice::VoicePlane;
@@ -28,8 +29,11 @@ impl Server {
     /// Bind the control (TCP/TLS) and voice (UDP) sockets. Passing port 0 in an
     /// address binds an ephemeral port; read it back with [`Server::tcp_addr`] /
     /// [`Server::udp_addr`].
+    /// `flavor` is the compiled business model this server serves. The server
+    /// itself has none: choosing one is the composition binary's whole job.
     pub async fn bind(
         config: ServerConfig,
+        flavor: Arc<dyn FlavorRuntime>,
         identity: Identity,
         tcp_addr: SocketAddr,
         udp_addr: SocketAddr,
@@ -41,7 +45,7 @@ impl Server {
         let udp = UdpSocket::bind(udp_addr)
             .await
             .with_context(|| format!("binding UDP {udp_addr}"))?;
-        let state = SharedState::new(config);
+        let state = SharedState::new(config, flavor);
         Ok(Self {
             state,
             acceptor,

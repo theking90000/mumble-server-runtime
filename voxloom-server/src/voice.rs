@@ -222,6 +222,22 @@ pub fn route_client_audio(
         return Vec::new();
     };
 
+    if matches!(target, AudioTarget::ServerLoopback)
+        && !user
+            .loopback_reported
+            .swap(true, std::sync::atomic::Ordering::Relaxed)
+    {
+        // The client asked the server to send its own voice back (spec 15.4,
+        // "Loopback: Server" in the official client's audio settings). It is a
+        // client-side request that no flavor authorized, so an operator hearing
+        // an unexplained echo can see here where it comes from.
+        eprintln!(
+            "voxloom-server: session {}: client is using the server loopback target; it will \
+             hear itself until it stops",
+            user.session
+        );
+    }
+
     if let AudioTarget::Registered(raw) = target {
         // Shout and whisper targets are registered with a `VoiceTarget` control
         // message, which is refused (see `drop_unsupported`). Routing them as

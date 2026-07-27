@@ -361,7 +361,7 @@ mod tests {
 
     fn committed_connection() -> (ConnectionView, ChannelId, ChannelKey) {
         let mut connection = ConnectionView::new(SELF);
-        let key = ChannelKey(SemanticKey::Static("realm:aurora".to_owned()));
+        let key = ChannelKey(SemanticKey::Static("lobby".to_owned()));
         let id = connection
             .ids_mut()
             .resolve(key.clone(), ChannelIdKind::Stable)
@@ -374,7 +374,7 @@ mod tests {
                 key: key.clone(),
                 id,
                 parent: ChannelId::ROOT,
-                name: "Aurora".to_owned(),
+                name: "Lobby".to_owned(),
                 description: None,
                 position: 0,
                 temporary: false,

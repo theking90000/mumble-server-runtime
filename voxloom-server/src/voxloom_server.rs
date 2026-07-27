@@ -14,9 +14,11 @@
 //! - [`handshake`] is a pure function producing the ordered server->client
 //!   control messages. It has no IO, so the §20 ordering invariants are unit
 //!   tested directly against it.
-//! - [`state`] holds the minimal in-memory server state (session-id allocator,
-//!   the static channel tree, the set of connected users). This is server-local
-//!   session bookkeeping, deliberately NOT the canonical state of P7.
+//! - [`state`] holds the transport-side state (session-id allocator, connected
+//!   users, UDP bindings) and the publication coordinator. No business state:
+//!   what a connection sees and hears is the compiled flavor's answer.
+//! - [`flavor`] is the seam to that flavor. The server is compiled once and
+//!   knows no business model; a composition binary picks the flavor.
 //! - [`connection`] is the async per-connection task: TLS accept, read
 //!   Version/Authenticate, emit the handshake, then service the connection.
 //! - [`outbound`] is one connection's bounded output queue and the admission
@@ -29,10 +31,10 @@
 
 pub mod config;
 pub mod connection;
+pub mod flavor;
 pub mod handshake;
 pub mod limits;
 pub mod outbound;
-pub mod projection;
 pub mod routing;
 pub mod server;
 pub mod state;
@@ -40,5 +42,6 @@ pub mod tls;
 pub mod voice;
 
 pub use config::ServerConfig;
+pub use flavor::{FlavorRuntime, GenerationError};
 pub use server::{Server, ServerHandle};
-pub use state::{ChannelDef, SessionId, SharedState};
+pub use state::{SessionId, SharedState};

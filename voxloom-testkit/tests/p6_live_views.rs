@@ -8,6 +8,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::net::SocketAddr;
 use std::time::Duration;
 
+use voxloom_flavor_reference::ReferenceFlavor;
 use voxloom_protocol::ControlMessage;
 use voxloom_protocol::messages::tcp;
 use voxloom_reconcile::{AudioRoute, ChannelIdKind};
@@ -27,11 +28,28 @@ const AUDIO_DEADLINE: Duration = Duration::from_secs(5);
 const SILENCE_OBSERVATION: Duration = Duration::from_millis(150);
 const NORMAL_TARGET: u32 = 0;
 
+/// The reference flavor, composed with the runtime exactly as the composition
+/// binary does it. The runtime has no business model of its own, so a test that
+/// wants the Aurora/Borealis scenario has to bring it.
+fn reference_flavor(config: &ServerConfig) -> std::sync::Arc<ReferenceFlavor> {
+    std::sync::Arc::new(ReferenceFlavor::new(
+        config.server_name.clone(),
+        ServerPresentation {
+            welcome_text: (!config.welcome_text.is_empty()).then(|| config.welcome_text.clone()),
+            allow_html: config.allow_html,
+            max_message_length: Some(config.message_length),
+            recording_allowed: config.recording_allowed,
+        },
+    ))
+}
+
 async fn start_server() -> ServerHandle {
     tls::install_crypto_provider();
     let identity = Identity::self_signed(vec!["localhost".to_string()]).expect("identity");
     let address: SocketAddr = "127.0.0.1:0".parse().expect("loopback address");
-    Server::bind(ServerConfig::default(), identity, address, address)
+    let config = ServerConfig::default();
+    let flavor = reference_flavor(&config);
+    Server::bind(config, flavor, identity, address, address)
         .await
         .expect("bind server")
         .spawn()

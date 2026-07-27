@@ -48,7 +48,11 @@ pub struct ClientModel {
     /// Effective root permissions from `ServerSync`.
     pub root_permissions: Option<u64>,
     retired_channels: BTreeSet<u32>,
-    retired_sessions: BTreeSet<u32>,
+    /// Sessions removed from this view, with the name they carried. A session
+    /// coming back for the *same* identity is a projection making a user
+    /// visible again, not id reuse; coming back under another name is the
+    /// recycling invariant 12 forbids.
+    retired_sessions: BTreeMap<u32, String>,
 }
 
 impl ClientModel {
@@ -213,11 +217,23 @@ impl ClientModel {
             None => panic!("§20: UserState without a session id"),
         };
         let is_new = !self.users.contains_key(&session);
-        if is_new && self.retired_sessions.contains(&session) {
-            panic!("§20 invariant 12: retired session id {session} was reused");
-        }
         if is_new && us.name.is_none() {
             panic!("§20: new session {session} has no name");
+        }
+        if is_new && let Some(retired) = self.retired_sessions.get(&session) {
+            // A per-connection projection may hide a user and show it again
+            // later; its session is stable for the whole connection (spec 9.1),
+            // so the same identity returning is correct. Another identity on
+            // that id is the reuse invariant 12 forbids, and would hand the
+            // client's per-user local state to a stranger (spec 9.3).
+            match &us.name {
+                Some(name) if name == retired => {}
+                Some(name) => panic!(
+                    "§20 invariant 12: retired session id {session} was reused, `{retired}` \
+                     became `{name}`"
+                ),
+                None => panic!("§20: new session {session} has no name"),
+            }
         }
 
         // Invariant 15: an actor, if named, must be a visible session.
@@ -260,8 +276,11 @@ impl ClientModel {
         self.check_optional_session(ur.actor, "UserRemove.actor");
         // Removing our own session is a disconnect; removing another is a normal
         // presence update. Either way, drop it from the view.
-        self.users.remove(&ur.session);
-        self.retired_sessions.insert(ur.session);
+        let removed = self.users.remove(&ur.session);
+        self.retired_sessions.insert(
+            ur.session,
+            removed.map(|user| user.name).unwrap_or_default(),
+        );
     }
 
     fn apply_server_sync(&mut self, sync: &tcp::ServerSync) {
@@ -572,7 +591,33 @@ mod tests {
             session: 1,
             ..Default::default()
         }));
+        // Same id, another identity: the client's per-user local state would
+        // follow the id onto a stranger.
+        model.apply(&ControlMessage::UserState(tcp::UserState {
+            session: Some(1),
+            name: Some("someone else".to_string()),
+            channel_id: Some(ROOT_CHANNEL_ID),
+            ..Default::default()
+        }));
+    }
+
+    #[test]
+    fn a_hidden_user_may_become_visible_again_under_its_own_session() {
+        let mut model = ClientModel::new();
+        model.apply(&channel(ROOT_CHANNEL_ID, None));
         model.apply(&user(1, Some(ROOT_CHANNEL_ID)));
+        model.apply(&ControlMessage::UserRemove(tcp::UserRemove {
+            session: 1,
+            ..Default::default()
+        }));
+
+        // A projection that stops showing a user and shows it again keeps its
+        // session: it is the same person, not a recycled id.
+        model.apply(&user(1, Some(ROOT_CHANNEL_ID)));
+        assert_eq!(
+            model.users.get(&1).map(|user| user.name.clone()),
+            Some("user1".to_string())
+        );
     }
 
     #[test]

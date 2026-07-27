@@ -103,6 +103,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3a8241f3ebb85c056b509d4327ad0358fbbba6ffb340bf388f26350aeda225b1"
 
 [[package]]
+name = "bench-publication"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "voxloom-control",
+ "voxloom-flavor",
+ "voxloom-flavor-reference",
+ "voxloom-render",
+]
+
+[[package]]
 name = "bitflags"
 version = "2.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1124,6 +1135,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "voxloom-aurora"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "tokio",
+ "voxloom-flavor",
+ "voxloom-flavor-reference",
+ "voxloom-protocol",
+ "voxloom-server",
+ "voxloom-testkit",
+]
+
+[[package]]
+name = "voxloom-control"
+version = "0.1.0"
+dependencies = [
+ "thiserror 2.0.19",
+ "voxloom-audio",
+ "voxloom-flavor",
+ "voxloom-protocol",
+ "voxloom-reconcile",
+ "voxloom-render",
+ "voxloom-session",
+]
+
+[[package]]
 name = "voxloom-corpus-decode"
 version = "0.1.0"
 dependencies = [
@@ -1137,6 +1175,22 @@ name = "voxloom-crypto"
 version = "0.1.0"
 dependencies = [
  "aes",
+]
+
+[[package]]
+name = "voxloom-flavor"
+version = "0.1.0"
+dependencies = [
+ "thiserror 2.0.19",
+ "voxloom-render",
+]
+
+[[package]]
+name = "voxloom-flavor-reference"
+version = "0.1.0"
+dependencies = [
+ "voxloom-control",
+ "voxloom-flavor",
 ]
 
 [[package]]
@@ -1200,7 +1254,6 @@ name = "voxloom-server"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "clap",
  "rcgen",
  "ring",
  "rustls",
@@ -1208,7 +1261,9 @@ dependencies = [
  "tokio",
  "tokio-rustls",
  "voxloom-audio",
+ "voxloom-control",
  "voxloom-crypto",
+ "voxloom-flavor",
  "voxloom-protocol",
  "voxloom-reconcile",
  "voxloom-render",
@@ -1233,7 +1288,11 @@ dependencies = [
  "rustls",
  "tokio",
  "tokio-rustls",
+ "voxloom-audio",
+ "voxloom-control",
  "voxloom-crypto",
+ "voxloom-flavor",
+ "voxloom-flavor-reference",
  "voxloom-protocol",
  "voxloom-reconcile",
  "voxloom-render",

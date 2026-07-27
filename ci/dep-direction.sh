@@ -9,6 +9,9 @@
 #   voxloom-flavor   -> voxloom-protocol   (le contrat flavor est indépendant de Mumble)
 #   voxloom-protocol -> tokio              (crate pur)
 #   voxloom-crypto   -> tokio              (crate pur)
+#   <crate centrale> -> voxloom-flavor-reference
+#                                          (P7 T8 : seul un binaire de
+#                                           composition nomme un flavor concret)
 #
 # S'appuie sur `cargo metadata`. Sur un workspace vide (Phase 0), il n'y a aucun
 # crate voxloom : le script passe trivialement.
@@ -33,6 +36,15 @@ FORBIDDEN=(
   "voxloom-flavor|voxloom-protocol"
   "voxloom-protocol|tokio"
   "voxloom-crypto|tokio"
+  "voxloom-protocol|voxloom-flavor-reference"
+  "voxloom-crypto|voxloom-flavor-reference"
+  "voxloom-render|voxloom-flavor-reference"
+  "voxloom-reconcile|voxloom-flavor-reference"
+  "voxloom-audio|voxloom-flavor-reference"
+  "voxloom-session|voxloom-flavor-reference"
+  "voxloom-flavor|voxloom-flavor-reference"
+  "voxloom-control|voxloom-flavor-reference"
+  "voxloom-server|voxloom-flavor-reference"
 )
 
 violations=0

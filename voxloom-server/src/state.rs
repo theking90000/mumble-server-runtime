@@ -1,34 +1,33 @@
-//! Minimal in-memory server state for Phase 3.
+//! In-memory server state: connections, their transports, and the coordinator.
 //!
-//! This is server-local session bookkeeping — a session-id allocator, the static
-//! channel tree, and the set of currently connected users — NOT the canonical
-//! business state of P7. Keeping it separate honours R5 (a crate/phase only fills
-//! what it needs): P3 needs enough state to run a handshake, associate a UDP peer
-//! and reflect loopback audio, and nothing more.
+//! There is no business state here. Who exists, who sees whom and who may hear
+//! whom is the compiled flavor's answer, published through
+//! [`voxloom_control::PublicationCoordinator`]; this module owns only what a
+//! socket needs: session ids, OCB2 state, UDP bindings and output queues.
 //!
-//! Concurrency (ADR follows the P2 proxy pattern): the registry is a plain
-//! `std::sync::Mutex`. The lock is only ever held for synchronous work (map
-//! lookups, `Arc` clones, OCB2 on one datagram — a few microseconds) and never
-//! across an `.await`. Socket writes happen after the lock is released.
+//! Concurrency (ADR follows the P2 proxy pattern): two plain `std::sync::Mutex`
+//! guards, one over the connection registry and one over the coordinator. Both
+//! are only ever held for synchronous work and never across an `.await`, and
+//! never both at once: a publication copies the connection handles it needs,
+//! releases the registry, and only then takes the coordinator.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, HashMap};
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use voxloom_audio::{
-    AudioRoutingSnapshot, DirectedRoute, Participant, RoutingDomainId, compile_authorized,
-};
+use voxloom_audio::AudioRoutingSnapshot;
+use voxloom_control::{PublicationCoordinator, PublishedGeneration};
 use voxloom_crypto::CryptState;
-use voxloom_reconcile::AudioRoute;
+use voxloom_flavor::ConnectionId;
+use voxloom_protocol::ControlMessage;
 use voxloom_render::SessionId as ViewSessionId;
-use voxloom_session::{ConnectionView, EmittedStep};
 
 use crate::config::ServerConfig;
+use crate::flavor::FlavorRuntime;
 use crate::limits::VoiceBudget;
 use crate::outbound::{OutboundQueue, TransitionRefused};
-use crate::projection::{self, Realm, ScenarioUser};
 
 /// A Mumble user session id. Monotonic per process (spec §9.1).
 pub type SessionId = u32;
@@ -36,43 +35,24 @@ pub type SessionId = u32;
 /// The root channel always uses id 0 (spec §11.2 invariant).
 pub const ROOT_CHANNEL_ID: u32 = 0;
 
-/// A static channel in the server's tree. P3 renders one fixed tree for every
-/// connection (per-connection projection is P6); this is just enough structure
-/// for the handshake and the §20 ordering invariants to be exercised.
-#[derive(Debug, Clone)]
-pub struct ChannelDef {
-    pub id: u32,
-    /// Parent channel id. The root's parent is itself (id 0) and is not emitted.
-    pub parent: u32,
-    pub name: String,
-    pub position: i32,
-}
-
 /// One connected, authenticated user.
 ///
-/// Shared behind an `Arc` so the owning connection task, the presence broadcast
-/// from other connections, and the UDP voice plane can all reach it. Interior
-/// fields that change after auth are individually locked; `session` and `name`
-/// are immutable once set.
+/// Shared behind an `Arc` so the owning connection task, the publication path
+/// and the UDP voice plane can all reach it. Interior fields that change after
+/// auth are individually locked; `session`, `connection` and `name` are
+/// immutable once set.
 pub struct UserEntry {
     pub session: SessionId,
+    /// The runtime identity the flavor sees. Distinct from the wire session on
+    /// purpose: a flavor never learns a Mumble session id.
+    pub connection: ConnectionId,
     pub name: String,
     /// SHA-1 digest of the immediate TLS client certificate, when supplied.
     /// This is presentation identity only and never an authorization input.
     pub certificate_hash: Option<String>,
-    /// Current deterministic-scenario realm. Stored atomically because the
-    /// packet path only needs a cheap copied value and never waits on it.
-    realm: AtomicU32,
-    /// Per-connection committed view and stable local id mapping (P6).
-    pub view: Mutex<ConnectionView>,
-    /// False while the initial handshake is still writing its view. Other
-    /// connections may already exist, but no dynamic update may overtake
-    /// `ServerSync` on this one.
-    view_live: AtomicBool,
-    /// Queue to this user's TCP writer. Other connections push presence updates
-    /// (`UserState`/`UserRemove`) here; the voice plane pushes tunnelled audio.
-    /// It is bounded and refuses the two classes differently — see
-    /// [`crate::outbound`], which is also where the reasoning lives.
+    /// Queue to this user's TCP writer. Published generations push view frames
+    /// here; the voice plane pushes tunnelled audio. It is bounded and refuses
+    /// the two classes differently — see [`crate::outbound`].
     pub outbound: OutboundQueue,
     /// Per-connection OCB2 state. `None` until `CryptSetup` has been sent.
     pub crypto: Mutex<Option<CryptState>>,
@@ -92,28 +72,13 @@ pub struct UserEntry {
     pub udp_mode: AtomicBool,
     /// Per-connection voice packet budget (spec 15.7).
     pub voice_budget: Mutex<VoiceBudget>,
+    /// Whether this connection's use of the server loopback target has already
+    /// been reported. Logged once, not per packet: the point is to make an
+    /// audible self-echo explainable, not to flood the log at 50 Hz.
+    pub loopback_reported: AtomicBool,
 }
 
 impl UserEntry {
-    pub fn realm(&self) -> Realm {
-        match self.realm.load(Ordering::Acquire) {
-            1 => Realm::Borealis,
-            _ => Realm::Aurora,
-        }
-    }
-
-    fn set_realm(&self, realm: Realm) {
-        self.realm.store(realm.routing_id(), Ordering::Release);
-    }
-
-    pub fn mark_view_live(&self) {
-        self.view_live.store(true, Ordering::Release);
-    }
-
-    fn view_is_live(&self) -> bool {
-        self.view_live.load(Ordering::Acquire)
-    }
-
     /// Whether this user has completed UDP crypto setup and can be routed audio.
     pub fn has_crypto(&self) -> bool {
         self.crypto
@@ -164,121 +129,56 @@ impl UserEntry {
     }
 }
 
-/// The mutable part of the server state, guarded by one mutex.
+/// The mutable transport-side state, guarded by one mutex.
 struct Registry {
     users: BTreeMap<SessionId, Arc<UserEntry>>,
     /// Reverse index address -> session for fast UDP correlation of a peer that
     /// has already proven itself.
     udp_bindings: HashMap<SocketAddr, SessionId>,
-    /// The published routing table. Recompiled here, inside the same critical
-    /// section that changes membership, so a reader can never observe a snapshot
-    /// that disagrees with the user list it was built from.
-    routes: Arc<AudioRoutingSnapshot>,
-    /// Directional authorizations that have crossed the P6 view-commit gate.
-    /// Realm equality is checked again by `compile_authorized`.
-    enabled_routes: BTreeSet<AudioRoute>,
-}
-
-impl Registry {
-    /// Recompile the routing table from the current membership (ADR-005's cold
-    /// path). Called on every membership change and nowhere else: the packet
-    /// path reads the result, it never triggers this.
-    fn republish_routes(&mut self, generation: u64) {
-        let participants: Vec<Participant> = self
-            .users
-            .keys()
-            .map(|session| {
-                Participant::new(
-                    voxloom_audio::SessionId::new(*session),
-                    RoutingDomainId::new(
-                        self.users
-                            .get(session)
-                            .map(|entry| entry.realm().routing_id())
-                            .unwrap_or(u32::MAX),
-                    ),
-                )
-            })
-            .collect();
-        let routes: Vec<DirectedRoute> = self
-            .enabled_routes
-            .iter()
-            .map(|route| {
-                DirectedRoute::new(
-                    voxloom_audio::SessionId::new(route.sender.0),
-                    voxloom_audio::SessionId::new(route.receiver.0),
-                )
-            })
-            .collect();
-        self.routes = Arc::new(compile_authorized(&participants, &routes, generation));
-    }
 }
 
 /// Shared server state handed to every connection task and the voice plane.
 pub struct SharedState {
     registry: Mutex<Registry>,
-    /// Serializes complete view refreshes so an older scenario snapshot cannot
-    /// commit after a newer one and leave a connection permanently stale.
-    /// This guard is never held across an await.
-    view_refresh: Mutex<()>,
+    /// The control plane. Holding it serializes generations, which is exactly
+    /// what spec 23.1 asks of the coordinator.
+    coordinator: Mutex<PublicationCoordinator>,
+    flavor: Arc<dyn FlavorRuntime>,
     /// Monotonic session-id source. Starts at 1; 0 is reserved (no user is
     /// session 0, matching Murmur which dequeues ids starting at 1).
     next_session: AtomicU32,
+    /// Monotonic runtime-identity source, independent from the wire session.
+    next_connection: AtomicU64,
     config: ServerConfig,
-    channels: Vec<ChannelDef>,
-    /// Monotonic generation stamped onto each published routing table.
-    route_generation: AtomicU64,
 }
 
 impl SharedState {
-    /// Build shared state with the given config and a single root channel.
-    pub fn new(config: ServerConfig) -> Arc<Self> {
-        let root = ChannelDef {
-            id: ROOT_CHANNEL_ID,
-            parent: ROOT_CHANNEL_ID,
-            name: config.server_name.clone(),
-            position: 0,
-        };
-        Self::with_channels(config, vec![root])
-    }
-
-    /// Build shared state with an explicit channel tree (used by tests that want
-    /// to exercise the parents-before-children ordering).
-    pub fn with_channels(config: ServerConfig, channels: Vec<ChannelDef>) -> Arc<Self> {
+    /// Build shared state around one compiled flavor.
+    pub fn new(config: ServerConfig, flavor: Arc<dyn FlavorRuntime>) -> Arc<Self> {
         Arc::new(Self {
             registry: Mutex::new(Registry {
                 users: BTreeMap::new(),
                 udp_bindings: HashMap::new(),
-                routes: Arc::new(compile_authorized(&[], &[], 0)),
-                enabled_routes: BTreeSet::new(),
             }),
-            view_refresh: Mutex::new(()),
+            coordinator: Mutex::new(PublicationCoordinator::new()),
+            flavor,
             next_session: AtomicU32::new(1),
+            next_connection: AtomicU64::new(1),
             config,
-            channels,
-            route_generation: AtomicU64::new(0),
         })
-    }
-
-    /// The current routing table (spec 23.2).
-    ///
-    /// This is the publication mechanism: the reader clones an `Arc` out of the
-    /// registry and works from an immutable generation that cannot change under
-    /// it. The lock is held only for that clone, never across an await and never
-    /// while a packet is being routed.
-    pub fn routing_snapshot(&self) -> Arc<AudioRoutingSnapshot> {
-        let registry = match self.registry.lock() {
-            Ok(guard) => guard,
-            Err(poisoned) => poisoned.into_inner(),
-        };
-        Arc::clone(&registry.routes)
     }
 
     pub fn config(&self) -> &ServerConfig {
         &self.config
     }
 
-    pub fn channels(&self) -> &[ChannelDef] {
-        &self.channels
+    /// The current routing table (spec 23.2).
+    ///
+    /// The reader clones an `Arc` out of the coordinator and works from an
+    /// immutable generation that cannot change under it. The lock is held only
+    /// for that clone, never across an await and never while routing a packet.
+    pub fn routing_snapshot(&self) -> Arc<AudioRoutingSnapshot> {
+        Arc::clone(self.coordinator().audio())
     }
 
     /// Allocate the next monotonic session id (spec §9.1).
@@ -286,44 +186,160 @@ impl SharedState {
         self.next_session.fetch_add(1, Ordering::Relaxed)
     }
 
-    /// Register a freshly authenticated user and return the snapshot of users
-    /// that were already present (so the new connection can render them in its
-    /// handshake). The new user is inserted atomically with reading the others.
-    pub fn insert_user(&self, entry: Arc<UserEntry>) -> Vec<Arc<UserEntry>> {
-        let mut registry = match self.registry.lock() {
-            Ok(guard) => guard,
-            Err(poisoned) => poisoned.into_inner(),
+    /// Build the server-owned live state for one authenticated connection and
+    /// register it with the control plane.
+    ///
+    /// The flavor is told about the connection *before* it becomes renderable,
+    /// so the first generation that includes it already knows who it is.
+    pub fn admit(
+        &self,
+        session: SessionId,
+        name: String,
+        certificate_hash: Option<String>,
+        outbound: OutboundQueue,
+        crypt_state: CryptState,
+        now: Instant,
+    ) -> Arc<UserEntry> {
+        let connection = ConnectionId::new(self.next_connection.fetch_add(1, Ordering::Relaxed));
+        let entry = Arc::new(UserEntry {
+            session,
+            connection,
+            name: name.clone(),
+            certificate_hash: certificate_hash.clone(),
+            outbound,
+            crypto: Mutex::new(Some(crypt_state)),
+            udp_addr: Mutex::new(None),
+            udp_mode: AtomicBool::new(true),
+            voice_budget: Mutex::new(VoiceBudget::new(now)),
+            loopback_reported: AtomicBool::new(false),
+        });
+
+        {
+            let mut registry = self.registry();
+            registry.users.insert(session, Arc::clone(&entry));
+        }
+
+        // Order matters and is not cosmetic: the moment the coordinator knows
+        // this connection, any other task may publish a generation that has to
+        // render it. A flavor that has not been told about it yet refuses, and
+        // one refusal drops the whole generation for everyone.
+        let event = {
+            let coordinator = self.coordinator();
+            coordinator.connected(connection, name, certificate_hash)
         };
-        let others: Vec<Arc<UserEntry>> = registry.users.values().cloned().collect();
-        registry.users.insert(entry.session, entry);
-        let generation = self.route_generation.fetch_add(1, Ordering::Relaxed) + 1;
-        registry.republish_routes(generation);
-        others
+        self.flavor.report(&event);
+
+        let mut coordinator = self.coordinator();
+        if let Err(error) = coordinator.register(connection, ViewSessionId(session)) {
+            eprintln!("voxloom-server: session {session}: cannot register: {error}");
+        }
+        drop(coordinator);
+        entry
     }
 
-    /// Remove a user (on disconnect) and drop any UDP binding it held.
+    /// Remove a connection (on disconnect) and drop any UDP binding it held.
     pub fn remove_user(&self, session: SessionId) {
-        let mut registry = match self.registry.lock() {
-            Ok(guard) => guard,
-            Err(poisoned) => poisoned.into_inner(),
+        let entry = {
+            let mut registry = self.registry();
+            registry.udp_bindings.retain(|_, bound| *bound != session);
+            registry.users.remove(&session)
         };
-        registry.users.remove(&session);
-        registry.udp_bindings.retain(|_, bound| *bound != session);
-        registry
-            .enabled_routes
-            .retain(|route| route.sender.0 != session && route.receiver.0 != session);
-        let generation = self.route_generation.fetch_add(1, Ordering::Relaxed) + 1;
-        registry.republish_routes(generation);
+        let Some(entry) = entry else {
+            return;
+        };
+
+        // The routing table loses the departed connection here, before the
+        // remaining connections are told anything: a session that is gone must
+        // stop being a possible recipient immediately.
+        let event = {
+            let mut coordinator = self.coordinator();
+            coordinator.unregister(entry.connection);
+            coordinator.disconnected(entry.connection, "connection closed")
+        };
+        self.flavor.report(&event);
+    }
+
+    /// Report one voice event to the flavor. Voxloom applies nothing itself; the
+    /// flavor may or may not produce a new snapshot in response.
+    pub fn report(&self, event: &voxloom_flavor::VoiceEvent) {
+        self.flavor.report(event);
+    }
+
+    /// Resolve one inbound message against its sender's committed view.
+    pub fn resolve_inbound(
+        &self,
+        connection: ConnectionId,
+        message: &ControlMessage,
+    ) -> Result<voxloom_control::InboundOutcome, voxloom_control::VoiceEventError> {
+        self.coordinator().resolve_event(connection, message)
+    }
+
+    /// Publish one complete generation: render every connection from the
+    /// flavor's current snapshot, deliver the view transitions, then grant the
+    /// routes the committed views justify.
+    ///
+    /// Entirely synchronous: frames go to bounded queues that the connection
+    /// tasks drain, so no `.await` happens under the coordinator lock. A
+    /// connection whose queue refuses the transition keeps its previous view
+    /// and is planned again by the next generation.
+    pub fn publish_generation(&self) -> Option<PublishedGeneration> {
+        let users: BTreeMap<ConnectionId, Arc<UserEntry>> = self
+            .registry()
+            .users
+            .values()
+            .map(|entry| (entry.connection, Arc::clone(entry)))
+            .collect();
+
+        let mut coordinator = self.coordinator();
+        let pending = match self.flavor.plan(&mut coordinator) {
+            Ok(pending) => pending,
+            Err(error) => {
+                eprintln!("voxloom-server: generation refused: {error}");
+                return None;
+            }
+        };
+        let (deliveries, mut commit) = pending.split();
+
+        for (connection, messages) in deliveries {
+            let Some(entry) = users.get(&connection) else {
+                // The connection left between the copy above and here. Leaving
+                // its token unspent keeps it out of the grant stage.
+                continue;
+            };
+            match entry.outbound.send_transition(messages) {
+                Ok(()) => {
+                    if let Err(error) = coordinator.commit_connection(&mut commit, connection) {
+                        eprintln!(
+                            "voxloom-server: session {}: queued a transition it cannot commit: \
+                             {error}",
+                            entry.session
+                        );
+                        entry.outbound.mark_fatal();
+                    }
+                }
+                Err(TransitionRefused::Congested { .. }) => {
+                    // The writer retries after each drained message. This
+                    // connection stays on its committed view; the others still
+                    // advance.
+                }
+                Err(TransitionRefused::TooLarge { .. } | TransitionRefused::Closed) => {}
+            }
+        }
+
+        match coordinator.finish(commit) {
+            Ok(published) => Some(published),
+            Err(error) => {
+                eprintln!("voxloom-server: generation could not be closed: {error}");
+                None
+            }
+        }
     }
 
     /// Resolve a routing table's recipient list to live connections, taking the
     /// registry lock once for the whole packet rather than once per recipient.
     /// Sessions that left between compilation and delivery are simply absent.
     pub fn users_for(&self, sessions: &[voxloom_audio::SessionId]) -> Vec<Arc<UserEntry>> {
-        let registry = match self.registry.lock() {
-            Ok(guard) => guard,
-            Err(poisoned) => poisoned.into_inner(),
-        };
+        let registry = self.registry();
         sessions
             .iter()
             .filter_map(|session| registry.users.get(&session.get()).cloned())
@@ -332,38 +348,24 @@ impl SharedState {
 
     /// Look up one connected user by session.
     pub fn user(&self, session: SessionId) -> Option<Arc<UserEntry>> {
-        let registry = match self.registry.lock() {
-            Ok(guard) => guard,
-            Err(poisoned) => poisoned.into_inner(),
-        };
-        registry.users.get(&session).cloned()
+        self.registry().users.get(&session).cloned()
     }
 
     /// All currently connected users.
     pub fn users(&self) -> Vec<Arc<UserEntry>> {
-        let registry = match self.registry.lock() {
-            Ok(guard) => guard,
-            Err(poisoned) => poisoned.into_inner(),
-        };
-        registry.users.values().cloned().collect()
+        self.registry().users.values().cloned().collect()
     }
 
     /// Look up the user a UDP address is already bound to, if any.
     pub fn user_for_addr(&self, addr: &SocketAddr) -> Option<Arc<UserEntry>> {
-        let registry = match self.registry.lock() {
-            Ok(guard) => guard,
-            Err(poisoned) => poisoned.into_inner(),
-        };
+        let registry = self.registry();
         let session = registry.udp_bindings.get(addr)?;
         registry.users.get(session).cloned()
     }
 
     /// Bind a UDP address to a session after successful cryptographic proof.
     pub fn bind_udp(&self, addr: SocketAddr, session: SessionId) {
-        let mut registry = match self.registry.lock() {
-            Ok(guard) => guard,
-            Err(poisoned) => poisoned.into_inner(),
-        };
+        let mut registry = self.registry();
         if let Some(entry) = registry.users.get(&session)
             && let Ok(mut slot) = entry.udp_addr.lock()
         {
@@ -372,204 +374,23 @@ impl SharedState {
         registry.udp_bindings.insert(addr, session);
     }
 
-    /// Build a coherent copy of the facts used by the deterministic renderer.
-    /// The registry lock is released before any connection view is locked.
-    pub fn scenario_users(&self) -> Vec<ScenarioUser> {
-        let registry = match self.registry.lock() {
+    /// Take the registry lock, recovering from poisoning: the guarded maps have
+    /// no invariant a panic could leave half-applied, and refusing every later
+    /// connection would be a worse answer than continuing.
+    fn registry(&self) -> std::sync::MutexGuard<'_, Registry> {
+        match self.registry.lock() {
             Ok(guard) => guard,
             Err(poisoned) => poisoned.into_inner(),
-        };
-        registry
-            .users
-            .values()
-            .map(|entry| ScenarioUser {
-                session: entry.session,
-                name: entry.name.clone(),
-                certificate_hash: entry.certificate_hash.clone(),
-                realm: entry.realm(),
-            })
-            .collect()
-    }
-
-    /// Move a live user between deterministic realms and rerender every
-    /// connection. Republishing the audio table happens before the first view
-    /// update, so stale cross-realm flows are cut eagerly (invariant 18).
-    pub fn move_to_realm(&self, session: SessionId, realm: Realm) -> bool {
-        let user = self.user(session);
-        let Some(user) = user else {
-            return false;
-        };
-        if user.realm() == realm {
-            return true;
-        }
-        user.set_realm(realm);
-        self.republish_routes();
-        self.refresh_views();
-        true
-    }
-
-    /// Rerender every live connection from one shared scenario snapshot.
-    ///
-    /// Refreshes are serialized before taking the snapshot. A caller that was
-    /// waiting behind an older refresh therefore observes the latest registry
-    /// state instead of committing its own stale copy afterward.
-    pub fn refresh_views(&self) {
-        let _refresh = self.lock_view_refresh();
-        let users = self.users();
-        let scenario = self.scenario_users();
-        for user in users {
-            self.refresh_view_from(&user, &scenario);
         }
     }
 
-    /// Retry one connection after its writer drained a queued message.
-    pub fn refresh_view(&self, user: &Arc<UserEntry>) {
-        let _refresh = self.lock_view_refresh();
-        let scenario = self.scenario_users();
-        self.refresh_view_from(user, &scenario);
-    }
-
-    fn lock_view_refresh(&self) -> MutexGuard<'_, ()> {
-        match self.view_refresh.lock() {
-            Ok(guard) => guard,
-            // The guard protects ordering, not mutable data. Continuing with
-            // the recovered guard preserves serialization after a panic.
-            Err(poisoned) => poisoned.into_inner(),
-        }
-    }
-
-    fn refresh_view_from(&self, user: &Arc<UserEntry>, scenario: &[ScenarioUser]) {
-        if !user.view_is_live() {
-            return;
-        }
-        let Some(viewer) = scenario
-            .iter()
-            .find(|candidate| candidate.session == user.session)
-        else {
-            return;
-        };
-        let mut view = match user.view.lock() {
-            Ok(guard) => guard,
-            Err(_) => {
-                user.outbound.mark_fatal();
-                return;
-            }
-        };
-        let (desired, desired_routes) =
-            match projection::render(&mut view, viewer, scenario, &self.config) {
-                Ok(rendered) => rendered,
-                Err(error) => {
-                    eprintln!(
-                        "voxloom-server: session {}: view id allocation failed: {error}",
-                        user.session
-                    );
-                    user.outbound.mark_fatal();
-                    return;
-                }
-            };
-        let pending = match view.prepare(&desired, &desired_routes) {
-            Ok(Some(pending)) => pending,
-            Ok(None) => return,
-            Err(error) => {
-                eprintln!(
-                    "voxloom-server: session {}: desired view refused: {error}",
-                    user.session
-                );
-                return;
-            }
-        };
-        let (steps, token) = pending.split();
-
-        // Revocations take effect even if the visual transition is currently
-        // congested. Newly allowed flows are held until every control message
-        // has been atomically admitted.
-        let mut messages = Vec::new();
-        let mut enables = Vec::new();
-        for step in steps {
-            match step {
-                EmittedStep::Message(message) => messages.push(message),
-                EmittedStep::RouteChange {
-                    route,
-                    enabled: false,
-                } => self.set_route(route, false),
-                EmittedStep::RouteChange {
-                    route,
-                    enabled: true,
-                } => enables.push(route),
-            }
-        }
-
-        match user.outbound.send_transition(messages) {
-            Ok(()) => {
-                if let Err(error) = view.commit(token) {
-                    eprintln!(
-                        "voxloom-server: session {}: committed queue but view token failed: {error}",
-                        user.session
-                    );
-                    user.outbound.mark_fatal();
-                    return;
-                }
-                for route in enables {
-                    self.set_route(route, true);
-                }
-            }
-            Err(TransitionRefused::Congested { .. }) => {
-                // The writer retries after each drained message. The view stays
-                // committed at its old revision; intermediate desires may be
-                // skipped exactly as documented by `ConnectionView`.
-            }
-            Err(TransitionRefused::TooLarge { .. } | TransitionRefused::Closed) => {}
-        }
-    }
-
-    /// Apply one ordered route toggle from a view transaction.
-    pub fn set_route(&self, route: AudioRoute, enabled: bool) {
-        let mut registry = match self.registry.lock() {
+    /// Take the coordinator lock, with the same poison recovery. A generation
+    /// that panicked mid-publication leaves committed views untouched, because
+    /// nothing is committed until its token is spent.
+    fn coordinator(&self) -> std::sync::MutexGuard<'_, PublicationCoordinator> {
+        match self.coordinator.lock() {
             Ok(guard) => guard,
             Err(poisoned) => poisoned.into_inner(),
-        };
-        if enabled {
-            registry.enabled_routes.insert(route);
-        } else {
-            registry.enabled_routes.remove(&route);
-        }
-        let generation = self.route_generation.fetch_add(1, Ordering::Relaxed) + 1;
-        registry.republish_routes(generation);
-    }
-
-    fn republish_routes(&self) {
-        let mut registry = match self.registry.lock() {
-            Ok(guard) => guard,
-            Err(poisoned) => poisoned.into_inner(),
-        };
-        let generation = self.route_generation.fetch_add(1, Ordering::Relaxed) + 1;
-        registry.republish_routes(generation);
-    }
-}
-
-impl UserEntry {
-    /// Construct the server-owned live state for one authenticated connection.
-    pub fn new(
-        session: SessionId,
-        name: String,
-        certificate_hash: Option<String>,
-        realm: Realm,
-        outbound: OutboundQueue,
-        crypt_state: CryptState,
-        now: Instant,
-    ) -> Self {
-        Self {
-            session,
-            name,
-            certificate_hash,
-            realm: AtomicU32::new(realm.routing_id()),
-            view: Mutex::new(ConnectionView::new(ViewSessionId(session))),
-            view_live: AtomicBool::new(false),
-            outbound,
-            crypto: Mutex::new(Some(crypt_state)),
-            udp_addr: Mutex::new(None),
-            udp_mode: AtomicBool::new(true),
-            voice_budget: Mutex::new(VoiceBudget::new(now)),
         }
     }
 }

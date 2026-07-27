@@ -4,7 +4,11 @@
 > reprend doit savoir. Autorité : la spec et la roadmap (`docs/`) ; ce fichier ne
 > fait que pointer l'état courant. Mettre à jour à chaque fin de tâche.
 
-**Phase courante : P7 (intégration de flavors et publication atomique).
+**Phase courante : P8 (flavor Minecraft).
+P7 est close : T1 à T8 verts et checklist humaine signée le 2026-07-27
+(`docs/checklists/p7-flavor-integration.md`) — le scénario Aurora/Borealis est
+rejoué de bout en bout à travers la seule API publique de flavor, sans aucune
+branche métier dans `voxloom-server`.
 P6 est close : T1 à T8 verts, checklist humaine signée le 2026-07-26 sur deux
 clients officiels macOS et Windows (`docs/checklists/p6-live-views.md`, serveur
 `9b59527`).
@@ -24,6 +28,50 @@ P7 suit la décision `docs/decisions/0002-flavor-owns-business-state.md` :
 Voxloom possède l'état vocal, tandis que chaque flavor compilé possède son état
 métier. La roadmap détaille désormais T1 à T8, du contrat minimal au checkpoint
 live du flavor de référence.
+
+**P7 est close.** Le pipeline complet tourne :
+
+- `voxloom-flavor` : `VoiceFlavor` (snapshot opaque, `render`, `observe`),
+  `SnapshotSource` (le runtime demande le snapshot courant quand il vient
+  d'admettre une connexion), `VoiceEvent` versionné, `RenderOutput` par clés
+  sémantiques. Aucun ID numérique ne traverse la frontière.
+- `voxloom-control` : rendu complet (T2), validation en passes séparées (T3),
+  publication atomique dans l'ordre de sécurité (T4) et conversion des actions
+  résolues en `VoiceEvent` (T5). `publish` applique la révocation audio
+  immédiatement ; les nouvelles routes n'existent qu'après le commit de la vue
+  du destinataire. Le commit est atomique **par connexion** : une file
+  congestionnée ne bloque plus les autres. Un `PublicationCommit` planifié avant
+  toute autre publication ou (dés)inscription est refusé.
+- `voxloom-flavor-reference` (T6) : Aurora/Borealis possède ses realms et ses
+  mutations, et ne parle au runtime que par le contrat public. Aucune crate
+  centrale n'en dépend (gate `dep-direction.sh`).
+- `voxloom-testkit/tests/flavor_privacy.rs` (T7) : paires de snapshots générées,
+  chaque génération appliquée par le client strict, plus le scénario de
+  révocation sous charge audio.
+- `voxloom-server` (T8) : ne contient plus aucun métier. Il tient les sessions,
+  les transports et le coordinateur ; le modèle vient d'un `FlavorRuntime` choisi
+  par un binaire de composition (`tools/voxloom-aurora`). La vue initiale est la
+  première génération publiée, drainée entre le prélude du handshake et
+  `ServerSync` : un seul chemin de rendu. `ci/bench-publication.sh` mesure le
+  coût d'une publication complète (2 à 500 connexions).
+
+**Checkpoint humain signé** sur deux clients officiels : vues divergentes,
+changement de realm à chaud dans les deux sens, audio coupé avant le retrait
+visuel, repli tunnel TCP, déconnexion/reconnexion, et coût de publication relevé
+sur la machine de test.
+
+Deux points à connaître avant de reprendre :
+
+- **Utilisateurs synthétiques (spec 9.4) refusés.** Une `DesiredUser` sans
+  `source_connection` fait échouer la génération
+  (`PublicationError::SyntheticUserUnsupported`) : aucune tranche P7 ne définit
+  comment allouer sa session ni comment l'audio la référence. Inventer cette
+  politique serait une violation R1 ; c'est une décision à prendre avant P8.
+- **Vérificateur assoupli (revue humaine requise, R2).** `ClientModel` retirait
+  définitivement une session : une projection qui cache puis remontre un membre
+  ressemblait à une réutilisation d'ID. Une identité qui revient est désormais
+  acceptée **sous le même nom** ; une autre identité sur un ID retiré échoue
+  toujours (invariant 12). Trouvé par le proptest de T7.
 
 **P5 (moteur de vues pur) — cœur pur implémenté et vérifié en CI, mergé sur
 `main` le 2026-07-24.** `voxloom-render` (vue normalisée, normalize, validate) et
@@ -694,6 +742,10 @@ voxloom-reconcile/        P5 : diff, planificateur (§12.5/12.6), ViewIdMapping 
 voxloom-audio/            P4 : routage pur (compile, may_receive, enveloppe)  (pur)
 voxloom-session/          P6 : vue engagée d'UNE connexion, clé→ID, plan→wire,
                           commit atomique (§12.7)                        (pur)
+voxloom-flavor/           P7 T1 : contrat statique, snapshot opaque,
+                          vue et routes sémantiques                      (pur)
+voxloom-control/          P7 T2/T3 : rendu complet puis validation des
+                          vues, routes et interactions                   (pur)
 voxloom-server/           P3+P4 : serveur minimal + routage voix, limites §15.7
 voxloom-testkit/          P3+P4 : SimulatedMumbleClient (§20 + plan voix), juge (R2)
 fuzz/                     cibles cargo-fuzz (workspace détaché, nightly)
@@ -707,9 +759,11 @@ Note : `voxloom-render`/`voxloom-reconcile` sont sur `main` (P5 mergé le
 ### Après P6
 
 P4 est close (T1–T6 verts, checkpoint humain signé). **P6 est close : T1 à T7
-verts en CI et checkpoint humain T8 signé sur macOS et Windows. P7 est la
-prochaine phase : contrat de flavor générique, rendu depuis un snapshot métier
-opaque et publication atomique.** P5 peut aussi être clôturé en branchant son proptest sur le
+verts en CI et checkpoint humain T8 signé sur macOS et Windows. P7 est en
+cours : T1 fournit le contrat de flavor générique, T2 rend le snapshot métier
+opaque pour toutes les connexions et T3 valide la génération entière sans
+effet ; T4 doit la publier atomiquement dans l'ordre de sécurité.** P5 peut
+aussi être clôturé en branchant son proptest sur le
 `SimulatedMumbleClient`, qui sait désormais juger le plan voix et toutes les
 références de sortie (cf. « Reste à faire » §3). Voir la roadmap.
 

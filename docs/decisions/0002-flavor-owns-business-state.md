@@ -52,6 +52,10 @@ sécurité. P7 rerend toutes les connexions à chaque publication. Une invalidat
 ciblée reste une optimisation P10 et doit conserver ce rendu complet comme
 fallback.
 
+Les sorties du flavor utilisent des clés sémantiques et des `ConnectionId`.
+Voxloom reste seul propriétaire des `ChannelId`, `SessionId` et mappings
+numériques propres à chaque vue.
+
 Les actions entrantes deviennent des `VoiceEvent` contenant uniquement des
 références vocales déjà résolues et une génération. Le flavor décide si
 l'événement produit une mutation métier et, le cas échéant, publie un nouveau

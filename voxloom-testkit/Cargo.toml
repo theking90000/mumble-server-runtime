@@ -25,6 +25,10 @@ anyhow = "1"
 # the P3 handshake replays without any §20 violation.
 voxloom-server = { path = "../voxloom-server" }
 voxloom-render = { path = "../voxloom-render" }
+voxloom-audio = { path = "../voxloom-audio" }
+voxloom-flavor = { path = "../voxloom-flavor" }
+voxloom-flavor-reference = { path = "../voxloom-flavor-reference" }
+voxloom-control = { path = "../voxloom-control" }
 voxloom-reconcile = { path = "../voxloom-reconcile" }
 voxloom-session = { path = "../voxloom-session" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "time", "sync"] }

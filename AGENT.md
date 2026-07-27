@@ -101,7 +101,9 @@ fait autorité sur cette frontière.
 avec `P5 moteur de vues pur` parallélisable dès P2. Détail et critères de « done »
 dans `docs/voxloom-roadmap-agents-v0_1.md`. **P0 à P4 sont closes** (checkpoints
 humains signés pour P0, P2, P3 et P4) ; le cœur pur de P5 est fait et P6 est
-close. **Phase courante : P7 (intégration de flavors et publication atomique).**
+close, **et P7 aussi** (checkpoint humain signé le 2026-07-27 : le flavor de
+référence tourne en live à travers la seule API publique).
+**Phase courante : P8 (flavor Minecraft).**
 État détaillé et reprise :
 **`docs/STATUS.md`**, qui fait foi sur l'avancement.
 

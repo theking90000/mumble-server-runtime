@@ -18,6 +18,10 @@ use tokio::net::{TcpStream, UdpSocket};
 use tokio_rustls::TlsConnector;
 use tokio_rustls::client::TlsStream;
 use voxloom_crypto::CryptState;
+use voxloom_flavor::{
+    ConnectionId, DesiredClientView, DesiredUser, FlavorError, FlavorRevision, InteractionRegistry,
+    RenderOutput, SemanticKey, SnapshotSource, UserKey, VoiceEvent, VoiceFlavor,
+};
 use voxloom_protocol::messages::{tcp, udp};
 use voxloom_protocol::{
     ControlMessage, UdpMessage, decode_frame, decode_udp, encode_frame, encode_udp, parse_frame,
@@ -28,14 +32,168 @@ use voxloom_server::tls::{self, Identity};
 
 const LOOPBACK_TARGET: u32 = 31;
 
+/// The smallest flavor that exercises the runtime: one synthetic channel, every
+/// member visible to every other, and hearing follows visibility.
+///
+/// Deliberately not the reference flavor: this crate is the runtime, and its own
+/// tests must not depend on one particular business model. What they check is
+/// runtime behaviour — ordering, transports, routing — under *some* flavor.
+#[derive(Debug, Default)]
+struct MeshFlavor {
+    members: std::sync::Mutex<(u64, std::collections::BTreeMap<ConnectionId, Member>)>,
+}
+
+/// What this flavor knows about one member.
+#[derive(Debug, Clone)]
+struct Member {
+    name: String,
+    certificate_hash: Option<String>,
+}
+
+#[derive(Debug)]
+struct MeshSnapshot {
+    revision: FlavorRevision,
+    members: std::collections::BTreeMap<ConnectionId, Member>,
+}
+
+impl MeshFlavor {
+    fn members(
+        &self,
+    ) -> std::sync::MutexGuard<'_, (u64, std::collections::BTreeMap<ConnectionId, Member>)> {
+        match self.members.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        }
+    }
+}
+
+impl SnapshotSource for MeshFlavor {
+    fn snapshot(&self) -> Arc<MeshSnapshot> {
+        let members = self.members();
+        Arc::new(MeshSnapshot {
+            revision: FlavorRevision::new(members.0),
+            members: members.1.clone(),
+        })
+    }
+}
+
+impl VoiceFlavor for MeshFlavor {
+    type Snapshot = MeshSnapshot;
+
+    fn revision(&self, snapshot: &Self::Snapshot) -> FlavorRevision {
+        snapshot.revision
+    }
+
+    fn render(
+        &self,
+        snapshot: &Self::Snapshot,
+        connection: ConnectionId,
+    ) -> Result<RenderOutput, FlavorError> {
+        if !snapshot.members.contains_key(&connection) {
+            return Err(FlavorError::render_refused(
+                connection,
+                "unknown connection",
+            ));
+        }
+        let mut view = DesiredClientView::empty();
+        let root = view.root_channel.clone();
+        let lobby = voxloom_flavor::ChannelKey(SemanticKey::Static("lobby".to_owned()));
+        view.channels.insert(
+            lobby.clone(),
+            voxloom_flavor::DesiredChannel {
+                key: lobby.clone(),
+                parent: root,
+                name: "Lobby".to_owned(),
+                description: None,
+                sort_order: 0,
+                temporary: false,
+                max_users: None,
+                enter_restricted: false,
+                can_enter: true,
+                links: std::collections::BTreeSet::new(),
+            },
+        );
+        for (member_connection, member) in &snapshot.members {
+            let key = UserKey(SemanticKey::Dynamic(member_connection.get()));
+            view.users.insert(
+                key.clone(),
+                DesiredUser {
+                    key,
+                    source_connection: Some(*member_connection),
+                    name: member.name.clone(),
+                    channel: lobby.clone(),
+                    user_id: None,
+                    certificate_hash: member.certificate_hash.clone(),
+                    mute: false,
+                    deaf: false,
+                    suppress: false,
+                    self_mute: false,
+                    self_deaf: false,
+                    priority_speaker: false,
+                    recording: false,
+                    comment: None,
+                    texture: None,
+                },
+            );
+        }
+        let routes = snapshot
+            .members
+            .keys()
+            .filter(|sender| **sender != connection)
+            .map(|sender| voxloom_flavor::DesiredAudioRoute {
+                sender: *sender,
+                receiver: connection,
+            })
+            .collect();
+        Ok(RenderOutput::new(
+            view,
+            routes,
+            InteractionRegistry::default(),
+        ))
+    }
+
+    fn observe(&self, event: &VoiceEvent) {
+        let mut members = self.members();
+        match event {
+            VoiceEvent::Connected {
+                connection,
+                name,
+                certificate_hash,
+                ..
+            } => {
+                members.1.insert(
+                    *connection,
+                    Member {
+                        name: name.clone(),
+                        certificate_hash: certificate_hash.clone(),
+                    },
+                );
+                members.0 += 1;
+            }
+            VoiceEvent::Disconnected { connection, .. } => {
+                if members.1.remove(connection).is_some() {
+                    members.0 += 1;
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
 /// Start a server on ephemeral 127.0.0.1 TCP/UDP ports.
 async fn start_server() -> ServerHandle {
     tls::install_crypto_provider();
     let identity = Identity::self_signed(vec!["localhost".to_string()]).expect("identity");
-    let addr = "127.0.0.1:0".parse().expect("addr");
-    let server = Server::bind(ServerConfig::default(), identity, addr, addr)
-        .await
-        .expect("bind server");
+    let addr: std::net::SocketAddr = "127.0.0.1:0".parse().expect("addr");
+    let server = Server::bind(
+        ServerConfig::default(),
+        Arc::new(MeshFlavor::default()),
+        identity,
+        addr,
+        addr,
+    )
+    .await
+    .expect("bind server");
     server.spawn().expect("spawn server")
 }
 
@@ -455,7 +613,6 @@ struct Client {
     crypt: CryptState,
     session: u32,
     sock: UdpSocket,
-    channels: std::collections::BTreeMap<String, u32>,
 }
 
 /// Connect, authenticate and take the crypto material.
@@ -463,20 +620,12 @@ async fn join(handle: &ServerHandle, name: &str) -> Client {
     let (mut reader, mut writer) = connect(handle).await;
     let messages = do_handshake(&mut reader, &mut writer, name).await;
     let (crypt, _) = client_crypt(&find_crypt_setup(&messages));
-    let channels = messages
-        .iter()
-        .filter_map(|message| match message {
-            ControlMessage::ChannelState(state) => Some((state.name.clone()?, state.channel_id?)),
-            _ => None,
-        })
-        .collect();
     Client {
         reader,
         writer,
         crypt,
         session: session_of(&messages),
         sock: UdpSocket::bind("127.0.0.1:0").await.expect("bind udp"),
-        channels,
     }
 }
 
@@ -543,23 +692,6 @@ async fn recv_tunnelled_audio(client: &mut Client) -> udp::Audio {
         }
     }
 }
-
-async fn recv_until(
-    client: &mut Client,
-    predicate: impl Fn(&ControlMessage) -> bool,
-) -> ControlMessage {
-    loop {
-        match tokio::time::timeout(Duration::from_secs(5), client.reader.next()).await {
-            Ok(Some(message)) if predicate(&message) => return message,
-            Ok(Some(_)) => continue,
-            _ => panic!("expected control transition before timeout"),
-        }
-    }
-}
-
-/// Normal speech (target 0) reaches the other connected client, carries the
-/// authenticated sender session and a context header, and never comes back to
-/// its own sender.
 #[tokio::test]
 async fn two_clients_hear_each_other_over_udp() {
     let handle = start_server().await;
@@ -685,113 +817,6 @@ async fn an_unregistered_voice_target_is_not_routed() {
     alice.sock.send_to(&sealed, udp_addr).await.expect("send");
     let heard = recv_audio(&mut bob).await;
     assert_eq!(heard.opus_data, vec![0xCD]);
-
-    handle.shutdown();
-}
-
-/// The deterministic P6 scenario changes both the connection views and the
-/// directional audio domain without reconnecting. Revocation is observable
-/// before the `UserRemove` that hides Bob from Alice; activation is observable
-/// only after both clients have received the view that introduces their peer.
-#[tokio::test]
-async fn moving_between_realms_updates_views_and_gates_audio() {
-    let handle = start_server().await;
-    let udp_addr = handle.udp_addr;
-    let mut alice = join(&handle, "alice@aurora").await;
-    let mut bob = join(&handle, "bob@borealis").await;
-    associate_udp(&mut alice, udp_addr).await;
-    associate_udp(&mut bob, udp_addr).await;
-
-    assert_ne!(
-        alice.channels, bob.channels,
-        "viewer-relative channel trees must diverge"
-    );
-
-    let sealed = alice
-        .crypt
-        .encrypt(&speech(NORMAL_TARGET, &[0xA0]))
-        .expect("encrypt");
-    alice.sock.send_to(&sealed, udp_addr).await.expect("send");
-    let mut buffer = vec![0u8; 2048];
-    assert!(
-        tokio::time::timeout(Duration::from_millis(250), bob.sock.recv_from(&mut buffer))
-            .await
-            .is_err(),
-        "different realms must be audio-isolated"
-    );
-
-    let aurora = bob
-        .channels
-        .iter()
-        .find(|(name, _)| name.ends_with("Aurora"))
-        .map(|(_, id)| *id)
-        .expect("Bob sees the Aurora destination");
-    send(
-        &mut bob.writer,
-        &ControlMessage::UserState(tcp::UserState {
-            session: Some(bob.session),
-            channel_id: Some(aurora),
-            ..Default::default()
-        }),
-    )
-    .await;
-
-    let _alice_sees_bob = recv_until(&mut alice, |message| {
-        matches!(
-            message,
-            ControlMessage::UserState(state) if state.session == Some(bob.session)
-        )
-    })
-    .await;
-    let _bob_sees_alice = recv_until(&mut bob, |message| {
-        matches!(
-            message,
-            ControlMessage::UserState(state) if state.session == Some(alice.session)
-        )
-    })
-    .await;
-
-    let sealed = alice
-        .crypt
-        .encrypt(&speech(NORMAL_TARGET, &[0xA1]))
-        .expect("encrypt");
-    alice.sock.send_to(&sealed, udp_addr).await.expect("send");
-    assert_eq!(recv_audio(&mut bob).await.opus_data, vec![0xA1]);
-
-    let borealis = bob
-        .channels
-        .iter()
-        .find(|(name, _)| name.ends_with("Borealis"))
-        .map(|(_, id)| *id)
-        .expect("Bob sees the Borealis destination");
-    send(
-        &mut bob.writer,
-        &ControlMessage::UserState(tcp::UserState {
-            session: Some(bob.session),
-            channel_id: Some(borealis),
-            ..Default::default()
-        }),
-    )
-    .await;
-    let _alice_hides_bob = recv_until(&mut alice, |message| {
-        matches!(
-            message,
-            ControlMessage::UserRemove(remove) if remove.session == bob.session
-        )
-    })
-    .await;
-
-    let sealed = alice
-        .crypt
-        .encrypt(&speech(NORMAL_TARGET, &[0xA2]))
-        .expect("encrypt");
-    alice.sock.send_to(&sealed, udp_addr).await.expect("send");
-    assert!(
-        tokio::time::timeout(Duration::from_millis(250), bob.sock.recv_from(&mut buffer))
-            .await
-            .is_err(),
-        "route revocation must precede the visual removal"
-    );
 
     handle.shutdown();
 }

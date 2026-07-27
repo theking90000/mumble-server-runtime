@@ -1,0 +1,25 @@
+[package]
+name = "voxloom-control"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Pure control-plane coordination for Voxloom flavor snapshot renders."
+
+[lib]
+name = "voxloom_control"
+path = "src/voxloom_control.rs"
+
+[dependencies]
+thiserror = "2"
+voxloom-audio = { path = "../voxloom-audio" }
+voxloom-flavor = { path = "../voxloom-flavor" }
+voxloom-protocol = { path = "../voxloom-protocol" }
+voxloom-reconcile = { path = "../voxloom-reconcile" }
+voxloom-render = { path = "../voxloom-render" }
+voxloom-session = { path = "../voxloom-session" }
+
+[lints]
+workspace = true
