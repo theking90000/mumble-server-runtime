@@ -4,7 +4,8 @@
 > reprend doit savoir. Autorité : la spec et la roadmap (`docs/`) ; ce fichier ne
 > fait que pointer l'état courant. Mettre à jour à chaque fin de tâche.
 
-**Phase courante : P7 (intégration de flavors et publication atomique).
+**Phase courante : P7 (intégration de flavors et publication atomique), T1 à T7
+verts, T8 en attente du seul checkpoint humain.
 P6 est close : T1 à T8 verts, checklist humaine signée le 2026-07-26 sur deux
 clients officiels macOS et Windows (`docs/checklists/p6-live-views.md`, serveur
 `9b59527`).
@@ -25,18 +26,48 @@ Voxloom possède l'état vocal, tandis que chaque flavor compilé possède son �
 métier. La roadmap détaille désormais T1 à T8, du contrat minimal au checkpoint
 live du flavor de référence.
 
-**P7 T1 à T3 sont implémentées.** `voxloom-flavor` définit `VoiceFlavor`, son
-`Snapshot` opaque, `ConnectionId`, `FlavorRevision`, `RenderOutput`,
-`InteractionRegistry` et `FlavorError`. Les vues et routes retournées utilisent
-uniquement des clés sémantiques et des identités de connexion ; les IDs
-numériques par connexion restent donc la propriété du runtime.
-`voxloom-control::render_snapshot` rend le même `Arc<F::Snapshot>` pour chaque
-connexion distincte et ne retourne aucun candidat partiel si un rendu échoue.
-`validate_rendered_snapshot` vérifie ensuite, en passes séparées et avant tout
-effet, les vues sémantiques, les routes possédées par leur receveur et les
-registres d'interactions. Seul un `ValidatedSnapshot` peut atteindre la tranche
-suivante. Prochaine tranche : **P7 T4, publication atomique avec ordre de
-sécurité.**
+**P7 T1 à T7 sont implémentées ; T8 est fait côté code et attend sa checklist
+humaine.** Le pipeline complet existe et tourne :
+
+- `voxloom-flavor` : `VoiceFlavor` (snapshot opaque, `render`, `observe`),
+  `SnapshotSource` (le runtime demande le snapshot courant quand il vient
+  d'admettre une connexion), `VoiceEvent` versionné, `RenderOutput` par clés
+  sémantiques. Aucun ID numérique ne traverse la frontière.
+- `voxloom-control` : rendu complet (T2), validation en passes séparées (T3),
+  publication atomique dans l'ordre de sécurité (T4) et conversion des actions
+  résolues en `VoiceEvent` (T5). `publish` applique la révocation audio
+  immédiatement ; les nouvelles routes n'existent qu'après le commit de la vue
+  du destinataire. Le commit est atomique **par connexion** : une file
+  congestionnée ne bloque plus les autres. Un `PublicationCommit` planifié avant
+  toute autre publication ou (dés)inscription est refusé.
+- `voxloom-flavor-reference` (T6) : Aurora/Borealis possède ses realms et ses
+  mutations, et ne parle au runtime que par le contrat public. Aucune crate
+  centrale n'en dépend (gate `dep-direction.sh`).
+- `voxloom-testkit/tests/flavor_privacy.rs` (T7) : paires de snapshots générées,
+  chaque génération appliquée par le client strict, plus le scénario de
+  révocation sous charge audio.
+- `voxloom-server` (T8) : ne contient plus aucun métier. Il tient les sessions,
+  les transports et le coordinateur ; le modèle vient d'un `FlavorRuntime` choisi
+  par un binaire de composition (`tools/voxloom-aurora`). La vue initiale est la
+  première génération publiée, drainée entre le prélude du handshake et
+  `ServerSync` : un seul chemin de rendu. `ci/bench-publication.sh` mesure le
+  coût d'une publication complète (2 à 500 connexions).
+
+**Reste pour clore P7 :** dérouler et signer
+`docs/checklists/p7-flavor-integration.md` sur deux clients officiels.
+
+Deux points à connaître avant de reprendre :
+
+- **Utilisateurs synthétiques (spec 9.4) refusés.** Une `DesiredUser` sans
+  `source_connection` fait échouer la génération
+  (`PublicationError::SyntheticUserUnsupported`) : aucune tranche P7 ne définit
+  comment allouer sa session ni comment l'audio la référence. Inventer cette
+  politique serait une violation R1 ; c'est une décision à prendre avant P8.
+- **Vérificateur assoupli (revue humaine requise, R2).** `ClientModel` retirait
+  définitivement une session : une projection qui cache puis remontre un membre
+  ressemblait à une réutilisation d'ID. Une identité qui revient est désormais
+  acceptée **sous le même nom** ; une autre identité sur un ID retiré échoue
+  toujours (invariant 12). Trouvé par le proptest de T7.
 
 **P5 (moteur de vues pur) — cœur pur implémenté et vérifié en CI, mergé sur
 `main` le 2026-07-24.** `voxloom-render` (vue normalisée, normalize, validate) et
