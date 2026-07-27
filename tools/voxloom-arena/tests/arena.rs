@@ -15,8 +15,8 @@ use voxloom_arena::directory::{Destinations, Directory, Member};
 use voxloom_arena::lobby::{Choices, Intent, Lobby};
 use voxloom_gateway::Runtime;
 use voxloom_shard::{
-    ChannelId, ChannelKey, ConnectionId, Handover, OutboundQueue, ScopeSet, SessionId, Shard,
-    ShardCommand, ShardId, ShardLogic, ShardView, VoiceEvent,
+    ChannelId, ChannelKey, ConnectionId, Handover, OutboundQueue, Reply, ScopeSet, SessionId,
+    Shard, ShardCommand, ShardId, ShardLogic, ShardView, VoiceEvent,
 };
 
 /// Everything the two shards share, plus a runtime handle they can migrate
@@ -414,10 +414,19 @@ async fn a_migration_keeps_the_session_and_never_removes_the_client_from_itself(
         names(&held).contains("Red Team"),
         "the lobby tree is what the client still holds"
     );
-    assert!(
-        messages.try_recv().is_err(),
-        "a migration must push no teardown at all"
-    );
+    // The source withdraws the buttons it offered, because the destination
+    // starts from an empty registry and would otherwise leave the player with a
+    // menu entry no shard will ever answer. Everything else must stay unsent: a
+    // view teardown is what disconnects the official client.
+    while let Ok(message) = messages.try_recv() {
+        assert!(
+            matches!(
+                message,
+                voxloom_protocol::ControlMessage::ContextActionModify(_)
+            ),
+            "a migration must push no view teardown, got {message:?}"
+        );
+    }
 
     let mut arena = world.arena();
     arena.handle(ShardCommand::Attach {
@@ -599,10 +608,13 @@ async fn an_unknown_event_variant_does_not_change_the_flavor() {
     settle(&mut arena);
 
     let before = arena.logic_mut().role(player);
-    arena.logic_mut().observe(&VoiceEvent::Migrated {
-        connection: ConnectionId(999),
-        to: ShardId(7),
-    });
+    arena.logic_mut().observe(
+        &VoiceEvent::Migrated {
+            connection: ConnectionId(999),
+            to: ShardId(7),
+        },
+        &mut Reply::default(),
+    );
 
     assert_eq!(arena.logic_mut().role(player), before);
 }

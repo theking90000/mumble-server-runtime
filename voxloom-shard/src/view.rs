@@ -10,7 +10,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::ids::{ChannelId, ChannelKey, Occupant, SessionId};
+use crate::ids::{ActionKey, ChannelId, ChannelKey, Occupant, SessionId};
 use crate::scope::{Scope, ScopeSet};
 
 /// A channel in the shared view.
@@ -132,6 +132,62 @@ impl Overlay {
         self.channels.is_empty() && self.users.is_empty()
     }
 }
+
+/// Where a context action is offered in the client's interface.
+///
+/// A bit set rather than an enum: one action may be offered in several places at
+/// once, which is exactly what the client's three menus do with it.
+///
+/// REF: references/vendored/Mumble.proto : `ContextActionModify.Context`,
+///   `Server = 0x01`, `Channel = 0x02`, `User = 0x04`.
+/// REF: references/mumble/src/mumble/Messages.cpp : `msgContextActionModify`
+///   appends the same action to `qlServerActions`, `qlUserActions` and
+///   `qlChannelActions`, one per bit set.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct On(u32);
+
+impl On {
+    /// Offered on the server itself, with nothing selected.
+    pub const SERVER: On = On(0x01);
+    /// Offered when a channel is selected, and told which one.
+    pub const CHANNEL: On = On(0x02);
+    /// Offered when a user is selected, and told which one.
+    pub const USER: On = On(0x04);
+
+    /// Both places at once, and any other combination.
+    #[must_use]
+    pub fn and(self, other: On) -> On {
+        On(self.0 | other.0)
+    }
+
+    /// Whether this action was offered in that place. The invocation is checked
+    /// against it, so a client cannot invoke a user action on a channel.
+    #[must_use]
+    pub fn covers(self, place: On) -> bool {
+        self.0 & place.0 == place.0
+    }
+
+    #[must_use]
+    pub fn bits(self) -> u32 {
+        self.0
+    }
+}
+
+/// One action a flavor offers to one connection.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Action {
+    pub key: ActionKey,
+    /// What the client writes in the menu. A field, not the identity.
+    pub text: String,
+    pub on: On,
+}
+
+/// The actions offered to one connection.
+///
+/// Private by construction, like an [`Overlay`], and recomputed from scratch
+/// each turn: what a flavor offers may depend on who is asking, which is the
+/// whole point of a button.
+pub type Actions = BTreeMap<ActionKey, Action>;
 
 #[cfg(test)]
 mod tests {

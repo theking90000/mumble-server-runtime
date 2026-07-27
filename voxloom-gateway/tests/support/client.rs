@@ -87,6 +87,13 @@ pub struct Model {
     pub permissions: BTreeMap<u32, u32>,
     /// Every `UserStats` answer, in order.
     pub stats: Vec<tcp::UserStats>,
+    /// The context-action menu, as the client would build it: identifier to
+    /// label. An `Add` inserts, a `Remove` deletes.
+    pub actions: BTreeMap<String, String>,
+    /// Every text message received, in order.
+    pub said: Vec<tcp::TextMessage>,
+    /// Every refusal received, in order.
+    pub refused: Vec<tcp::PermissionDenied>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -182,6 +189,20 @@ impl Model {
                 }
             }
             ControlMessage::UserStats(stats) => self.stats.push(stats.clone()),
+            ControlMessage::ContextActionModify(modify) => {
+                let remove = modify.operation
+                    == Some(i32::from(tcp::context_action_modify::Operation::Remove));
+                if remove {
+                    self.actions.remove(&modify.action);
+                } else {
+                    self.actions.insert(
+                        modify.action.clone(),
+                        modify.text.clone().unwrap_or_default(),
+                    );
+                }
+            }
+            ControlMessage::TextMessage(text) => self.said.push(text.clone()),
+            ControlMessage::PermissionDenied(denied) => self.refused.push(denied.clone()),
             ControlMessage::UdpTunnel(raw) => {
                 if let Ok(UdpMessage::Audio(audio)) = decode_udp(raw) {
                     self.tunnelled.push(audio);
@@ -314,6 +335,22 @@ impl Client {
     /// Open somebody's information window.
     ///
     /// REF: references/mumble/src/mumble/ServerHandler.cpp : `requestUserStats`.
+    /// Press a context action, the way the client does: the identifier it was
+    /// given, plus whatever the tree currently has selected.
+    pub async fn invoke_action(
+        &mut self,
+        action: &str,
+        session: Option<u32>,
+        channel: Option<u32>,
+    ) -> Result<()> {
+        self.send(&ControlMessage::ContextAction(tcp::ContextAction {
+            action: action.to_owned(),
+            session,
+            channel_id: channel,
+        }))
+        .await
+    }
+
     pub async fn request_user_stats(&mut self, session: u32) -> Result<()> {
         self.send(&ControlMessage::UserStats(tcp::UserStats {
             session: Some(session),

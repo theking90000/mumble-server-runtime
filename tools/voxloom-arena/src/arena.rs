@@ -31,7 +31,7 @@ use std::sync::Arc;
 
 use voxloom_gateway::RuntimeHandle;
 use voxloom_shard::{
-    ChannelKey, ConnectionId, DomainId, Narrow, Occupant, Scope, ScopeSet, ShardBuilder,
+    ChannelKey, ConnectionId, DomainId, Narrow, Occupant, Reply, Scope, ScopeSet, ShardBuilder,
     ShardLogic, VoiceEvent,
 };
 
@@ -293,7 +293,7 @@ impl ShardLogic for Arena {
         }
     }
 
-    fn observe(&mut self, event: &VoiceEvent) {
+    fn observe(&mut self, event: &VoiceEvent, _out: &mut Reply) {
         match event {
             VoiceEvent::Connected { connection } => {
                 let role = if self.directory.is_staff(*connection) {

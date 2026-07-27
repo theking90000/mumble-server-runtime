@@ -23,8 +23,8 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result, bail};
 use voxloom_protocol::ControlMessage;
 use voxloom_shard::{
-    ChannelKey, ConnectionId, DomainId, Narrow, Occupant, OutboundQueue, Scope, ScopeSet, Shard,
-    ShardBuilder, ShardCommand, ShardId, ShardLogic, VoiceEvent,
+    ChannelKey, ConnectionId, DomainId, Narrow, Occupant, OutboundQueue, Reply, Scope, ScopeSet,
+    Shard, ShardBuilder, ShardCommand, ShardId, ShardLogic, VoiceEvent,
 };
 
 /// Connection counts to measure, identical to `bench-publication` so the two
@@ -190,5 +190,5 @@ impl ShardLogic for Realms {
             .unwrap_or(ScopeSet::NONE)
     }
 
-    fn observe(&mut self, _event: &VoiceEvent) {}
+    fn observe(&mut self, _event: &VoiceEvent, _out: &mut Reply) {}
 }

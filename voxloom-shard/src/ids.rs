@@ -64,6 +64,18 @@ impl ChannelId {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ChannelKey(pub u64);
 
+/// A flavor's name for a context action, stable across renders.
+///
+/// Same idea as [`ChannelKey`], for the same reason: the wire identifier is a
+/// free-form string the client stores and echoes back, and a flavor that used
+/// the label as the identifier would break its own buttons the day it renames
+/// one. The label stays a field; this is the identity.
+///
+/// REF: references/vendored/Mumble.proto : `ContextActionModify.action` and
+///   `ContextAction.action` are the same string.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ActionKey(pub u64);
+
 /// Who occupies a rendered user slot.
 ///
 /// This *is* the user's identity, which is why - unlike channels - users need no

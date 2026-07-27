@@ -317,6 +317,26 @@ fn inbound(
 
         ControlMessage::UserStats(request) => user_stats(&request, peer, runtime),
 
+        // An intent, so it goes to the shard, which alone knows what this
+        // connection was offered and what it can see. Nothing is validated here:
+        // the gateway holds no view, and guessing would only mean refusing a
+        // legitimate button.
+        //
+        // REF: references/mumble/src/murmur/Messages.cpp : `msgContextAction`
+        //   uses `MSG_SETUP`, so it counts as activity like any other intent.
+        ControlMessage::ContextAction(action) => {
+            let _delivered = runtime.send(
+                peer.shard(),
+                ShardCommand::InvokedAction {
+                    connection: peer.connection(),
+                    action: action.action,
+                    session: action.session.map(voxloom_shard::SessionId),
+                    channel: action.channel_id.map(ChannelId),
+                },
+            );
+            Vec::new()
+        }
+
         other => {
             refused(kind_of(&other), peer);
             vec![permission_denied(peer)]

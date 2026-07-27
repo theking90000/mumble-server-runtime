@@ -20,8 +20,8 @@ use voxloom_gateway::{
     ConnectionIdentity, ConnectionRouter, Gateway, GatewayConfig, RouteDecision, RuntimeHandle,
 };
 use voxloom_shard::{
-    ChannelKey, ConnectionId, DomainId, Narrow, Occupant, Scope, ScopeSet, ShardBuilder, ShardId,
-    ShardLogic, UserFlags, VoiceEvent,
+    ActionKey, ActionTarget, ChannelKey, ConnectionId, DomainId, Narrow, Occupant, On, Reply,
+    Scope, ScopeSet, ShardBuilder, ShardId, ShardLogic, UserFlags, VoiceEvent,
 };
 
 #[path = "support/client.rs"]
@@ -133,6 +133,11 @@ fn listener_scope() -> ScopeSet {
     ScopeSet::new(&[left, right]).unwrap_or(ScopeSet::NONE)
 }
 
+/// Offered on the server itself: swaps the caller's room.
+const SWAP: ActionKey = ActionKey(1);
+/// Offered on a user: names them back to whoever pressed it.
+const POKE: ActionKey = ActionKey(2);
+
 impl ShardLogic for Rooms {
     fn render(&mut self, out: &mut ShardBuilder<'_>) {
         let root = out.root("Rooms");
@@ -166,6 +171,13 @@ impl ShardLogic for Rooms {
             }
         }
 
+        for connection in self.here.clone() {
+            out.private(connection, |private| {
+                private.action(SWAP, "Swap side", On::SERVER);
+                private.action(POKE, "Poke", On::USER);
+            });
+        }
+
         for (room, members) in &rooms {
             out.audio_domain(voice_of(*room), members);
         }
@@ -183,7 +195,7 @@ impl ShardLogic for Rooms {
         }
     }
 
-    fn observe(&mut self, event: &VoiceEvent) {
+    fn observe(&mut self, event: &VoiceEvent, out: &mut Reply) {
         match event {
             VoiceEvent::Connected { connection } => self.here.push(*connection),
             VoiceEvent::Disconnected { connection, .. }
@@ -213,6 +225,22 @@ impl ShardLogic for Rooms {
             } => self
                 .roster
                 .set_self_state(*connection, *self_mute, *self_deaf),
+            VoiceEvent::InvokedAction {
+                connection,
+                action,
+                on,
+            } => match (*action, on) {
+                (SWAP, _) => {
+                    let room = self.roster.room(*connection).unwrap_or(0);
+                    self.roster.move_to(*connection, 1 - room.min(1));
+                    out.say(*connection, "Swapped.");
+                }
+                (POKE, ActionTarget::User(Occupant::Connection(target))) => {
+                    let name = self.roster.name(*target);
+                    out.say(*connection, &format!("Poked {name}."));
+                }
+                _ => out.refuse(*connection, "not that way"),
+            },
             other => eprintln!("test flavor ignores {other:?}"),
         }
     }
@@ -711,6 +739,86 @@ async fn a_deafened_client_is_given_nothing() -> Result<()> {
     assert!(
         alice.hear().await?.is_none(),
         "a deafened client must be given nothing at all"
+    );
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Context actions: declared in the render, invoked by the client
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn a_client_is_offered_the_buttons_the_flavor_declared_and_pressing_one_acts() -> Result<()> {
+    let harness = Harness::start().await?;
+    let mut alice = Client::connect(harness.address, "alice", None).await?;
+    alice
+        .settle("the menu to arrive", |model| model.actions.len() == 2)
+        .await?;
+    assert_eq!(
+        alice.model.actions.get("1").map(String::as_str),
+        Some("Swap side"),
+        "a flavor exposes a button without rendering a channel for it"
+    );
+
+    // Pressed from the server menu, which is where a Server action lives. The
+    // client fills in whatever the tree has selected, so the stray session below
+    // is exactly what a real one sends.
+    let own = alice.session();
+    alice.invoke_action("1", Some(own), None).await?;
+    alice
+        .settle("the answer to the button", |model| !model.said.is_empty())
+        .await?;
+    assert_eq!(
+        alice.model.said.first().map(|text| text.message.as_str()),
+        Some("Swapped."),
+        "the flavor answered through the reply, over the same socket"
+    );
+
+    // And the render followed: swapping rooms moves the client's whole view.
+    alice
+        .settle("the other room", |model| {
+            model.channel_named("Right").is_some()
+        })
+        .await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_button_pressed_on_a_user_names_that_user_to_the_flavor() -> Result<()> {
+    let harness = Harness::start().await?;
+    let mut alice = Client::connect(harness.address, "alice", None).await?;
+    let _bob = Client::connect(harness.address, "bob", None).await?;
+    alice
+        .settle("bob to appear", |model| model.user_named("bob").is_some())
+        .await?;
+    let bob_session = alice.model.user_named("bob").expect("bob is in the view");
+
+    alice.invoke_action("2", Some(bob_session), None).await?;
+    alice
+        .settle("the answer to the button", |model| !model.said.is_empty())
+        .await?;
+    assert_eq!(
+        alice.model.said.first().map(|text| text.message.as_str()),
+        Some("Poked bob."),
+        "the target arrived resolved, in the flavor's own vocabulary"
+    );
+
+    // A session nobody rendered. It must reach nothing at all: an answer that
+    // varied with existence would make the identifier an oracle.
+    alice.invoke_action("2", Some(4_000_000), None).await?;
+    alice.invoke_action("1", None, None).await?;
+    alice
+        .settle("the next answer", |model| model.said.len() == 2)
+        .await?;
+    assert_eq!(
+        alice.model.said.len(),
+        2,
+        "only the two legitimate presses were answered"
+    );
+    assert!(
+        alice.model.refused.is_empty(),
+        "an invisible target is not even refused: {:?}",
+        alice.model.refused
     );
     Ok(())
 }

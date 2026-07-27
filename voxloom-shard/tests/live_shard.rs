@@ -17,8 +17,9 @@ use std::sync::atomic::AtomicU64;
 
 use voxloom_protocol::ControlMessage;
 use voxloom_shard::{
-    ChannelKey, ConnectionId, DomainId, Narrow, Occupant, OutboundQueue, ScopeSet, SessionId,
-    Shard, ShardBuilder, ShardCommand, ShardId, ShardLogic, ShardView, VoiceEvent,
+    ActionKey, ActionTarget, ChannelKey, ConnectionId, DomainId, Narrow, Occupant, On,
+    OutboundQueue, Reply, ScopeSet, SessionId, Shard, ShardBuilder, ShardCommand, ShardId,
+    ShardLogic, ShardView, VoiceEvent,
 };
 
 #[path = "support/model.rs"]
@@ -113,7 +114,7 @@ impl ShardLogic for Realms {
             .map_or(ScopeSet::NONE, |realm| Realms::realm_scope(*realm))
     }
 
-    fn observe(&mut self, event: &VoiceEvent) {
+    fn observe(&mut self, event: &VoiceEvent, _out: &mut Reply) {
         self.world.events.push(event.clone());
     }
 }
@@ -302,7 +303,7 @@ impl ShardLogic for Arrivals {
         ScopeSet::new(&[voxloom_shard::Scope::ROOT]).unwrap_or(ScopeSet::NONE)
     }
 
-    fn observe(&mut self, event: &VoiceEvent) {
+    fn observe(&mut self, event: &VoiceEvent, _out: &mut Reply) {
         if let VoiceEvent::Connected { connection } = event {
             self.connected.insert(*connection);
             let _previous = self.observed.send_replace(self.connected.len());
@@ -773,7 +774,7 @@ fn a_refused_render_keeps_the_previous_view_and_closes_nothing() {
         fn observation(&mut self, _connection: ConnectionId) -> ScopeSet {
             Realms::realm_scope(0)
         }
-        fn observe(&mut self, _event: &VoiceEvent) {}
+        fn observe(&mut self, _event: &VoiceEvent, _out: &mut Reply) {}
     }
 
     let mut broken = Shard::new(ShardId(2), Broken);
@@ -789,6 +790,305 @@ fn a_refused_render_keeps_the_previous_view_and_closes_nothing() {
     );
     assert_eq!(broken.version(), 0, "the previous view is kept");
     assert_eq!(harness.shard.version(), version);
+}
+
+/// A flavor whose menu and answers are driven from the test.
+struct Menu {
+    offered: BTreeMap<ConnectionId, Vec<(ActionKey, String, On)>>,
+    invocations: Vec<VoiceEvent>,
+}
+
+impl ShardLogic for Menu {
+    fn render(&mut self, out: &mut ShardBuilder<'_>) {
+        let root = out.root("Lobby");
+        for connection in out.connections().to_vec() {
+            out.user(
+                root,
+                Occupant::Connection(connection),
+                &format!("player-{}", connection.0),
+                Narrow::Same,
+            );
+        }
+        for (connection, actions) in &self.offered {
+            out.private(*connection, |private| {
+                for (key, text, on) in actions {
+                    private.action(*key, text, *on);
+                }
+            });
+        }
+    }
+
+    fn observation(&mut self, _connection: ConnectionId) -> ScopeSet {
+        ScopeSet::new(&[voxloom_shard::Scope::ROOT]).expect("one scope")
+    }
+
+    fn observe(&mut self, event: &VoiceEvent, _out: &mut Reply) {
+        if matches!(event, VoiceEvent::InvokedAction { .. }) {
+            self.invocations.push(event.clone());
+        }
+    }
+}
+
+/// A shard with two connections and one button offered to the first.
+fn menu_shard() -> (
+    Shard<Menu>,
+    BTreeMap<ConnectionId, tokio::sync::mpsc::Receiver<ControlMessage>>,
+) {
+    let mut offered = BTreeMap::new();
+    offered.insert(
+        ConnectionId(1),
+        vec![(ActionKey(1), "Start".to_owned(), On::SERVER)],
+    );
+    let mut shard = Shard::new(
+        ShardId(4),
+        Menu {
+            offered,
+            invocations: Vec::new(),
+        },
+    );
+
+    let mut queues = BTreeMap::new();
+    for connection in [ConnectionId(1), ConnectionId(2)] {
+        let (queue, receiver) = OutboundQueue::with_capacity(1024);
+        shard.handle(ShardCommand::attach(connection, Arc::new(queue)));
+        queues.insert(connection, receiver);
+    }
+    (shard, queues)
+}
+
+fn menu_changes(receiver: &mut tokio::sync::mpsc::Receiver<ControlMessage>) -> Vec<(String, i32)> {
+    let mut changes = Vec::new();
+    while let Ok(message) = receiver.try_recv() {
+        if let ControlMessage::ContextActionModify(modify) = message {
+            changes.push((modify.action, modify.operation.unwrap_or_default()));
+        }
+    }
+    changes
+}
+
+#[test]
+fn an_offered_action_travels_once_and_is_withdrawn_when_it_stops_being_offered() {
+    let (mut shard, mut queues) = menu_shard();
+
+    let _first = shard.reconcile();
+    let one = queues.get_mut(&ConnectionId(1)).expect("attached");
+    assert_eq!(
+        menu_changes(one),
+        vec![("1".to_owned(), 0)],
+        "the button is offered on the turn it appears"
+    );
+    let two = queues.get_mut(&ConnectionId(2)).expect("attached");
+    assert!(
+        menu_changes(two).is_empty(),
+        "a private offer is private: the other connection hears nothing"
+    );
+
+    // Nothing changed: an unchanged menu must not be restated every turn.
+    let _idle = shard.reconcile();
+    let one = queues.get_mut(&ConnectionId(1)).expect("attached");
+    assert!(menu_changes(one).is_empty(), "the offer repeated itself");
+
+    shard.logic_mut().offered.clear();
+    let _withdrawn = shard.reconcile();
+    let one = queues.get_mut(&ConnectionId(1)).expect("attached");
+    assert_eq!(
+        menu_changes(one),
+        vec![("1".to_owned(), 1)],
+        "no longer rendering the action is how it is withdrawn"
+    );
+}
+
+#[test]
+fn an_invocation_is_checked_against_what_the_connection_was_actually_offered() {
+    let (mut shard, _queues) = menu_shard();
+    let _first = shard.reconcile();
+
+    // Offered to connection 1, so connection 2 naming it reaches nothing.
+    shard.handle(ShardCommand::InvokedAction {
+        connection: ConnectionId(2),
+        action: "1".to_owned(),
+        session: None,
+        channel: None,
+    });
+    // A name this server never wrote.
+    shard.handle(ShardCommand::InvokedAction {
+        connection: ConnectionId(1),
+        action: "not a number".to_owned(),
+        session: None,
+        channel: None,
+    });
+    // A key nobody was offered.
+    shard.handle(ShardCommand::InvokedAction {
+        connection: ConnectionId(1),
+        action: "99".to_owned(),
+        session: None,
+        channel: None,
+    });
+    assert!(
+        shard.logic_mut().invocations.is_empty(),
+        "none of these three may reach the flavor"
+    );
+
+    // The real one, with a stray selection the client attached on its own: a
+    // server action is offered nowhere else, so the selection is ignored rather
+    // than turning it into a user action.
+    let stranger = SessionId(4_000_000);
+    shard.handle(ShardCommand::InvokedAction {
+        connection: ConnectionId(1),
+        action: "1".to_owned(),
+        session: Some(stranger),
+        channel: None,
+    });
+
+    match shard.logic_mut().invocations.as_slice() {
+        [
+            VoiceEvent::InvokedAction {
+                connection,
+                action,
+                on,
+            },
+        ] => {
+            assert_eq!(*connection, ConnectionId(1));
+            assert_eq!(*action, ActionKey(1));
+            assert_eq!(*on, ActionTarget::Server);
+        }
+        other => panic!("expected exactly one invocation, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_user_action_named_on_an_invisible_session_reaches_nothing() {
+    let (mut shard, _queues) = menu_shard();
+    shard.logic_mut().offered.insert(
+        ConnectionId(1),
+        vec![(ActionKey(1), "Poke".to_owned(), On::USER)],
+    );
+    let _first = shard.reconcile();
+
+    shard.handle(ShardCommand::InvokedAction {
+        connection: ConnectionId(1),
+        action: "1".to_owned(),
+        session: Some(SessionId(4_000_000)),
+        channel: None,
+    });
+    assert!(
+        shard.logic_mut().invocations.is_empty(),
+        "an unseen session must not fall back to the server target: that would make a guessed \
+         identifier tell the client whether somebody exists"
+    );
+
+    // The same action on a session it does see, which is itself.
+    let visible = shard
+        .connection(ConnectionId(2))
+        .expect("attached")
+        .session();
+    shard.handle(ShardCommand::InvokedAction {
+        connection: ConnectionId(1),
+        action: "1".to_owned(),
+        session: Some(visible),
+        channel: None,
+    });
+    match shard.logic_mut().invocations.as_slice() {
+        [VoiceEvent::InvokedAction { on, .. }] => assert_eq!(
+            *on,
+            ActionTarget::User(Occupant::Connection(ConnectionId(2))),
+            "the flavor is told who, in its own vocabulary"
+        ),
+        other => panic!("expected exactly one invocation, got {other:?}"),
+    }
+}
+
+#[test]
+fn what_a_flavor_says_reaches_the_connection_it_named_and_nobody_else() {
+    // The flavor answers one event by refusing to its author, speaking to a
+    // third party, and addressing a connection that is not here at all.
+    struct Chatty;
+
+    impl ShardLogic for Chatty {
+        fn render(&mut self, out: &mut ShardBuilder<'_>) {
+            let root = out.root("Lobby");
+            for connection in out.connections().to_vec() {
+                out.user(
+                    root,
+                    Occupant::Connection(connection),
+                    &format!("player-{}", connection.0),
+                    Narrow::Same,
+                );
+            }
+        }
+        fn observation(&mut self, _connection: ConnectionId) -> ScopeSet {
+            ScopeSet::new(&[voxloom_shard::Scope::ROOT]).expect("one scope")
+        }
+        fn observe(&mut self, event: &VoiceEvent, out: &mut Reply) {
+            if let VoiceEvent::RequestedSelfState { connection, .. } = event {
+                out.refuse(*connection, "not while the round is running");
+                out.say(ConnectionId(2), "somebody just tried to mute themselves");
+                out.say(ConnectionId(404), "into the void");
+            }
+        }
+    }
+
+    let mut shard = Shard::new(ShardId(3), Chatty);
+    let mut queues = BTreeMap::new();
+    for connection in [ConnectionId(1), ConnectionId(2)] {
+        let (queue, receiver) = OutboundQueue::with_capacity(1024);
+        shard.handle(ShardCommand::attach(connection, Arc::new(queue)));
+        queues.insert(connection, receiver);
+    }
+    let _report = shard.reconcile();
+
+    let sessions: BTreeMap<ConnectionId, SessionId> = queues
+        .keys()
+        .map(|connection| {
+            (
+                *connection,
+                shard.connection(*connection).expect("attached").session(),
+            )
+        })
+        .collect();
+    for receiver in queues.values_mut() {
+        while receiver.try_recv().is_ok() {}
+    }
+
+    shard.handle(ShardCommand::RequestedSelfState {
+        connection: ConnectionId(1),
+        self_mute: Some(true),
+        self_deaf: None,
+    });
+
+    let mut delivered: BTreeMap<ConnectionId, Vec<ControlMessage>> = BTreeMap::new();
+    for (connection, receiver) in &mut queues {
+        while let Ok(message) = receiver.try_recv() {
+            delivered.entry(*connection).or_default().push(message);
+        }
+    }
+
+    match delivered.get(&ConnectionId(1)).map(Vec::as_slice) {
+        Some([ControlMessage::PermissionDenied(denied)]) => {
+            assert_eq!(denied.session, Some(sessions[&ConnectionId(1)].0));
+            assert_eq!(
+                denied.reason.as_deref(),
+                Some("not while the round is running")
+            );
+        }
+        other => panic!("the author must be refused, got {other:?}"),
+    }
+
+    match delivered.get(&ConnectionId(2)).map(Vec::as_slice) {
+        Some([ControlMessage::TextMessage(text)]) => {
+            assert_eq!(
+                text.actor, None,
+                "speech with no actor is what the client attributes to the server"
+            );
+            assert_eq!(
+                text.session,
+                vec![sessions[&ConnectionId(2)].0],
+                "a message aimed at one user names that user"
+            );
+            assert_eq!(text.message, "somebody just tried to mute themselves");
+        }
+        other => panic!("the third party must be told, got {other:?}"),
+    }
 }
 
 #[test]

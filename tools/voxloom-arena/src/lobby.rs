@@ -12,8 +12,8 @@ use std::sync::Arc;
 
 use voxloom_gateway::RuntimeHandle;
 use voxloom_shard::{
-    ChannelKey, ConnectionId, DomainId, Narrow, Occupant, Scope, ScopeSet, ShardBuilder,
-    ShardLogic, VoiceEvent,
+    ActionKey, ChannelKey, ConnectionId, DomainId, Narrow, Occupant, On, Reply, Scope, ScopeSet,
+    ShardBuilder, ShardLogic, VoiceEvent,
 };
 
 use crate::arena::Side;
@@ -23,6 +23,13 @@ const RED: ChannelKey = ChannelKey(1);
 const BLUE: ChannelKey = ChannelKey(2);
 const SPECTATE: ChannelKey = ChannelKey(3);
 const ENTER: ChannelKey = ChannelKey(4);
+
+/// The same door as the `ENTER` channel, as a button.
+///
+/// Offered per connection rather than shared, because that is what a context
+/// action is: a private declaration. A player who has not chosen a side is told
+/// so when they press it, which a channel cannot do.
+const JOIN: ActionKey = ActionKey(1);
 
 /// Everyone in the lobby hears everyone else.
 const LOBBY_VOICE: DomainId = DomainId(1);
@@ -140,6 +147,12 @@ impl ShardLogic for Lobby {
         out.channel_position(spectate, 3);
         out.channel_position(enter, 4);
 
+        for connection in self.waiting.keys().copied() {
+            out.private(connection, |private| {
+                private.action(JOIN, "Enter the Arena", On::SERVER);
+            });
+        }
+
         for (connection, intent) in &self.waiting {
             let placement = match intent {
                 Intent::Undecided => root,
@@ -166,7 +179,7 @@ impl ShardLogic for Lobby {
         ScopeSet::new(&[Scope::ROOT]).unwrap_or(ScopeSet::NONE)
     }
 
-    fn observe(&mut self, event: &VoiceEvent) {
+    fn observe(&mut self, event: &VoiceEvent, out: &mut Reply) {
         match event {
             VoiceEvent::Connected { connection } => {
                 let intent = self.chosen.get(*connection);
@@ -185,7 +198,13 @@ impl ShardLogic for Lobby {
             VoiceEvent::RequestedChannel {
                 connection,
                 channel,
-            } => self.requested(*connection, *channel),
+            } => self.requested(*connection, *channel, out),
+            // The button and the channel are two spellings of one intent, so
+            // they land in the same place. Anything else this build ever offers
+            // gets its own arm rather than a shared default.
+            VoiceEvent::InvokedAction {
+                connection, action, ..
+            } if *action == JOIN => self.requested(*connection, ENTER, out),
             // Granted, and stored where a migration will find it again.
             VoiceEvent::RequestedSelfState {
                 connection,
@@ -203,7 +222,7 @@ impl ShardLogic for Lobby {
 }
 
 impl Lobby {
-    fn requested(&mut self, connection: ConnectionId, channel: ChannelKey) {
+    fn requested(&mut self, connection: ConnectionId, channel: ChannelKey, out: &mut Reply) {
         let intent = match channel {
             RED => Intent::Join(Side::Red),
             BLUE => Intent::Join(Side::Blue),
@@ -212,8 +231,14 @@ impl Lobby {
                 let intent = self.intent(connection);
                 self.chosen.set(connection, intent);
                 match self.destinations.arena() {
-                    Some(arena) => self.runtime.move_connection(connection, arena),
-                    None => eprintln!("voxloom-arena: the arena shard does not exist yet"),
+                    Some(arena) => {
+                        out.say(connection, "Entering the arena.");
+                        self.runtime.move_connection(connection, arena);
+                    }
+                    // Refusing out loud rather than only in the server's log: the
+                    // player double-clicked and is owed an answer, and without one
+                    // the door simply looks broken.
+                    None => out.refuse(connection, "The arena is not running yet."),
                 }
                 return;
             }

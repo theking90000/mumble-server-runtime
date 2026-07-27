@@ -36,11 +36,20 @@ use std::collections::{BTreeMap, BTreeSet};
 use thiserror::Error;
 
 use crate::ids::{
-    ChannelId, ChannelKey, ConnectionId, Exhausted, Occupant, SessionId, ShardId, SharedIds,
+    ActionKey, ChannelId, ChannelKey, ConnectionId, Exhausted, Occupant, SessionId, ShardId,
+    SharedIds,
 };
 use crate::routing::{AudioRelation, DomainId};
 use crate::scope::{Scope, ScopeSet};
-use crate::view::{Channel, Overlay, ShardView, User, UserFlags};
+use crate::view::{Action, Actions, Channel, On, Overlay, ShardView, User, UserFlags};
+
+/// How many context actions one connection may be offered in a single render.
+///
+/// A bound rather than a taste: the whole turn goes into the connection's queue
+/// in one piece, and a queue that refuses an oversized batch closes the
+/// connection. Refusing the render is the failure that stays inside the flavor's
+/// own bug.
+pub const MAX_ACTIONS: usize = 64;
 
 /// How a child's scope relates to its parent's.
 ///
@@ -156,6 +165,12 @@ pub enum BuildError {
     },
 
     #[error(
+        "connection {connection:?} is offered more than {MAX_ACTIONS} context actions, which would \
+         not fit in one transition"
+    )]
+    TooManyActions { connection: ConnectionId },
+
+    #[error(
         "audio edge {sender:?} -> {receiver:?} would be discarded: the receiver cannot see the \
          sender, and the client drops audio from a session it does not know"
     )]
@@ -170,6 +185,9 @@ pub enum BuildError {
 pub struct Rendered {
     pub view: ShardView,
     pub overlays: BTreeMap<ConnectionId, Overlay>,
+    /// What each connection is offered. Never journalled, for the same reason an
+    /// overlay is not: it is recomputed per connection every turn.
+    pub actions: BTreeMap<ConnectionId, Actions>,
     pub audio: AudioRelation,
 }
 
@@ -188,6 +206,7 @@ pub struct ShardBuilder<'a> {
     connections: &'a [ConnectionId],
     view: ShardView,
     overlays: BTreeMap<ConnectionId, Overlay>,
+    actions: BTreeMap<ConnectionId, Actions>,
     audio: AudioRelation,
     keys_seen: BTreeSet<ChannelKey>,
     occupants_seen: BTreeSet<Occupant>,
@@ -210,6 +229,7 @@ impl<'a> ShardBuilder<'a> {
             connections,
             view: ShardView::empty(),
             overlays: BTreeMap::new(),
+            actions: BTreeMap::new(),
             audio: AudioRelation::default(),
             keys_seen: BTreeSet::new(),
             occupants_seen: BTreeSet::new(),
@@ -374,7 +394,9 @@ impl<'a> ShardBuilder<'a> {
         let mut private = PrivateBuilder {
             ids: self.ids,
             shard: self.shard,
+            connection,
             overlay: self.overlays.entry(connection).or_default(),
+            actions: self.actions.entry(connection).or_default(),
             error: &mut self.error,
         };
         build(&mut private);
@@ -423,6 +445,7 @@ impl<'a> ShardBuilder<'a> {
         Ok(Rendered {
             view: self.view,
             overlays: self.overlays,
+            actions: self.actions,
             audio: self.audio,
         })
     }
@@ -455,7 +478,9 @@ impl<'a> ShardBuilder<'a> {
 pub struct PrivateBuilder<'a> {
     ids: &'a SharedIds,
     shard: ShardId,
+    connection: ConnectionId,
     overlay: &'a mut Overlay,
+    actions: &'a mut Actions,
     error: &'a mut Option<BuildError>,
 }
 
@@ -523,6 +548,32 @@ impl PrivateBuilder<'_> {
         if let Some(entry) = self.overlay.users.get_mut(&user.session) {
             entry.flags = flags;
         }
+    }
+
+    /// Offer this connection a context action: a button that is not a channel to
+    /// double-click.
+    ///
+    /// Declared like everything else, and withdrawn by simply not declaring it
+    /// again. The flavor never emits a message; the difference with what this
+    /// connection was already offered is what travels.
+    ///
+    /// Offering the same key twice in one render is the last call winning, which
+    /// is the same rule a flavor already gets from rendering a user twice.
+    pub fn action(&mut self, key: ActionKey, text: &str, on: On) {
+        if self.actions.len() >= MAX_ACTIONS && !self.actions.contains_key(&key) {
+            self.error.get_or_insert(BuildError::TooManyActions {
+                connection: self.connection,
+            });
+            return;
+        }
+        self.actions.insert(
+            key,
+            Action {
+                key,
+                text: text.to_owned(),
+                on,
+            },
+        );
     }
 }
 
@@ -793,6 +844,48 @@ mod tests {
 
     fn everything() -> ScopeSet {
         ScopeSet::new(&[Scope::ROOT]).expect("one scope")
+    }
+
+    #[test]
+    fn a_flavor_offering_too_many_actions_fails_its_render_rather_than_the_connection() {
+        // The whole turn goes into the queue in one piece, and an oversized batch
+        // closes the connection. A refused render keeps the bug inside the flavor.
+        let ids = SharedIds::new();
+        let connections = [ConnectionId(1)];
+        let mut builder = ShardBuilder::new(&ids, ShardId(1), &connections);
+        builder.root("Lobby");
+        builder.private(ConnectionId(1), |private| {
+            for key in 0..=u64::try_from(MAX_ACTIONS).expect("small") {
+                private.action(ActionKey(key), "Do it", On::SERVER);
+            }
+        });
+
+        assert!(matches!(
+            builder.finish(&observations(&[(1, everything())])),
+            Err(BuildError::TooManyActions {
+                connection: ConnectionId(1)
+            })
+        ));
+    }
+
+    #[test]
+    fn offering_the_same_action_twice_keeps_the_last_word() {
+        let ids = SharedIds::new();
+        let connections = [ConnectionId(1)];
+        let mut builder = ShardBuilder::new(&ids, ShardId(1), &connections);
+        builder.root("Lobby");
+        builder.private(ConnectionId(1), |private| {
+            private.action(ActionKey(1), "First", On::SERVER);
+            private.action(ActionKey(1), "Second", On::USER);
+        });
+
+        let rendered = builder
+            .finish(&observations(&[(1, everything())]))
+            .expect("a render with one action");
+        let offered = &rendered.actions[&ConnectionId(1)];
+        assert_eq!(offered.len(), 1);
+        assert_eq!(offered[&ActionKey(1)].text, "Second");
+        assert_eq!(offered[&ActionKey(1)].on, On::USER);
     }
 
     #[test]

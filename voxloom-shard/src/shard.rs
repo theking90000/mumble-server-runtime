@@ -27,11 +27,12 @@
 //!    revoked route disappears immediately, which is always safe: cutting too
 //!    early means hearing less than your due, never more. A granted route is
 //!    inert until the receiver's cursor catches up.
-//! 3. The committed state of a connection is a **triplet** - cursor, observation,
-//!    overlay - and the three only advance together, once the queue has accepted
-//!    everything. This is what lets a lagging connection catch up naturally: the
-//!    shared part replays from the journal, the private part is recomputed from
-//!    `overlay_sent`, so an overlay never needs journalling.
+//! 3. The committed state of a connection is a **quadruplet** - cursor,
+//!    observation, overlay, offered actions - and the four only advance together,
+//!    once the queue has accepted everything. This is what lets a lagging
+//!    connection catch up naturally: the shared part replays from the journal,
+//!    the private parts are recomputed from what was last accepted, so neither an
+//!    overlay nor an action ever needs journalling.
 //! 4. An invalid render never replaces the current view: log it, keep the old
 //!    one, and do not close anything.
 //!
@@ -50,13 +51,16 @@ use voxloom_protocol::ControlMessage;
 use crate::build::{BuildError, ShardBuilder};
 use crate::compose::{collapse, filter};
 use crate::emit::emit;
-use crate::ids::{ChannelId, ChannelKey, ConnectionId, Occupant, SessionId, ShardId, SharedIds};
+use crate::ids::{
+    ActionKey, ChannelId, ChannelKey, ConnectionId, Occupant, SessionId, ShardId, SharedIds,
+};
 use crate::journal::Journal;
 use crate::plan::{PlanOp, plan, plan_elements};
 use crate::queue::{OutboundQueue, Refused};
+use crate::reply::Reply;
 use crate::routing::{AudioRelation, AudioRouting, Silence, compile};
 use crate::scope::ScopeSet;
-use crate::view::{Channel, Overlay, ShardView};
+use crate::view::{Actions, Channel, On, Overlay, ShardView, User};
 
 /// The floor between two publications.
 ///
@@ -120,6 +124,34 @@ pub enum VoiceEvent {
         self_mute: Option<bool>,
         self_deaf: Option<bool>,
     },
+    /// The client invoked a context action this shard had offered it.
+    ///
+    /// Everything is already resolved against what that connection was actually
+    /// granted and can actually see: the key was offered to it, the target is
+    /// visible to it, and the place matches the bits the flavor declared. What
+    /// the action *means* is the flavor's business alone, including doing
+    /// nothing and refusing through [`crate::reply::Reply::refuse`].
+    ///
+    /// REF: references/mumble/src/mumble/MainWindow.cpp : `context_triggered`
+    ///   sends back the identifier the server stored, with the selected user
+    ///   and channel.
+    InvokedAction {
+        connection: ConnectionId,
+        action: ActionKey,
+        on: ActionTarget,
+    },
+}
+
+/// What a context action was invoked on.
+///
+/// In the flavor's own vocabulary rather than the wire's: a key for a channel,
+/// an occupant for a user, exactly like [`VoiceEvent::RequestedChannel`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ActionTarget {
+    /// Nothing was selected: the action was invoked on the server itself.
+    Server,
+    Channel(ChannelKey),
+    User(Occupant),
 }
 
 /// What a flavor writes.
@@ -140,7 +172,11 @@ pub trait ShardLogic: Send + 'static {
     fn observation(&mut self, connection: ConnectionId) -> ScopeSet;
 
     /// A voice fact happened. The flavor alone decides what to do with it.
-    fn observe(&mut self, event: &VoiceEvent);
+    ///
+    /// `out` is the only way a flavor speaks: everything else it wants to change
+    /// belongs to the next [`ShardLogic::render`]. See [`Reply`] for why the two
+    /// doors are separate.
+    fn observe(&mut self, event: &VoiceEvent, out: &mut Reply);
 }
 
 /// A command for a shard's task.
@@ -197,6 +233,17 @@ pub enum ShardCommand {
         connection: ConnectionId,
         target: SessionId,
     },
+    /// The client invoked a context action. Validated against what this
+    /// connection was offered and what it can see, then reported to the flavor.
+    ///
+    /// The wire identifier travels as it arrived: the gateway does not know
+    /// which actions exist, and reading it back is part of the validation.
+    InvokedAction {
+        connection: ConnectionId,
+        action: String,
+        session: Option<SessionId>,
+        channel: Option<ChannelId>,
+    },
 }
 
 impl ShardCommand {
@@ -243,6 +290,9 @@ pub struct AttachedConnection {
     see: ScopeSet,
     /// What PRIVATE elements it has received.
     overlay_sent: Overlay,
+    /// What context actions it has been offered. Same discipline as the overlay:
+    /// what the client **holds**, not what the last render wanted it to hold.
+    actions_sent: Actions,
     /// What the client holds, when this shard cannot derive it from its own
     /// previous view: right after an attach, and right after a migration.
     ///
@@ -285,6 +335,12 @@ impl AttachedConnection {
         &self.overlay_sent
     }
 
+    /// The context actions this connection has actually been offered.
+    #[must_use]
+    pub fn actions_sent(&self) -> &Actions {
+        &self.actions_sent
+    }
+
     /// Whether the queue has refused something unrecoverable.
     #[must_use]
     pub fn must_close(&self) -> bool {
@@ -297,12 +353,13 @@ impl AttachedConnection {
         Arc::clone(&self.shared_cursor)
     }
 
-    /// Advance the committed triplet. The only place the three move, and they
+    /// Advance the committed quadruplet. The only place the four move, and they
     /// move together.
-    fn commit(&mut self, cursor: u64, see: ScopeSet, overlay: Overlay) {
+    fn commit(&mut self, cursor: u64, see: ScopeSet, overlay: Overlay, actions: Actions) {
         self.cursor = cursor;
         self.see = see;
         self.overlay_sent = overlay;
+        self.actions_sent = actions;
         self.shared_cursor.store(cursor, Ordering::Relaxed);
         // Whatever the client held before this transition is now described by
         // the triplet, so the transient copy is dropped rather than kept.
@@ -467,6 +524,12 @@ impl<L: ShardLogic> Shard<L> {
             ShardCommand::QueriedUserStats { connection, target } => {
                 self.queried_user_stats(connection, target);
             }
+            ShardCommand::InvokedAction {
+                connection,
+                action,
+                session,
+                channel,
+            } => self.invoked(connection, &action, session, channel),
         }
     }
 
@@ -502,13 +565,14 @@ impl<L: ShardLogic> Shard<L> {
                 cursor: self.version,
                 see: ScopeSet::NONE,
                 overlay_sent: Overlay::default(),
+                actions_sent: Actions::default(),
                 held: Some(held),
                 ready,
                 queue,
                 shared_cursor: cursor,
             },
         );
-        self.logic.observe(&VoiceEvent::Connected { connection });
+        self.tell(&VoiceEvent::Connected { connection });
     }
 
     /// Detach a connection: it stops hearing and being heard immediately.
@@ -531,11 +595,25 @@ impl<L: ShardLogic> Shard<L> {
 
         let held = attached.composed(&self.view);
         if let Some(handover) = handover {
+            // An action belongs to the shard that offered it, and the destination
+            // starts from an empty registry because that is what an attach says.
+            // Without this the client would keep buttons nobody can ever withdraw,
+            // and invoking one would reach a shard that never granted it.
+            let withdrawn = crate::emit::actions(&attached.actions_sent, &Actions::default());
+            if !withdrawn.is_empty()
+                && let Err(refused) = attached.queue.try_send_all(withdrawn)
+            {
+                eprintln!(
+                    "voxloom-shard: shard {:?}: {connection:?} leaves with context actions this \
+                     shard could not withdraw: {refused}",
+                    self.id
+                );
+            }
             // A closed receiver means the migration was abandoned between the
             // two commands; the connection is then attached nowhere, and its
             // own task tears it down.
             let _received = handover.view.send(held);
-            self.logic.observe(&VoiceEvent::Migrated {
+            self.tell(&VoiceEvent::Migrated {
                 connection,
                 to: handover.to,
             });
@@ -551,12 +629,17 @@ impl<L: ShardLogic> Shard<L> {
             // A connection on its way out has nothing to retry with, so a
             // refusal here is an outcome rather than a fault.
             match attached.queue.try_send_all(emit(&ops, attached.session)) {
-                Ok(()) => attached.commit(self.version, ScopeSet::NONE, Overlay::default()),
+                Ok(()) => attached.commit(
+                    self.version,
+                    ScopeSet::NONE,
+                    Overlay::default(),
+                    Actions::default(),
+                ),
                 Err(_refused) => attached.queue.mark_fatal(),
             }
         }
 
-        self.logic.observe(&VoiceEvent::Disconnected {
+        self.tell(&VoiceEvent::Disconnected {
             connection,
             reason: reason.to_owned(),
         });
@@ -576,7 +659,7 @@ impl<L: ShardLogic> Shard<L> {
             .map(|rendered| rendered.key);
 
         match key {
-            Some(key) => self.logic.observe(&VoiceEvent::RequestedChannel {
+            Some(key) => self.tell(&VoiceEvent::RequestedChannel {
                 connection,
                 channel: key,
             }),
@@ -614,20 +697,101 @@ impl<L: ShardLogic> Shard<L> {
             .or_else(|| attached.overlay_sent.channels.get(&channel))
     }
 
-    /// Whether this connection has been told about a session at all. The same
-    /// three places, and the same reason.
-    fn sees_session(&self, attached: &AttachedConnection, session: SessionId) -> bool {
-        let shared = self
-            .view
+    /// A user as this connection can see it. The same three places, and the same
+    /// reason.
+    fn seen_user<'a>(
+        &'a self,
+        attached: &'a AttachedConnection,
+        session: SessionId,
+    ) -> Option<&'a User> {
+        self.view
             .users
             .get(&session)
-            .is_some_and(|user| attached.see.sees(user.scope));
-        shared
-            || attached
-                .held
-                .as_ref()
-                .is_some_and(|held| held.users.contains_key(&session))
-            || attached.overlay_sent.users.contains_key(&session)
+            .filter(|user| attached.see.sees(user.scope))
+            .or_else(|| {
+                attached
+                    .held
+                    .as_ref()
+                    .and_then(|held| held.users.get(&session))
+            })
+            .or_else(|| attached.overlay_sent.users.get(&session))
+    }
+
+    /// Resolve an invocation against what this connection was granted and what
+    /// it can see, then report it.
+    ///
+    /// Three refusals, all silent to the client and audible to an operator, for
+    /// the same reason [`Shard::requested`] refuses: an answer that varied with
+    /// whether the target exists would turn a guessed identifier into an oracle.
+    ///
+    /// The target is chosen by the bits the flavor declared, most specific
+    /// first, rather than by what the message carries. The client reads the
+    /// tree's current selection whichever menu the action came from, so a server
+    /// action routinely arrives with a session and a channel it has nothing to
+    /// do with.
+    ///
+    /// REF: references/mumble/src/mumble/MainWindow.cpp : `context_triggered`
+    ///   fills `session` and `channel_id` from `qtvUsers->currentIndex()`, while
+    ///   server actions live in `qmServer` and are never told about it.
+    fn invoked(
+        &mut self,
+        connection: ConnectionId,
+        action: &str,
+        session: Option<SessionId>,
+        channel: Option<ChannelId>,
+    ) {
+        let Some(attached) = self.connections.get(&connection) else {
+            return;
+        };
+
+        let Some(key) = crate::emit::action_key(action) else {
+            eprintln!(
+                "voxloom-shard: shard {:?}: {connection:?} invoked {action:?}, which is not a name \
+                 this server writes",
+                self.id
+            );
+            return;
+        };
+        // What the client holds, not what the last render wanted it to hold: an
+        // action withdrawn in a turn this connection has not received yet is
+        // still legitimately on its screen. The flavor keeps the last word and
+        // can refuse out loud.
+        let Some(offered) = attached.actions_sent.get(&key) else {
+            eprintln!(
+                "voxloom-shard: shard {:?}: {connection:?} invoked action {key:?}, which it was \
+                 never offered",
+                self.id
+            );
+            return;
+        };
+        let on = offered.on;
+
+        let target = if let Some(session) = session.filter(|_| on.covers(On::USER)) {
+            // Named a user and the action is about users: it must be a user this
+            // connection has been told about, and no fallback softens that.
+            self.seen_user(attached, session)
+                .map(|user| ActionTarget::User(user.occupant))
+        } else if let Some(channel) = channel.filter(|_| on.covers(On::CHANNEL)) {
+            self.visible_channel(attached, channel)
+                .map(|rendered| ActionTarget::Channel(rendered.key))
+        } else if on.covers(On::SERVER) {
+            Some(ActionTarget::Server)
+        } else {
+            None
+        };
+
+        match target {
+            Some(on) => self.tell(&VoiceEvent::InvokedAction {
+                connection,
+                action: key,
+                on,
+            }),
+            None => eprintln!(
+                "voxloom-shard: shard {:?}: {connection:?} invoked action {key:?} on a target it \
+                 cannot see, or that the action was not offered on",
+                self.id
+            ),
+        }
     }
 
     /// Answer "what may I do in that channel", from the current render.
@@ -641,7 +805,7 @@ impl<L: ShardLogic> Shard<L> {
             return;
         };
         match self.visible_channel(attached, channel) {
-            Some(rendered) => self.reply(attached, crate::emit::permission_query(rendered)),
+            Some(rendered) => self.answer(attached, crate::emit::permission_query(rendered)),
             None => eprintln!(
                 "voxloom-shard: shard {:?}: {connection:?} queried permissions on channel \
                  {channel:?}, which it cannot see",
@@ -655,8 +819,8 @@ impl<L: ShardLogic> Shard<L> {
         let Some(attached) = self.connections.get(&connection) else {
             return;
         };
-        if self.sees_session(attached, target) {
-            self.reply(attached, crate::emit::user_stats(target));
+        if self.seen_user(attached, target).is_some() {
+            self.answer(attached, crate::emit::user_stats(target));
         } else {
             eprintln!(
                 "voxloom-shard: shard {:?}: {connection:?} queried stats about session {target:?}, \
@@ -672,12 +836,53 @@ impl<L: ShardLogic> Shard<L> {
     /// Refusing it is an outcome, not a fault: a query the client can simply ask
     /// again is worth less than the transitions queued ahead of it, so a
     /// congested connection drops the answer instead of being torn down for it.
-    fn reply(&self, attached: &AttachedConnection, message: ControlMessage) {
+    fn answer(&self, attached: &AttachedConnection, message: ControlMessage) {
         if let Err(refused) = attached.queue.try_send_all(vec![message]) {
             eprintln!(
                 "voxloom-shard: shard {:?}: dropping an answer for {:?}: {refused}",
                 self.id, attached.id
             );
+        }
+    }
+
+    /// Report an event to the flavor, and deliver whatever it said.
+    ///
+    /// The single door between the runtime and the business model: the flavor
+    /// takes the event, updates its own state, and writes into a [`Reply`] that
+    /// borrows nothing, so what it says is delivered here rather than from
+    /// inside its own call.
+    ///
+    /// A word aimed at a connection this shard does not hold is dropped with a
+    /// log rather than refused loudly. That is the normal shape of a departure:
+    /// [`Shard::detach`] removes the connection **before** reporting it, so a
+    /// flavor saying goodbye is speaking to a socket that is already leaving.
+    fn tell(&mut self, event: &VoiceEvent) {
+        let mut reply = Reply::default();
+        self.logic.observe(event, &mut reply);
+
+        for (connection, words) in reply.drain() {
+            let Some(attached) = self.connections.get(&connection) else {
+                eprintln!(
+                    "voxloom-shard: shard {:?}: dropping {} word(s) for {connection:?}, which is \
+                     not attached here",
+                    self.id,
+                    words.len()
+                );
+                continue;
+            };
+            let messages: Vec<ControlMessage> = words
+                .iter()
+                .map(|word| crate::emit::spoken(attached.session, word))
+                .collect();
+            // Same bargain as an answer: speech the client can live without is
+            // worth less than the transitions queued ahead of it.
+            if let Err(refused) = attached.queue.try_send_all(messages) {
+                eprintln!(
+                    "voxloom-shard: shard {:?}: dropping what the flavor said to {connection:?}: \
+                     {refused}",
+                    self.id
+                );
+            }
         }
     }
 
@@ -702,7 +907,7 @@ impl<L: ShardLogic> Shard<L> {
             );
             return;
         }
-        self.logic.observe(&VoiceEvent::RequestedSelfState {
+        self.tell(&VoiceEvent::RequestedSelfState {
             connection,
             self_mute,
             self_deaf,
@@ -713,11 +918,12 @@ impl<L: ShardLogic> Shard<L> {
     fn retry(&mut self, connection: ConnectionId) {
         let head = self.journal.head();
         if let Some(attached) = self.connections.get_mut(&connection) {
-            // The overlay is whatever it last received: a retry replays the
-            // shared journal, and any overlay change will arrive with the next
+            // The private parts are whatever it last received: a retry replays the
+            // shared journal, and any private change will arrive with the next
             // render. Cloning here keeps `push` free of a self-borrow.
             let overlay = attached.overlay_sent.clone();
-            let _outcome = push(attached, &self.journal, head, &overlay);
+            let actions = attached.actions_sent.clone();
+            let _outcome = push(attached, &self.journal, head, &overlay, &actions);
         }
     }
 
@@ -774,8 +980,21 @@ impl<L: ShardLogic> Shard<L> {
                 (None, None) => false,
             }
         });
+        // Offering or withdrawing a button changes neither the shared view nor
+        // any observation, so without this term the render would be believed
+        // unchanged and the menu would never move.
+        let actions_changed = attached.iter().any(|connection| {
+            let fresh = rendered.actions.get(connection);
+            let sent = self.connections.get(connection).map(|c| &c.actions_sent);
+            match (fresh, sent) {
+                (Some(fresh), Some(sent)) => fresh != sent,
+                (Some(fresh), None) => !fresh.is_empty(),
+                (None, Some(sent)) => !sent.is_empty(),
+                (None, None) => false,
+            }
+        });
 
-        if ops.is_empty() && moved.is_empty() && !overlays_changed {
+        if ops.is_empty() && moved.is_empty() && !overlays_changed && !actions_changed {
             return ReconcileReport {
                 version: self.version,
                 ..ReconcileReport::default()
@@ -868,14 +1087,21 @@ impl<L: ShardLogic> Shard<L> {
                 .get(&attached.id)
                 .cloned()
                 .unwrap_or_default();
+            let actions = rendered
+                .actions
+                .get(&attached.id)
+                .cloned()
+                .unwrap_or_default();
             let outcome = if moved_set.contains(&attached.id) {
                 let new_see = observations
                     .get(&attached.id)
                     .copied()
                     .unwrap_or(ScopeSet::NONE);
-                replan(attached, &previous, &self.view, head, new_see, &overlay)
+                replan(
+                    attached, &previous, &self.view, head, new_see, &overlay, &actions,
+                )
             } else {
-                push(attached, &self.journal, head, &overlay)
+                push(attached, &self.journal, head, &overlay, &actions)
             };
             if outcome == Outcome::Close {
                 attached.queue.mark_fatal();
@@ -912,6 +1138,7 @@ fn push(
     journal: &Journal,
     head: u64,
     overlay: &Overlay,
+    actions: &Actions,
 ) -> Outcome {
     let Ok(replayed) = journal.replay(attached.cursor, head) else {
         // Below the tail: unrepairable from deltas, and dying anyway.
@@ -923,18 +1150,23 @@ fn push(
     let mut ops = crate::compose::splice(shared, private);
     collapse(&mut ops);
 
-    if ops.is_empty() {
+    let session = attached.session;
+    let mut messages = emit(&ops, session);
+    // Buttons ride with the view rather than beside it: one refusal, one retry,
+    // and a menu that can never describe a turn the client did not receive.
+    messages.extend(crate::emit::actions(&attached.actions_sent, actions));
+
+    if messages.is_empty() {
         // Nothing visible changed for it. Advance the cursor anyway, otherwise
         // a connection that sees nothing change would drift off the tail of the
         // journal and be closed for no reason.
-        attached.commit(head, attached.see, overlay.clone());
+        attached.commit(head, attached.see, overlay.clone(), actions.clone());
         return Outcome::Advanced;
     }
 
-    let session = attached.session;
-    match attached.queue.try_send_all(emit(&ops, session)) {
+    match attached.queue.try_send_all(messages) {
         Ok(()) => {
-            attached.commit(head, attached.see, overlay.clone());
+            attached.commit(head, attached.see, overlay.clone(), actions.clone());
             Outcome::Advanced
         }
         Err(Refused::Congested { .. }) => Outcome::Congested,
@@ -959,6 +1191,7 @@ fn replan(
     head: u64,
     new_see: ScopeSet,
     overlay: &Overlay,
+    actions: &Actions,
 ) -> Outcome {
     let from = attached.composed(before);
     let to = after.restrict(new_see).compose(overlay);
@@ -969,20 +1202,23 @@ fn replan(
         .collect();
     collapse(&mut ops);
 
-    if ops.is_empty() {
-        attached.commit(head, new_see, overlay.clone());
+    let session = attached.session;
+    let mut messages = emit(&ops, session);
+    messages.extend(crate::emit::actions(&attached.actions_sent, actions));
+
+    if messages.is_empty() {
+        attached.commit(head, new_see, overlay.clone(), actions.clone());
         return Outcome::Advanced;
     }
 
-    let session = attached.session;
-    match attached.queue.try_send_all(emit(&ops, session)) {
+    match attached.queue.try_send_all(messages) {
         // Rule 3: the triplet advances together, and only here. The guide's
         // sketch assigns the new observation before sending; doing that would
         // let a congested connection keep the new observation with the old
         // view, and the next fast-path filter would use a scope set the client
         // was never told about.
         Ok(()) => {
-            attached.commit(head, new_see, overlay.clone());
+            attached.commit(head, new_see, overlay.clone(), actions.clone());
             Outcome::Advanced
         }
         Err(Refused::Congested { .. }) => Outcome::Congested,

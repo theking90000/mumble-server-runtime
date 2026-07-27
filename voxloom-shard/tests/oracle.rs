@@ -31,7 +31,7 @@ use std::sync::Arc;
 
 use voxloom_protocol::ControlMessage;
 use voxloom_shard::{
-    ChannelKey, ConnectionId, DomainId, Narrow, Occupant, OutboundQueue, PlanOp, ScopeSet,
+    ChannelKey, ConnectionId, DomainId, Narrow, Occupant, OutboundQueue, PlanOp, Reply, ScopeSet,
     ShardBuilder, ShardCommand, ShardId, ShardLogic, ShardView, VoiceEvent, collapse, emit, filter,
     plan, plan_elements, splice,
 };
@@ -162,7 +162,7 @@ impl ShardLogic for TestLogic {
             .unwrap_or(ScopeSet::NONE)
     }
 
-    fn observe(&mut self, _event: &VoiceEvent) {}
+    fn observe(&mut self, _event: &VoiceEvent, _out: &mut Reply) {}
 }
 
 // ---------------------------------------------------------------------------

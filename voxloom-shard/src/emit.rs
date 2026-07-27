@@ -20,9 +20,10 @@
 use voxloom_protocol::ControlMessage;
 use voxloom_protocol::messages::tcp;
 
-use crate::ids::{ChannelId, SessionId};
+use crate::ids::{ActionKey, ChannelId, SessionId};
 use crate::plan::{ChannelPatch, PlanOp, UserPatch};
-use crate::view::{Channel, User};
+use crate::reply::Word;
+use crate::view::{Action, Actions, Channel, User};
 
 /// Effective-permission bits, as the Mumble client understands them.
 ///
@@ -97,6 +98,110 @@ pub fn user_stats(session: SessionId) -> ControlMessage {
     ControlMessage::UserStats(tcp::UserStats {
         session: Some(session.0),
         ..Default::default()
+    })
+}
+
+/// Spell what a flavor said to one connection.
+///
+/// Speech carries no actor, which is precisely what makes the client attribute
+/// it to the server, and it names the recipient's session, which is what makes
+/// the client file it as addressed to them rather than as an announcement.
+///
+/// REF: references/mumble/src/mumble/Messages.cpp : `msgTextMessage` resolves
+///   the actor and falls back to `tr("Server", "message from")` when there is
+///   none.
+/// REF: references/mumble/src/murmur/RPC.cpp : `Server::sendTextMessage` adds
+///   the recipient's session when the message is aimed at one user.
+/// REF: references/vendored/Mumble.proto : `PermissionDenied.DenyType.Text`
+///   means "denied for another reason, see the reason field".
+#[must_use]
+pub fn spoken(to: SessionId, word: &Word) -> ControlMessage {
+    match word {
+        Word::Say(text) => ControlMessage::TextMessage(tcp::TextMessage {
+            session: vec![to.0],
+            message: text.clone(),
+            ..Default::default()
+        }),
+        Word::Refuse(reason) => ControlMessage::PermissionDenied(tcp::PermissionDenied {
+            session: Some(to.0),
+            reason: Some(reason.clone()),
+            r#type: Some(i32::from(tcp::permission_denied::DenyType::Text)),
+            ..Default::default()
+        }),
+    }
+}
+
+/// The wire name of an action key.
+///
+/// The client stores this string verbatim and hands it back on invocation, so it
+/// is the only thing that has to survive the round trip. Decimal because it is
+/// the shortest form that reads back unambiguously.
+///
+/// REF: references/mumble/src/mumble/Messages.cpp : `msgContextActionModify`
+///   stores `msg.action()` in the menu entry's data.
+/// REF: references/mumble/src/mumble/MainWindow.cpp : `context_triggered` sends
+///   that same data back as `ContextAction.action`.
+#[must_use]
+pub fn action_name(key: ActionKey) -> String {
+    key.0.to_string()
+}
+
+/// Read back what a client echoed, refusing anything this server did not write.
+#[must_use]
+pub fn action_key(name: &str) -> Option<ActionKey> {
+    name.parse::<u64>().ok().map(ActionKey)
+}
+
+/// What one connection must be told so its menu matches `fresh`.
+///
+/// A relabelled action is withdrawn and offered again rather than offered twice:
+/// the client builds a **new** menu entry on every `Add` and does not look for
+/// an existing one, so a second `Add` on a live key would leave the user with
+/// two buttons doing the same thing.
+///
+/// Withdrawals come first for the same reason: a rename must not race its own
+/// removal.
+///
+/// REF: references/mumble/src/mumble/Messages.cpp : `msgContextActionModify`
+///   allocates `new QAction` per `Add` and appends it to the context lists;
+///   `removeContextAction` deletes every entry whose data matches.
+#[must_use]
+pub fn actions(sent: &Actions, fresh: &Actions) -> Vec<ControlMessage> {
+    let mut withdrawn: Vec<ControlMessage> = Vec::new();
+    let mut offered: Vec<ControlMessage> = Vec::new();
+
+    for (key, action) in sent {
+        if fresh.get(key) != Some(action) {
+            withdrawn.push(withdraw_action(*key));
+        }
+    }
+    for (key, action) in fresh {
+        if sent.get(key) != Some(action) {
+            offered.push(offer_action(action));
+        }
+    }
+
+    withdrawn.extend(offered);
+    withdrawn
+}
+
+fn offer_action(action: &Action) -> ControlMessage {
+    ControlMessage::ContextActionModify(tcp::ContextActionModify {
+        action: action_name(action.key),
+        text: Some(action.text.clone()),
+        context: Some(action.on.bits()),
+        operation: Some(i32::from(tcp::context_action_modify::Operation::Add)),
+    })
+}
+
+fn withdraw_action(key: ActionKey) -> ControlMessage {
+    ControlMessage::ContextActionModify(tcp::ContextActionModify {
+        action: action_name(key),
+        // A removal names the action and nothing else: the client matches on the
+        // identifier alone.
+        text: None,
+        context: None,
+        operation: Some(i32::from(tcp::context_action_modify::Operation::Remove)),
     })
 }
 
@@ -269,6 +374,7 @@ mod tests {
     use super::*;
     use crate::ids::{ChannelKey, ConnectionId, Occupant};
     use crate::scope::Scope;
+    use crate::view::On;
     use crate::view::UserFlags;
 
     fn channel(id: u32, parent: u32) -> Channel {
@@ -322,6 +428,113 @@ mod tests {
             perm::TRAVERSE,
             "a channel it can see is a channel it has traversed"
         );
+    }
+
+    fn offered(key: u64, text: &str, on: On) -> (ActionKey, Action) {
+        let key = ActionKey(key);
+        (
+            key,
+            Action {
+                key,
+                text: text.to_owned(),
+                on,
+            },
+        )
+    }
+
+    fn modifications(messages: &[ControlMessage]) -> Vec<(String, Option<String>, i32)> {
+        messages
+            .iter()
+            .map(|message| match message {
+                ControlMessage::ContextActionModify(modify) => (
+                    modify.action.clone(),
+                    modify.text.clone(),
+                    modify.operation.unwrap_or_default(),
+                ),
+                other => panic!("expected a context action, got {other:?}"),
+            })
+            .collect()
+    }
+
+    const ADD: i32 = tcp::context_action_modify::Operation::Add as i32;
+    const REMOVE: i32 = tcp::context_action_modify::Operation::Remove as i32;
+
+    #[test]
+    fn an_unchanged_offer_says_nothing() {
+        let fresh: Actions = [offered(1, "Kick", On::USER)].into_iter().collect();
+        assert!(
+            actions(&fresh.clone(), &fresh).is_empty(),
+            "a menu that did not move must cost nothing"
+        );
+    }
+
+    #[test]
+    fn a_new_action_is_offered_and_a_dropped_one_withdrawn() {
+        let sent: Actions = [offered(1, "Kick", On::USER)].into_iter().collect();
+        let fresh: Actions = [offered(2, "Start", On::SERVER)].into_iter().collect();
+
+        assert_eq!(
+            modifications(&actions(&sent, &fresh)),
+            vec![
+                ("1".to_owned(), None, REMOVE),
+                ("2".to_owned(), Some("Start".to_owned()), ADD),
+            ],
+            "withdrawals come first, so a rename cannot race its own removal"
+        );
+    }
+
+    #[test]
+    fn a_relabelled_action_is_withdrawn_before_being_offered_again() {
+        // The client builds a NEW menu entry per Add and never looks for an
+        // existing one, so an Add alone would leave two buttons doing the same
+        // thing.
+        let sent: Actions = [offered(1, "Join", On::SERVER)].into_iter().collect();
+        let fresh: Actions = [offered(1, "Join the arena", On::SERVER)]
+            .into_iter()
+            .collect();
+
+        assert_eq!(
+            modifications(&actions(&sent, &fresh)),
+            vec![
+                ("1".to_owned(), None, REMOVE),
+                ("1".to_owned(), Some("Join the arena".to_owned()), ADD),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_place_change_travels_like_a_relabelling() {
+        let sent: Actions = [offered(1, "Poke", On::USER)].into_iter().collect();
+        let fresh: Actions = [offered(1, "Poke", On::USER.and(On::CHANNEL))]
+            .into_iter()
+            .collect();
+
+        let messages = actions(&sent, &fresh);
+        assert_eq!(messages.len(), 2, "{messages:?}");
+        match messages.last() {
+            Some(ControlMessage::ContextActionModify(modify)) => assert_eq!(
+                modify.context,
+                Some(On::USER.and(On::CHANNEL).bits()),
+                "the offer must carry every place it is offered in"
+            ),
+            other => panic!("expected an offer, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn an_action_name_reads_back_and_nothing_else_does() {
+        assert_eq!(action_key(&action_name(ActionKey(7))), Some(ActionKey(7)));
+        assert_eq!(
+            action_key(&action_name(ActionKey(u64::MAX))),
+            Some(ActionKey(u64::MAX))
+        );
+        for hostile in ["", "1;drop", "-1", " 1", "0x1", "99999999999999999999999"] {
+            assert_eq!(
+                action_key(hostile),
+                None,
+                "{hostile:?} is not a name this server writes"
+            );
+        }
     }
 
     #[test]

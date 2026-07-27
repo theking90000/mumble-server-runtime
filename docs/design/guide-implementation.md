@@ -1246,29 +1246,58 @@ contredisaient, c'est la règle qui a gagné.
 - **Resync de nonce OCB2** : un datagramme d'un pair lié qui ne déchiffre plus
   est jeté avec un log. Le `resync` du `Ping` TCP vaut donc 0 en vérité.
 - **Messages de contrôle client encore refusés.** Ce qui est traité aujourd'hui :
-  `Ping`, `UserState` (entrée de canal, self-mute, self-deafen), `PermissionQuery`
-  et `UserStats`. Tout le reste reçoit un `PermissionDenied` journalisé. Le
-  backlog, par ordre de valeur décroissante :
+  `Ping`, `UserState` (entrée de canal, self-mute, self-deafen), `PermissionQuery`,
+  `UserStats` et `ContextAction`. Tout le reste reçoit un `PermissionDenied`
+  journalisé. Le backlog, par ordre de valeur décroissante :
 
   | message | ce qu'il demande |
   |---|---|
-  | `TextMessage` | Résoudre les cibles dans la vue de l'émetteur, un événement pour laisser le flavor filtrer ou rerouter, puis la livraison dans les files des destinataires. Demande un envoi **non fatal** dans `queue.rs` : un texte perdu se redemande, il ne justifie pas de fermer la connexion. |
-  | `ContextAction` / `ContextActionModify` | Le canal d'intention déclaratif de la spec 16.13, et le seul moyen pour un flavor d'exposer un bouton qui ne soit pas un canal à double-cliquer. Le registre d'actions devient un état rendu **par connexion**, diffé comme un overlay, avec révalidation contre la génération à l'invocation. |
+  | `TextMessage` **entrant** | Résoudre les cibles dans la vue de l'émetteur, un événement pour laisser le flavor filtrer ou rerouter, puis la livraison. Le sens sortant existe déjà (`Reply::say`), et l'envoi non fatal que ce point réclamait est en place : `Shard::answer` et `Shard::tell` journalisent et jettent au lieu de fermer. |
   | `ChannelState` / `ChannelRemove` / `UserRemove` | Créer, renommer, kick. Même forme que `RequestedChannel` (un événement, le flavor tranche), donc bon marché, mais sans utilisateur concret aujourd'hui. |
   | `UserState` visant une autre session | Mute serveur, déplacement d'autrui. Refusé explicitement, pas par omission. |
   | `RequestBlob` | La `ShardView` ne porte ni commentaire, ni texture, ni description : il n'y a rien à répondre tant qu'elle ne les porte pas. |
   | `UserList` / `BanList` / `ACL` / `QueryUsers` | Administration d'utilisateurs enregistrés. Aucun registre n'existe, donc le refus **est** la réponse correcte (spec 16.10 à 16.14). |
 
   Piège à connaître : `perm::DEFAULT` annonce `TEXT_MESSAGE` au client, alors que
-  `TextMessage` est refusé. La boîte de dialogue existe donc dans l'interface et
-  répond `PermissionDenied`. Retirer le bit serait plus honnête, mais changerait
-  aussi ce que `ServerSync` annonce ; à trancher en même temps que `TextMessage`.
+  `TextMessage` entrant est refusé. La boîte de dialogue existe donc dans
+  l'interface et répond `PermissionDenied`. Retirer le bit serait plus honnête,
+  mais changerait aussi ce que `ServerSync` annonce ; à trancher en même temps que
+  `TextMessage`.
+
+### 18.2 La règle des deux portes
+
+Un flavor a exactement deux surfaces d'écriture, et toute fonctionnalité nouvelle
+entre par l'une des deux plutôt que par une méthode de plus sur `ShardLogic` :
+
+> **Si c'est un état, c'est le rendu. Si c'est un événement daté, c'est `Reply`.**
+
+Un état se redit à chaque tour tant qu'il est vrai, donc il se déclare dans
+`render` et le diff se charge du reste : c'est le cas des canaux, des utilisateurs,
+des drapeaux, et désormais des actions de contexte, déclarées par connexion dans
+`private()` et diffées comme un overlay. Une parole ne se redit pas : elle est dite
+une fois, à une date, et aucun rendu ultérieur ne peut la réémettre ; elle passe
+donc par `Reply` (`say`, `refuse`), que le shard vide une fois `observe` revenu.
+
+Deux conséquences à connaître :
+
+- Un `Add` de `ContextActionModify` crée une **nouvelle** entrée de menu côté
+  client, sans chercher si elle existe déjà. Renommer une action est donc un
+  `Remove` suivi d'un `Add`, jamais un `Add` seul, sinon le joueur se retrouve
+  avec deux boutons identiques.
+- `context_triggered` lit la sélection courante de l'arbre quel que soit le menu
+  d'où vient l'action. Une action serveur arrive donc régulièrement avec une
+  session et un canal qui ne la concernent pas : la cible est choisie par les bits
+  déclarés, du plus spécifique au moins, et non par ce que le message porte.
+
+`Reply` ne peut pas déplacer une connexion : c'est une orchestration entre deux
+shards que seul le runtime connaît, et `voxloom-shard` n'a aucun canal vers lui.
+Un flavor qui migre garde donc son `RuntimeHandle` (§17.4).
 - **Le proptest ne consomme pas `SimulatedMumbleClient`** (R2, même raison). Le
   modèle strict de `voxloom-shard/tests/support/model.rs` applique les vrais
   messages de contrôle et juge chaque état intermédiaire ; le brancher sur le
   vérificateur officiel reste à faire.
 
-### 18.2 Mesure
+### 18.3 Mesure
 
 `ci/bench-shard.sh` fait tourner les deux modèles sur le **même** changement
 métier (un membre change de realm), aux mêmes tailles. Apple Silicon, profil
