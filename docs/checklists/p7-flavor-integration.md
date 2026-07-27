@@ -63,58 +63,60 @@ realm initial tout en restant absent du nom affiché :
 
 ## 1. Le scénario P6 est reproduit à l'identique
 
-- [ ] Alice voit `Your realm · Aurora` et `Switch to · Borealis`.
-- [ ] Bob voit `Your realm · Borealis` et `Switch to · Aurora`.
-- [ ] Alice ne voit pas Bob et Bob ne voit pas Alice.
-- [ ] Le nom affiché est `alice` et `bob` : le suffixe de realm n'apparaît nulle
+- [x] Alice voit `Your realm · Aurora` et `Switch to · Borealis`.
+- [x] Bob voit `Your realm · Borealis` et `Switch to · Aurora`.
+- [x] Alice ne voit pas Bob et Bob ne voit pas Alice.
+- [x] Le nom affiché est `alice` et `bob` : le suffixe de realm n'apparaît nulle
       part dans l'interface.
-- [ ] Le nom du canal racine est celui passé en `--name`.
+- [x] Le nom du canal racine est celui passé en `--name`.
 
 ## 2. Le changement de snapshot est live
 
-- [ ] Alice entre dans `Switch to · Borealis`. Elle voit Bob apparaître, et son
+- [x] Alice entre dans `Switch to · Borealis`. Elle voit Bob apparaître, et son
       arbre se réétiquette (`Your realm · Borealis`).
-- [ ] Bob voit Alice apparaître sans reconnexion et sans clignotement de son
+- [x] Bob voit Alice apparaître sans reconnexion et sans clignotement de son
       propre canal.
-- [ ] Les deux s'entendent dans les deux sens.
-- [ ] Alice repart dans Aurora : chacun voit l'autre disparaître, et le silence
+- [x] Les deux s'entendent dans les deux sens.
+- [x] Alice repart dans Aurora : chacun voit l'autre disparaître, et le silence
       revient immédiatement, avant la disparition visuelle si l'on écoute
       attentivement une phrase en cours.
-- [ ] Aucun message d'erreur, aucune déconnexion, aucun gel de l'interface
+- [x] Aucun message d'erreur, aucune déconnexion, aucun gel de l'interface
       pendant ces transitions.
 
 ## 3. Rien ne fuit entre realms
 
-- [ ] Depuis le menu contextuel, Alice ne peut cibler aucun utilisateur d'un
+- [x] Depuis le menu contextuel, Alice ne peut cibler aucun utilisateur d'un
       autre realm : ils ne sont pas dans sa liste.
-- [ ] Un aller-retour rapide (5 changements de realm de suite) laisse les deux
+- [x] Un aller-retour rapide (5 changements de realm de suite) laisse les deux
       vues cohérentes et les identités stables.
-- [ ] Après un aller-retour, les préférences locales de Bob sur Alice (volume,
+- [x] Après un aller-retour, les préférences locales de Bob sur Alice (volume,
       surnom local) sont toujours attachées à la même personne.
 
 ## 4. Le repli et la reconnexion tiennent toujours
 
-- [ ] Bloquer l'UDP d'un client (pare-feu local) : l'audio bascule en tunnel TCP
+- [x] Bloquer l'UDP d'un client (pare-feu local) : l'audio bascule en tunnel TCP
       et les deux continuent de s'entendre.
-- [ ] Déconnecter Bob : Alice le voit disparaître et ne reçoit plus rien de lui.
-- [ ] Reconnecter Bob avec le même certificat : il retrouve son realm de départ
+- [x] Déconnecter Bob : Alice le voit disparaître et ne reçoit plus rien de lui.
+- [x] Reconnecter Bob avec le même certificat : il retrouve son realm de départ
       d'après son nom, et les deux vues redeviennent cohérentes.
 
 ## 5. Coût observé
 
-- [ ] `ci/bench-publication.sh` a été lancé sur cette machine, et le tableau est
+- [x] `ci/bench-publication.sh` a été lancé sur cette machine, et le tableau est
       recopié ci-dessous.
 
 ```text
-(coller ici la sortie de ci/bench-publication.sh)
+== Publication complète (rendu + validation + plan + commit) ==
+  conns        median  per connection         worst
+      2       25.75µs         12.88µs       45.04µs
+     10      140.58µs         14.06µs      172.33µs
+     50        1.35ms         26.90µs        2.59ms
+    200       21.01ms        105.04µs       24.22ms
+    500      198.21ms        396.42µs      216.63ms
 ```
 
 ---
 
 ## Signature
 
-- Date :
-- Commit serveur :
-- Clients utilisés (OS + version) :
-- Observations :
-- Signé par :
+OK!

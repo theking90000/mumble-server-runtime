@@ -4,8 +4,11 @@
 > reprend doit savoir. Autorité : la spec et la roadmap (`docs/`) ; ce fichier ne
 > fait que pointer l'état courant. Mettre à jour à chaque fin de tâche.
 
-**Phase courante : P7 (intégration de flavors et publication atomique), T1 à T7
-verts, T8 en attente du seul checkpoint humain.
+**Phase courante : P8 (flavor Minecraft).
+P7 est close : T1 à T8 verts et checklist humaine signée le 2026-07-27
+(`docs/checklists/p7-flavor-integration.md`) — le scénario Aurora/Borealis est
+rejoué de bout en bout à travers la seule API publique de flavor, sans aucune
+branche métier dans `voxloom-server`.
 P6 est close : T1 à T8 verts, checklist humaine signée le 2026-07-26 sur deux
 clients officiels macOS et Windows (`docs/checklists/p6-live-views.md`, serveur
 `9b59527`).
@@ -26,8 +29,7 @@ Voxloom possède l'état vocal, tandis que chaque flavor compilé possède son �
 métier. La roadmap détaille désormais T1 à T8, du contrat minimal au checkpoint
 live du flavor de référence.
 
-**P7 T1 à T7 sont implémentées ; T8 est fait côté code et attend sa checklist
-humaine.** Le pipeline complet existe et tourne :
+**P7 est close.** Le pipeline complet tourne :
 
 - `voxloom-flavor` : `VoiceFlavor` (snapshot opaque, `render`, `observe`),
   `SnapshotSource` (le runtime demande le snapshot courant quand il vient
@@ -53,8 +55,10 @@ humaine.** Le pipeline complet existe et tourne :
   `ServerSync` : un seul chemin de rendu. `ci/bench-publication.sh` mesure le
   coût d'une publication complète (2 à 500 connexions).
 
-**Reste pour clore P7 :** dérouler et signer
-`docs/checklists/p7-flavor-integration.md` sur deux clients officiels.
+**Checkpoint humain signé** sur deux clients officiels : vues divergentes,
+changement de realm à chaud dans les deux sens, audio coupé avant le retrait
+visuel, repli tunnel TCP, déconnexion/reconnexion, et coût de publication relevé
+sur la machine de test.
 
 Deux points à connaître avant de reprendre :
 
