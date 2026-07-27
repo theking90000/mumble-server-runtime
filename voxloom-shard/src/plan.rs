@@ -106,7 +106,7 @@ impl UserPatch {
 }
 
 /// One view mutation. Not a Mumble message: spelling these on the wire is
-/// [`crate::emit`]'s job.
+/// [`mod@crate::emit`]'s job.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PlanOp {
     CreateChannel(Channel),

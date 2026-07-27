@@ -33,10 +33,10 @@
 //! exactly the atomicity the output transaction already requires (invariant 20):
 //!
 //! - **Blob-backed fields** (channel description, user comment, user texture).
-//!   The view carries a [`BlobRef`], an opaque handle the transport is supposed
+//!   The view carries a [`voxloom_render::BlobRef`], an opaque handle the transport is supposed
 //!   to resolve; there is no blob store yet, and inventing an encoding for the
 //!   `*_hash` wire fields would advertise content the server cannot serve.
-//! - **Clearing every channel link.** See [`channel_links`] for why that one
+//! - **Clearing every channel link.** See `channel_links` for why that one
 //!   needs the committed view, and why an empty `links` list is not the way.
 
 use thiserror::Error;

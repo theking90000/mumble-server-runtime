@@ -1,6 +1,6 @@
 //! Translating a composed transition into Mumble control messages.
 //!
-//! [`crate::plan`] deliberately stops at view mutations: a [`PlanOp`] says *what
+//! [`mod@crate::plan`] deliberately stops at view mutations: a [`PlanOp`] says *what
 //! changes*, never *which frame carries it*. This module is the only place in
 //! the crate that knows both vocabularies, and keeping it pure - no socket, no
 //! queue - is what lets the ordering rules be tested against the message stream
