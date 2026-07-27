@@ -18,6 +18,7 @@ use voxloom_protocol::{
     ControlMessage, UdpMessage, decode_frame, decode_udp, encode_frame, encode_udp, parse_frame,
 };
 
+use crate::audio::{OPUS_FRAME_DURATION, VoiceClip};
 use crate::config::Config;
 use crate::scenario::Scenario;
 use crate::stats::ClientReport;
@@ -196,6 +197,7 @@ pub fn tls_connector() -> TlsConnector {
 
 pub async fn run(
     config: Arc<Config>,
+    voice_clip: Option<Arc<VoiceClip>>,
     connector: TlsConnector,
     client_number: usize,
     launch_at: Instant,
@@ -203,7 +205,15 @@ pub async fn run(
 ) -> ClientReport {
     tokio::time::sleep_until(launch_at).await;
     let mut report = ClientReport::default();
-    let result = run_inner(&config, connector, client_number, stop_at, &mut report).await;
+    let result = run_inner(
+        &config,
+        voice_clip,
+        connector,
+        client_number,
+        stop_at,
+        &mut report,
+    )
+    .await;
     match result {
         Ok(()) => report.completed = true,
         Err(error) => {
@@ -215,6 +225,7 @@ pub async fn run(
 
 async fn run_inner(
     config: &Config,
+    voice_clip: Option<Arc<VoiceClip>>,
     connector: TlsConnector,
     client_number: usize,
     stop_at: Instant,
@@ -268,7 +279,9 @@ async fn run_inner(
     );
 
     active.open_udp(report).await?;
-    active.run(config, client_number, stop_at, report).await
+    active
+        .run(config, voice_clip, client_number, stop_at, report)
+        .await
 }
 
 // REF: references/mumble/src/Mumble.proto:Version and Authenticate.
@@ -370,6 +383,7 @@ impl ActiveClient {
     async fn run(
         &mut self,
         config: &Config,
+        voice_clip: Option<Arc<VoiceClip>>,
         client_number: usize,
         stop_at: Instant,
         report: &mut ClientReport,
@@ -377,7 +391,7 @@ impl ActiveClient {
         let mut scenario = Scenario::new(config.scenario, client_number);
         let mut tcp_ping = interval(config.ping_interval);
         let mut udp_ping = interval(config.ping_interval);
-        let mut voice = config.voice_interval.map(interval);
+        let mut voice = voice_clip.as_ref().map(|_| interval(OPUS_FRAME_DURATION));
         let mut interaction = interval(config.interaction_interval);
         let mut deadline = Box::pin(tokio::time::sleep_until(stop_at));
         let mut udp_buffer = vec![0u8; 2048];
@@ -385,7 +399,7 @@ impl ActiveClient {
         let mut pending_tcp_ping: Option<(u64, Instant)> = None;
         let mut pending_udp_ping: Option<(u64, Instant)> = None;
         let mut frame_number = 0u64;
-        let voice_payload = vec![0u8; config.voice_bytes];
+        let mut voice_frame_index = 0usize;
         let talk_schedule = TalkSchedule::new(
             config.talk_percent,
             config.talk_spurt,
@@ -527,17 +541,22 @@ impl ActiveClient {
                 Event::Voice => {
                     let packet_frame = frame_number;
                     frame_number = frame_number.saturating_add(1);
-                    let voice_interval = config
-                        .voice_interval
-                        .context("voice event fired without --voice-interval")?;
                     if let Some(is_terminator) =
-                        talk_schedule.packet_at(voice_started.elapsed(), voice_interval)
+                        talk_schedule.packet_at(voice_started.elapsed(), OPUS_FRAME_DURATION)
                     {
+                        let clip = voice_clip
+                            .as_ref()
+                            .context("voice event fired without an Opus clip")?;
+                        let voice_payload = clip
+                            .packet(voice_frame_index)
+                            .context("prepared Opus clip has no packet")?
+                            .to_vec();
+                        voice_frame_index = clip.next_index(voice_frame_index);
                         self.send_udp(
                             &UdpMessage::Audio(udp::Audio {
                                 header: Some(udp::audio::Header::Target(0)),
                                 frame_number: packet_frame,
-                                opus_data: voice_payload.clone(),
+                                opus_data: voice_payload,
                                 is_terminator,
                                 ..Default::default()
                             }),

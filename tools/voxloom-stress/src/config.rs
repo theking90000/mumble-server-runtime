@@ -1,5 +1,6 @@
 use std::net::SocketAddr;
 use std::num::NonZeroUsize;
+use std::path::PathBuf;
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
@@ -53,9 +54,9 @@ pub struct Config {
     #[arg(long, default_value = "5s", value_parser = parse_nonzero_duration)]
     pub ping_interval: Duration,
 
-    /// Send dummy UDP voice packets at this interval. Omit to disable voice.
-    #[arg(long, value_parser = parse_nonzero_duration)]
-    pub voice_interval: Option<Duration>,
+    /// Raw concatenation of fixed-size Opus packets. Its presence enables voice.
+    #[arg(long)]
+    pub voice_file: Option<PathBuf>,
 
     /// Average percentage of time each client talks (0 to 100).
     #[arg(long, default_value = "5", value_parser = parse_percent)]
@@ -65,9 +66,9 @@ pub struct Config {
     #[arg(long, default_value = "2s", value_parser = parse_nonzero_duration)]
     pub talk_spurt: Duration,
 
-    /// Opaque dummy bytes placed in each UDP voice packet.
-    #[arg(long, default_value = "64", value_parser = parse_voice_bytes)]
-    pub voice_bytes: usize,
+    /// Bytes in each Opus packet from --voice-file.
+    #[arg(long, default_value = "30", value_parser = parse_voice_frame_bytes)]
+    pub voice_frame_bytes: NonZeroUsize,
 
     /// How often an interactive scenario may make its next stateful move.
     #[arg(long, default_value = "1s", value_parser = parse_nonzero_duration)]
@@ -133,14 +134,14 @@ fn parse_failure_threshold(value: &str) -> Result<f64, String> {
     Ok(threshold)
 }
 
-fn parse_voice_bytes(value: &str) -> Result<usize, String> {
+fn parse_voice_frame_bytes(value: &str) -> Result<NonZeroUsize, String> {
     let bytes = value
         .parse::<usize>()
-        .map_err(|error| format!("invalid voice payload size: {error}"))?;
+        .map_err(|error| format!("invalid Opus packet size: {error}"))?;
     if !(1..=1200).contains(&bytes) {
-        return Err("voice payload size must be between 1 and 1200 bytes".to_owned());
+        return Err("Opus packet size must be between 1 and 1200 bytes".to_owned());
     }
-    Ok(bytes)
+    NonZeroUsize::new(bytes).ok_or_else(|| "Opus packet size cannot be zero".to_owned())
 }
 
 fn parse_percent(value: &str) -> Result<u8, String> {
@@ -183,5 +184,12 @@ mod tests {
         assert_eq!(parse_percent("5"), Ok(5));
         assert_eq!(parse_percent("100"), Ok(100));
         assert!(parse_percent("101").is_err());
+    }
+
+    #[test]
+    fn opus_packet_size_is_bounded() {
+        assert_eq!(parse_voice_frame_bytes("30").map(NonZeroUsize::get), Ok(30));
+        assert!(parse_voice_frame_bytes("0").is_err());
+        assert!(parse_voice_frame_bytes("1201").is_err());
     }
 }

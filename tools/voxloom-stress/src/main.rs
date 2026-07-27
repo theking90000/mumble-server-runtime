@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 
+mod audio;
 mod client;
 mod config;
 mod scenario;
@@ -12,6 +13,7 @@ use clap::Parser;
 use tokio::task::JoinSet;
 use tokio::time::Instant;
 
+use crate::audio::VoiceClip;
 use crate::config::Config;
 use crate::stats::{ClientReport, Stats};
 
@@ -19,6 +21,12 @@ use crate::stats::{ClientReport, Stats};
 async fn main() -> Result<()> {
     let config = Arc::new(Config::parse());
     config.validate()?;
+    let voice_clip = config
+        .voice_file
+        .as_deref()
+        .map(|path| VoiceClip::load(path, config.voice_frame_bytes))
+        .transpose()?
+        .map(Arc::new);
     let _installed = rustls::crypto::ring::default_provider().install_default();
     let connector = client::tls_connector();
 
@@ -32,10 +40,14 @@ async fn main() -> Result<()> {
         "starting {clients} {:?} client(s) against {} over {:?}, then holding for {:?}",
         config.scenario, config.server, config.ramp, config.duration
     );
-    if let Some(interval) = config.voice_interval {
+    if let Some(clip) = &voice_clip {
         println!(
-            "dummy UDP voice enabled: {} bytes every {:?}, {}% talk time in {:?} spurts per client",
-            config.voice_bytes, interval, config.talk_percent, config.talk_spurt
+            "Opus UDP voice enabled: {} frames of {} bytes every {:?}, {}% talk time in {:?} spurts per client",
+            clip.frames(),
+            clip.frame_bytes(),
+            audio::OPUS_FRAME_DURATION,
+            config.talk_percent,
+            config.talk_spurt
         );
     }
 
@@ -47,9 +59,18 @@ async fn main() -> Result<()> {
         };
         let launch_at = started + config.ramp.mul_f64(fraction);
         let config = Arc::clone(&config);
+        let voice_clip = voice_clip.as_ref().map(Arc::clone);
         let connector = connector.clone();
         let _task = tasks.spawn(async move {
-            client::run(config, connector, client_number, launch_at, stop_at).await
+            client::run(
+                config,
+                voice_clip,
+                connector,
+                client_number,
+                launch_at,
+                stop_at,
+            )
+            .await
         });
     }
 
