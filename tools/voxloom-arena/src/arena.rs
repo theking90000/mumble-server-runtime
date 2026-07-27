@@ -29,7 +29,6 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use voxloom_gateway::RuntimeHandle;
 use voxloom_shard::{
     ChannelKey, ConnectionId, DomainId, Narrow, Occupant, Reply, Scope, ScopeSet, ShardBuilder,
     ShardLogic, VoiceEvent,
@@ -91,7 +90,6 @@ pub enum Role {
 pub struct Arena {
     directory: Arc<Directory>,
     destinations: Arc<Destinations>,
-    runtime: RuntimeHandle,
     chosen: Arc<Choices>,
     roles: BTreeMap<ConnectionId, Role>,
 }
@@ -101,13 +99,11 @@ impl Arena {
     pub fn new(
         directory: Arc<Directory>,
         destinations: Arc<Destinations>,
-        runtime: RuntimeHandle,
         chosen: Arc<Choices>,
     ) -> Arena {
         Arena {
             directory,
             destinations,
-            runtime,
             chosen,
             roles: BTreeMap::new(),
         }
@@ -293,7 +289,7 @@ impl ShardLogic for Arena {
         }
     }
 
-    fn observe(&mut self, event: &VoiceEvent, _out: &mut Reply) {
+    fn observe(&mut self, event: &VoiceEvent, out: &mut Reply) {
         match event {
             VoiceEvent::Connected { connection } => {
                 let role = if self.directory.is_staff(*connection) {
@@ -319,7 +315,7 @@ impl ShardLogic for Arena {
             VoiceEvent::RequestedChannel {
                 connection,
                 channel,
-            } => self.requested(*connection, *channel),
+            } => self.requested(*connection, *channel, out),
             // Granted, including for a vanished admin: the flag rides in its own
             // overlay, so muting itself changes nothing anyone else can see.
             VoiceEvent::RequestedSelfState {
@@ -335,7 +331,7 @@ impl ShardLogic for Arena {
 }
 
 impl Arena {
-    fn requested(&mut self, connection: ConnectionId, channel: ChannelKey) {
+    fn requested(&mut self, connection: ConnectionId, channel: ChannelKey, out: &mut Reply) {
         if channel == BACK {
             // Remember what they were before the lobby takes them back, so a
             // round trip does not silently demote a player to a spectator.
@@ -345,8 +341,8 @@ impl Arena {
             };
             self.chosen.set(connection, intent);
             match self.destinations.lobby() {
-                Some(lobby) => self.runtime.move_connection(connection, lobby),
-                None => eprintln!("voxloom-arena: the lobby shard does not exist"),
+                Some(lobby) => out.switch(connection, lobby),
+                None => out.refuse(connection, "The lobby is not running."),
             }
             return;
         }

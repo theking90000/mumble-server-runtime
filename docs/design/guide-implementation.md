@@ -1289,9 +1289,24 @@ Deux conséquences à connaître :
   session et un canal qui ne la concernent pas : la cible est choisie par les bits
   déclarés, du plus spécifique au moins, et non par ce que le message porte.
 
-`Reply` ne peut pas déplacer une connexion : c'est une orchestration entre deux
-shards que seul le runtime connaît, et `voxloom-shard` n'a aucun canal vers lui.
-Un flavor qui migre garde donc son `RuntimeHandle` (§17.4).
+Le troisième verbe, `Reply::switch`, ne rentre dans aucune des deux portes de la
+même façon : déplacer une connexion est une orchestration entre deux shards que
+seul le runtime connaît. Il est donc enregistré comme un `Effect` et remis à qui a
+câblé le shard (`Shard::route_effects`, appelé par `RuntimeHandle::create_shard`).
+Un shard qui n'appartient à aucun runtime - un test, un banc - le journalise au
+lieu de faire comme si le déplacement avait eu lieu.
+
+Deux points sur ce câblage :
+
+- La fermeture ne tient qu'un `Weak` sur le runtime. Une référence forte fermerait
+  l'anneau *runtime → annuaire → tâche → shard → fermeture*, et le runtime
+  survivrait à toutes ses poignées, pour toujours.
+- Les paroles partent **avant** les effets. Un flavor qui dit au revoir et bascule
+  dans le même souffle a son message sur la socket avant que le déplacement soit
+  demandé.
+
+Aucun flavor n'a donc plus besoin de tenir un `RuntimeHandle` pour migrer : ni le
+lobby, ni l'arène, ni le flavor de test du gateway n'en gardent un.
 - **Le proptest ne consomme pas `SimulatedMumbleClient`** (R2, même raison). Le
   modèle strict de `voxloom-shard/tests/support/model.rs` applique les vrais
   messages de contrôle et juge chaque état intermédiaire ; le brancher sur le

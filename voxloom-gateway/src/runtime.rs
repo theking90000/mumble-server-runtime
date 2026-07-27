@@ -168,7 +168,8 @@ impl RuntimeHandle {
         let id = ShardId(self.inner.next_shard.fetch_add(1, Ordering::Relaxed));
         let (handle, wake, mailbox) = voxloom_shard::spawn_parts(id);
         let logic = build(handle.clone());
-        let shard = Shard::with_ids(id, logic, self.inner.ids.clone());
+        let mut shard = Shard::with_ids(id, logic, self.inner.ids.clone());
+        shard.route_effects(self.effects());
         let routing = shard.routing();
         let task = tokio::spawn(async move {
             let _shard = voxloom_shard::run(shard, wake, mailbox).await;
@@ -200,6 +201,31 @@ impl RuntimeHandle {
         if let Err(error) = refused {
             eprintln!("voxloom-gateway: cannot destroy shard {shard:?}: {error}");
         }
+    }
+
+    /// What a shard hands back when its flavor asks for something only the
+    /// runtime can do.
+    ///
+    /// Weak on purpose. The closure lives inside the shard, the shard inside its
+    /// task, and the task inside this runtime's directory: holding a strong
+    /// reference here would close that ring, and the runtime would outlive every
+    /// handle to it forever. An effect arriving after the runtime is gone has
+    /// nothing left to act on, which is exactly what a failed upgrade says.
+    fn effects(&self) -> voxloom_shard::Effects {
+        let runtime = Arc::downgrade(&self.inner);
+        Arc::new(move |effect| {
+            let Some(inner) = runtime.upgrade() else {
+                return;
+            };
+            match effect {
+                voxloom_shard::Effect::Move { connection, to } => {
+                    RuntimeHandle { inner }.move_connection(connection, to);
+                }
+                // The vocabulary is non-exhaustive: a shard that starts asking
+                // for something new must not have it silently ignored.
+                other => eprintln!("voxloom-gateway: no runtime support for {other:?}"),
+            }
+        })
     }
 
     /// Move a connection to another shard.

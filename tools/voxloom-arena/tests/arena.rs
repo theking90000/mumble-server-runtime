@@ -66,7 +66,6 @@ impl World {
             Arena::new(
                 Arc::clone(&self.directory),
                 Arc::clone(&self.destinations),
-                self.runtime_handle.clone(),
                 Arc::clone(&self.chosen),
             ),
             self.runtime_handle.ids().clone(),
@@ -79,7 +78,6 @@ impl World {
             Lobby::new(
                 Arc::clone(&self.directory),
                 Arc::clone(&self.destinations),
-                self.runtime_handle.clone(),
                 Arc::clone(&self.chosen),
             ),
             self.runtime_handle.ids().clone(),

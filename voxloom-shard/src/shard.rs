@@ -57,7 +57,7 @@ use crate::ids::{
 use crate::journal::Journal;
 use crate::plan::{PlanOp, plan, plan_elements};
 use crate::queue::{OutboundQueue, Refused};
-use crate::reply::Reply;
+use crate::reply::{Effects, Reply};
 use crate::routing::{AudioRelation, AudioRouting, Silence, compile};
 use crate::scope::ScopeSet;
 use crate::view::{Actions, Channel, On, Overlay, ShardView, User};
@@ -419,6 +419,10 @@ pub struct Shard<L: ShardLogic> {
     declared_silence: Silence,
     session_of: BTreeMap<ConnectionId, SessionId>,
     routing: watch::Sender<Arc<AudioRouting>>,
+    /// Where what this shard cannot do itself is sent. `None` for a shard that
+    /// belongs to no runtime, which is a real state - a test, a benchmark - and
+    /// not a missing wire, so it is reported rather than assumed away.
+    effects: Option<Effects>,
 }
 
 impl<L: ShardLogic> Shard<L> {
@@ -449,7 +453,17 @@ impl<L: ShardLogic> Shard<L> {
             declared_silence: Silence::default(),
             session_of: BTreeMap::new(),
             routing,
+            effects: None,
         }
+    }
+
+    /// Wire this shard's effects to a runtime.
+    ///
+    /// Kept out of the constructors on purpose: a shard is complete without one,
+    /// and only the code that owns several shards can honour a move between two
+    /// of them.
+    pub fn route_effects(&mut self, effects: Effects) {
+        self.effects = Some(effects);
     }
 
     #[must_use]
@@ -860,6 +874,9 @@ impl<L: ShardLogic> Shard<L> {
         let mut reply = Reply::default();
         self.logic.observe(event, &mut reply);
 
+        // Words first: a flavor that says goodbye and switches in the same
+        // breath must have the farewell on the socket before the connection is
+        // handed over.
         for (connection, words) in reply.drain() {
             let Some(attached) = self.connections.get(&connection) else {
                 eprintln!(
@@ -882,6 +899,17 @@ impl<L: ShardLogic> Shard<L> {
                      {refused}",
                     self.id
                 );
+            }
+        }
+
+        for effect in reply.drain_effects() {
+            match &self.effects {
+                Some(route) => route(effect),
+                None => eprintln!(
+                    "voxloom-shard: shard {:?}: dropping {effect:?}: this shard belongs to no \
+                     runtime, so nothing can carry it out",
+                    self.id
+                ),
             }
         }
     }

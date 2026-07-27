@@ -12,14 +12,16 @@
 //! returned, which keeps a flavor free of any borrow on the shard and lets a
 //! test drive `observe` with a scratch `Reply` and read back what came out.
 //!
-//! Nothing here reaches another shard: what the shard owns is the outbound queue
-//! of every connection attached to it, and that is exactly what these verbs use.
-//! Moving a connection is an orchestration between two shards, so it stays with
-//! the runtime handle that knows them both.
+//! Two of the three verbs need nothing but the outbound queues the shard already
+//! owns. The third, [`Reply::switch`], is an orchestration between two shards
+//! that only a runtime can carry out, so it is recorded as an [`Effect`] and
+//! handed to whoever wired the shard up. A shard that belongs to no runtime says
+//! so out loud rather than pretending the move happened.
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
-use crate::ids::ConnectionId;
+use crate::ids::{ConnectionId, ShardId};
 
 /// One thing a flavor said to one connection.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -30,10 +32,32 @@ pub enum Word {
     Refuse(String),
 }
 
+/// Something a flavor asked for that its shard cannot carry out alone.
+///
+/// Deliberately a value rather than a call: the flavor states what it wants, the
+/// runtime decides how, and a shard running outside one can report the gap
+/// instead of silently doing nothing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum Effect {
+    /// Hand a connection to another shard.
+    Move {
+        connection: ConnectionId,
+        to: ShardId,
+    },
+}
+
+/// Where a shard sends what it cannot do itself.
+///
+/// Called on the shard's task, so an implementation must not block and must not
+/// await: the gateway's own is a non-blocking send into the runtime's mailbox.
+pub type Effects = Arc<dyn Fn(Effect) + Send + Sync>;
+
 /// What a flavor said during one [`crate::shard::ShardLogic::observe`].
 #[derive(Debug, Default)]
 pub struct Reply {
     words: BTreeMap<ConnectionId, Vec<Word>>,
+    effects: Vec<Effect>,
 }
 
 impl Reply {
@@ -57,9 +81,19 @@ impl Reply {
             .push(Word::Refuse(reason.to_owned()));
     }
 
+    /// Hand a connection to another shard.
+    ///
+    /// Not a disconnect followed by a connect: the source hands over the view the
+    /// client still holds and the destination plans one transition from it. What
+    /// the flavor said in the same breath is delivered **first**, so a farewell
+    /// reaches the socket before the move is asked for.
+    pub fn switch(&mut self, connection: ConnectionId, to: ShardId) {
+        self.effects.push(Effect::Move { connection, to });
+    }
+
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.words.is_empty()
+        self.words.is_empty() && self.effects.is_empty()
     }
 
     /// What was said, per connection, in the order it was said. Empties the
@@ -67,6 +101,13 @@ impl Reply {
     #[must_use]
     pub fn drain(&mut self) -> BTreeMap<ConnectionId, Vec<Word>> {
         std::mem::take(&mut self.words)
+    }
+
+    /// What the flavor asked the runtime for, in the order it asked. Empties the
+    /// reply.
+    #[must_use]
+    pub fn drain_effects(&mut self) -> Vec<Effect> {
+        std::mem::take(&mut self.effects)
     }
 }
 
@@ -100,9 +141,18 @@ mod tests {
         let mut reply = Reply::default();
         assert!(reply.is_empty());
         reply.say(ConnectionId(1), "something");
+        reply.switch(ConnectionId(1), ShardId(2));
         assert!(!reply.is_empty());
 
         let _drained = reply.drain();
+        assert!(!reply.is_empty(), "the effects are still pending");
+        assert_eq!(
+            reply.drain_effects(),
+            vec![Effect::Move {
+                connection: ConnectionId(1),
+                to: ShardId(2)
+            }]
+        );
         assert!(
             reply.is_empty(),
             "a drained reply must not say the same thing twice"

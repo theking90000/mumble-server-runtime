@@ -79,7 +79,7 @@ pub use plan::{
     ChannelPatch, ElementId, OverlayOps, PlanOp, PlannedOp, UserPatch, plan, plan_elements,
 };
 pub use queue::{MAX_DEPTH_FOR_VOICE, OutboundQueue, Refused, VoiceAdmission};
-pub use reply::{Reply, Word};
+pub use reply::{Effect, Effects, Reply, Word};
 pub use routing::{AudioRelation, AudioRouting, DomainId, Silence, compile};
 pub use scope::{MAX_DEPTH, MAX_OBSERVED, Scope, ScopeSet, TooManyScopes};
 pub use shard::{

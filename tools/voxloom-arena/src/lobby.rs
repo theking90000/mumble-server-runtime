@@ -10,7 +10,6 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use voxloom_gateway::RuntimeHandle;
 use voxloom_shard::{
     ActionKey, ChannelKey, ConnectionId, DomainId, Narrow, Occupant, On, Reply, Scope, ScopeSet,
     ShardBuilder, ShardLogic, VoiceEvent,
@@ -57,7 +56,6 @@ impl Intent {
 pub struct Lobby {
     directory: Arc<Directory>,
     destinations: Arc<Destinations>,
-    runtime: RuntimeHandle,
     waiting: BTreeMap<ConnectionId, Intent>,
     /// What each connection asked for, read by the arena when it takes them.
     chosen: Arc<Choices>,
@@ -106,13 +104,11 @@ impl Lobby {
     pub fn new(
         directory: Arc<Directory>,
         destinations: Arc<Destinations>,
-        runtime: RuntimeHandle,
         chosen: Arc<Choices>,
     ) -> Lobby {
         Lobby {
             directory,
             destinations,
-            runtime,
             waiting: BTreeMap::new(),
             chosen,
         }
@@ -233,7 +229,7 @@ impl Lobby {
                 match self.destinations.arena() {
                     Some(arena) => {
                         out.say(connection, "Entering the arena.");
-                        self.runtime.move_connection(connection, arena);
+                        out.switch(connection, arena);
                     }
                     // Refusing out loud rather than only in the server's log: the
                     // player double-clicked and is owed an answer, and without one

@@ -17,7 +17,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use voxloom_gateway::tls::Identity;
 use voxloom_gateway::{
-    ConnectionIdentity, ConnectionRouter, Gateway, GatewayConfig, RouteDecision, RuntimeHandle,
+    ConnectionIdentity, ConnectionRouter, Gateway, GatewayConfig, RouteDecision,
 };
 use voxloom_shard::{
     ActionKey, ActionTarget, ChannelKey, ConnectionId, DomainId, Narrow, Occupant, On, Reply,
@@ -115,7 +115,6 @@ struct Rooms {
     here: Vec<ConnectionId>,
     /// Connections this shard should hand to the other one on request.
     elsewhere: Arc<std::sync::OnceLock<ShardId>>,
-    runtime: RuntimeHandle,
 }
 
 fn room_scope(room: u32) -> ScopeSet {
@@ -212,7 +211,7 @@ impl ShardLogic for Rooms {
                 // shortest way to reach a migration from a stock client.
                 _ => {
                     if let Some(other) = self.elsewhere.get() {
-                        self.runtime.move_connection(*connection, *other);
+                        out.switch(*connection, *other);
                     }
                 }
             },
@@ -302,13 +301,11 @@ impl Harness {
             roster: Arc::clone(&roster),
             here: Vec::new(),
             elsewhere: Arc::clone(&second_id),
-            runtime: runtime.clone(),
         });
         let second = runtime.create_shard(|_handle| Rooms {
             roster: Arc::clone(&roster),
             here: Vec::new(),
             elsewhere: Arc::clone(&first_id),
-            runtime: runtime.clone(),
         });
         let _set = second_id.set(second.shard());
         let _set = first_id.set(first.shard());

@@ -17,7 +17,7 @@ use std::sync::atomic::AtomicU64;
 
 use voxloom_protocol::ControlMessage;
 use voxloom_shard::{
-    ActionKey, ActionTarget, ChannelKey, ConnectionId, DomainId, Narrow, Occupant, On,
+    ActionKey, ActionTarget, ChannelKey, ConnectionId, DomainId, Effect, Narrow, Occupant, On,
     OutboundQueue, Reply, ScopeSet, SessionId, Shard, ShardBuilder, ShardCommand, ShardId,
     ShardLogic, ShardView, VoiceEvent,
 };
@@ -1089,6 +1089,117 @@ fn what_a_flavor_says_reaches_the_connection_it_named_and_nobody_else() {
         }
         other => panic!("the third party must be told, got {other:?}"),
     }
+}
+
+#[test]
+fn a_flavor_asking_for_a_move_reaches_the_runtime_that_wired_the_shard() {
+    struct Leaver;
+
+    impl ShardLogic for Leaver {
+        fn render(&mut self, out: &mut ShardBuilder<'_>) {
+            let root = out.root("Lobby");
+            for connection in out.connections().to_vec() {
+                out.user(
+                    root,
+                    Occupant::Connection(connection),
+                    "player",
+                    Narrow::Same,
+                );
+            }
+        }
+        fn observation(&mut self, _connection: ConnectionId) -> ScopeSet {
+            ScopeSet::new(&[voxloom_shard::Scope::ROOT]).expect("one scope")
+        }
+        fn observe(&mut self, event: &VoiceEvent, out: &mut Reply) {
+            if let VoiceEvent::RequestedSelfState { connection, .. } = event {
+                out.say(*connection, "Goodbye.");
+                out.switch(*connection, ShardId(9));
+            }
+        }
+    }
+
+    let mut shard = Shard::new(ShardId(8), Leaver);
+    let (queue, mut receiver) = OutboundQueue::with_capacity(1024);
+    shard.handle(ShardCommand::attach(ConnectionId(1), Arc::new(queue)));
+    let _report = shard.reconcile();
+
+    let asked: Arc<std::sync::Mutex<Vec<Effect>>> = Arc::new(std::sync::Mutex::new(Vec::new()));
+    shard.route_effects({
+        let asked = Arc::clone(&asked);
+        Arc::new(move |effect| {
+            asked
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .push(effect);
+        })
+    });
+
+    shard.handle(ShardCommand::RequestedSelfState {
+        connection: ConnectionId(1),
+        self_mute: Some(true),
+        self_deaf: None,
+    });
+
+    assert_eq!(
+        *asked
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner),
+        vec![Effect::Move {
+            connection: ConnectionId(1),
+            to: ShardId(9)
+        }]
+    );
+
+    // The farewell went out before the move was asked for, which is the whole
+    // reason words are delivered first.
+    let said = std::iter::from_fn(|| receiver.try_recv().ok())
+        .filter(|message| matches!(message, ControlMessage::TextMessage(_)))
+        .count();
+    assert_eq!(said, 1, "the farewell must be on the socket already");
+}
+
+#[test]
+fn a_shard_wired_to_no_runtime_drops_a_move_rather_than_pretending() {
+    // A shard outside a runtime is a real state, not a missing wire: a test, a
+    // benchmark. Nothing can carry the move out, so nothing may look as if it
+    // had, and the connection stays exactly where it is.
+    struct Leaver;
+
+    impl ShardLogic for Leaver {
+        fn render(&mut self, out: &mut ShardBuilder<'_>) {
+            let root = out.root("Lobby");
+            out.user(
+                root,
+                Occupant::Connection(ConnectionId(1)),
+                "player",
+                Narrow::Same,
+            );
+        }
+        fn observation(&mut self, _connection: ConnectionId) -> ScopeSet {
+            ScopeSet::new(&[voxloom_shard::Scope::ROOT]).expect("one scope")
+        }
+        fn observe(&mut self, event: &VoiceEvent, out: &mut Reply) {
+            if let VoiceEvent::RequestedSelfState { connection, .. } = event {
+                out.switch(*connection, ShardId(9));
+            }
+        }
+    }
+
+    let mut shard = Shard::new(ShardId(8), Leaver);
+    let (queue, _receiver) = OutboundQueue::with_capacity(1024);
+    shard.handle(ShardCommand::attach(ConnectionId(1), Arc::new(queue)));
+    let _report = shard.reconcile();
+
+    shard.handle(ShardCommand::RequestedSelfState {
+        connection: ConnectionId(1),
+        self_mute: Some(true),
+        self_deaf: None,
+    });
+
+    assert!(
+        shard.connection(ConnectionId(1)).is_some(),
+        "an effect nobody can carry out must leave the shard untouched"
+    );
 }
 
 #[test]

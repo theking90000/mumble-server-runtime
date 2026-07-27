@@ -75,7 +75,6 @@ async fn main() -> Result<()> {
         Lobby::new(
             Arc::clone(&directory),
             Arc::clone(&destinations),
-            runtime.clone(),
             Arc::clone(&chosen),
         )
     });
@@ -83,7 +82,6 @@ async fn main() -> Result<()> {
         Arena::new(
             Arc::clone(&directory),
             Arc::clone(&destinations),
-            runtime.clone(),
             Arc::clone(&chosen),
         )
     });
