@@ -752,6 +752,24 @@ async fn a_client_gets_its_own_statistics_and_only_a_name_for_others() -> Result
         .settle("bob to appear", |model| model.user_named("bob").is_some())
         .await?;
 
+    // What the client reports about its own side, in the keepalive it sends
+    // anyway. The server cannot measure any of it.
+    alice
+        .ping_reporting(voxloom_protocol::messages::tcp::Ping {
+            timestamp: Some(1),
+            good: Some(40),
+            late: Some(2),
+            lost: Some(3),
+            resync: Some(1),
+            udp_packets: Some(500),
+            tcp_packets: Some(7),
+            udp_ping_avg: Some(12.5),
+            udp_ping_var: Some(0.25),
+            tcp_ping_avg: Some(30.0),
+            tcp_ping_var: Some(1.5),
+        })
+        .await?;
+
     // Its own information window: the counters it already sees in every Ping.
     alice.request_user_stats(alice.session()).await?;
     alice
@@ -759,10 +777,31 @@ async fn a_client_gets_its_own_statistics_and_only_a_name_for_others() -> Result
         .await?;
     let own = alice.model.stats.first().expect("one answer").clone();
     assert_eq!(own.session, Some(alice.session()));
-    assert!(
-        own.from_client.is_some(),
-        "a connection may know how its own packets are arriving"
+    let from_client = own.from_client.expect("the server's own decryption tally");
+    assert_eq!(
+        from_client.resync,
+        Some(0),
+        "nonce resync is refused, so zero is the truth"
     );
+
+    // The other half is the client's own report, handed back. Useless on its
+    // own, and the only reason the information window shows the half above:
+    // it hides the whole block unless both are present.
+    let from_server = own.from_server.expect("what the client reported");
+    assert_eq!(from_server.good, Some(40));
+    assert_eq!(from_server.late, Some(2));
+    assert_eq!(from_server.lost, Some(3));
+    assert_eq!(from_server.resync, Some(1));
+    assert_eq!(own.udp_packets, Some(500));
+    assert_eq!(own.tcp_packets, Some(7));
+    assert_eq!(own.udp_ping_avg, Some(12.5));
+    assert_eq!(own.tcp_ping_avg, Some(30.0));
+
+    // Measured here, not reported: a fresh connection is online, idle, and
+    // sending no voice at all.
+    assert_eq!(own.bandwidth, Some(0), "nobody has spoken");
+    assert!(own.onlinesecs.is_some());
+    assert!(own.idlesecs.is_some());
 
     // Somebody else's, resolved by the shard against what alice can see.
     let bob_session = bob.session();

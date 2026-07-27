@@ -31,7 +31,7 @@ use voxloom_shard::{ChannelId, OutboundQueue, ShardCommand};
 use crate::config::GatewayConfig;
 use crate::handshake;
 use crate::limits;
-use crate::peer::{Peer, ShardPlane};
+use crate::peer::{ClientReport, Peer, ShardPlane};
 use crate::router::{ConnectionIdentity, ConnectionRouter, RouteDecision};
 use crate::runtime::RuntimeHandle;
 use crate::voice::{VoicePlane, generate_crypt_setup};
@@ -274,10 +274,18 @@ fn inbound(
     peer: &Arc<Peer>,
     runtime: &RuntimeHandle,
 ) -> Vec<ControlMessage> {
+    if unidles(&message) {
+        peer.record_activity(Instant::now());
+    }
+
     match message {
         // REF: references/mumble/src/murmur/Messages.cpp : `Server::msgPing`
-        //   answers with the timestamp and the OCB2 counters.
-        ControlMessage::Ping(ping) => vec![ControlMessage::Ping(ping_reply(&ping, peer))],
+        //   stores what the client reports about its own side, then answers with
+        //   the timestamp and the server's OCB2 counters.
+        ControlMessage::Ping(ping) => {
+            peer.record_report(reported(&ping));
+            vec![ControlMessage::Ping(ping_reply(&ping, peer))]
+        }
 
         ControlMessage::UserState(state) => user_state(&state, peer, runtime),
 
@@ -408,7 +416,7 @@ fn user_stats(
 ) -> Vec<ControlMessage> {
     let target = request.session.unwrap_or(peer.session().0);
     if target == peer.session().0 {
-        return vec![own_stats(peer)];
+        return vec![own_stats(peer, Instant::now())];
     }
 
     let _delivered = runtime.send(
@@ -421,20 +429,80 @@ fn user_stats(
     Vec::new()
 }
 
+/// Whether a message means somebody is still there.
+///
+/// A keepalive and the two questions a client asks on its own do not: a window
+/// left open polling for statistics would otherwise keep an idle user looking
+/// active forever.
+///
+/// REF: references/mumble/src/murmur/Messages.cpp : `MSG_SETUP` calls
+///   `resetIdleSeconds()` while `MSG_SETUP_NO_UNIDLE` does not, and the second
+///   is used by `msgPing`, `msgCryptSetup`, `msgVoiceTarget`,
+///   `msgPermissionQuery`, `msgCodecVersion`, `msgUserStats` and
+///   `msgRequestBlob`.
+fn unidles(message: &ControlMessage) -> bool {
+    !matches!(
+        message,
+        ControlMessage::Ping(_)
+            | ControlMessage::CryptSetup(_)
+            | ControlMessage::VoiceTarget(_)
+            | ControlMessage::PermissionQuery(_)
+            | ControlMessage::CodecVersion(_)
+            | ControlMessage::UserStats(_)
+            | ControlMessage::RequestBlob(_)
+    )
+}
+
+/// What a client reports about its own side of the link, in every `Ping`.
+///
+/// Kept verbatim, exactly as the reference server keeps it, because none of it
+/// is measurable from here: the loss the client sees, its own ping to us, the
+/// packets it counted. It only ever travels back to the client that sent it.
+///
+/// REF: references/mumble/src/murmur/Messages.cpp : `msgPing` assigns each of
+///   these straight from the message, then answers with the server's own
+///   counters.
+fn reported(ping: &tcp::Ping) -> ClientReport {
+    ClientReport {
+        good: ping.good.unwrap_or_default(),
+        late: ping.late.unwrap_or_default(),
+        lost: ping.lost.unwrap_or_default(),
+        resync: ping.resync.unwrap_or_default(),
+        udp_packets: ping.udp_packets.unwrap_or_default(),
+        tcp_packets: ping.tcp_packets.unwrap_or_default(),
+        udp_ping_avg: ping.udp_ping_avg.unwrap_or_default(),
+        udp_ping_var: ping.udp_ping_var.unwrap_or_default(),
+        tcp_ping_avg: ping.tcp_ping_avg.unwrap_or_default(),
+        tcp_ping_var: ping.tcp_ping_var.unwrap_or_default(),
+    }
+}
+
 /// What this connection may be told about itself.
 ///
-/// `from_client` is the server's own decryption tally for this peer, which is
-/// exactly what its `Ping` replies carry. `from_server` is deliberately absent:
-/// it would be the client's report of what *it* received, and this build stores
-/// nothing the client tells it about that, so filling it in would be inventing
-/// numbers.
+/// Three kinds of number, and they are not worth the same:
 ///
-/// REF: references/mumble/src/murmur/Messages.cpp : `msgUserStats` fills
-///   `from_client` from `csCrypt->uiGood/uiLate/uiLost` and `from_server` from
-///   the `uiRemote*` counters.
-fn own_stats(peer: &Peer) -> ControlMessage {
+/// - `from_client` is the **server's** decryption tally for this peer, the one
+///   thing here the client cannot know. It is the same triplet its `Ping`
+///   replies already carry.
+/// - `bandwidth` and the two times are measured here too.
+/// - everything else is the client's own report, handed straight back. It tells
+///   the client nothing new, but the information window hides the whole UDP
+///   block unless **both** halves are present, so the mirror is what makes the
+///   half that matters visible at all.
+///
+/// The certificate chain, the client version and the IP address are left out on
+/// purpose: a connection already knows all three about itself, and holding a DER
+/// chain per peer to fill a dialog is memory spent on nothing.
+///
+/// REF: references/mumble/src/mumble/UserInformation.cpp : the dialog calls
+///   `qgbUDP->setVisible(false)` unless `has_from_client() && has_from_server()`,
+///   and prints `bandwidth / 125.0` as kbit/s.
+fn own_stats(peer: &Peer, now: Instant) -> ControlMessage {
     let (good, late, lost) = peer.crypt_counters();
-    let online = peer.online_since().elapsed().as_secs();
+    let reported = peer.reported();
+    let (bandwidth, idle) = peer.traffic(now);
+    let seconds =
+        |duration: std::time::Duration| u32::try_from(duration.as_secs()).unwrap_or(u32::MAX);
 
     ControlMessage::UserStats(tcp::UserStats {
         session: Some(peer.session().0),
@@ -446,7 +514,21 @@ fn own_stats(peer: &Peer) -> ControlMessage {
             // placeholder, exactly as in the `Ping` reply.
             resync: Some(0),
         }),
-        onlinesecs: Some(u32::try_from(online).unwrap_or(u32::MAX)),
+        from_server: Some(tcp::user_stats::Stats {
+            good: Some(reported.good),
+            late: Some(reported.late),
+            lost: Some(reported.lost),
+            resync: Some(reported.resync),
+        }),
+        udp_packets: Some(reported.udp_packets),
+        tcp_packets: Some(reported.tcp_packets),
+        udp_ping_avg: Some(reported.udp_ping_avg),
+        udp_ping_var: Some(reported.udp_ping_var),
+        tcp_ping_avg: Some(reported.tcp_ping_avg),
+        tcp_ping_var: Some(reported.tcp_ping_var),
+        bandwidth: Some(bandwidth),
+        onlinesecs: Some(seconds(now.saturating_duration_since(peer.online_since()))),
+        idlesecs: Some(seconds(idle)),
         ..Default::default()
     })
 }
@@ -503,7 +585,7 @@ fn tunnelled(voice: &Arc<VoicePlane>, peer: &Arc<Peer>, raw: &[u8]) -> Vec<(Vec<
     }
 
     match decode_udp(raw) {
-        Ok(UdpMessage::Audio(audio)) => voice.route(peer, &audio, Instant::now()),
+        Ok(UdpMessage::Audio(audio)) => voice.route(peer, &audio, Instant::now(), raw.len()),
         Ok(UdpMessage::Ping(_)) => {
             // Connectivity pings belong on the UDP socket; one arriving here
             // measures nothing, so it is refused rather than answered.

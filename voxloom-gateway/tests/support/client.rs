@@ -323,6 +323,15 @@ impl Client {
         .await
     }
 
+    /// Report what this client sees of the link, the way its keepalive does.
+    ///
+    /// REF: references/mumble/src/mumble/ServerHandler.cpp : the client's `Ping`
+    ///   carries its own good/late/lost counters, packet counts and measured
+    ///   pings.
+    pub async fn ping_reporting(&mut self, report: tcp::Ping) -> Result<()> {
+        self.send(&ControlMessage::Ping(report)).await
+    }
+
     /// Read one message, applying it to the model.
     pub async fn receive(&mut self) -> Result<ControlMessage> {
         loop {

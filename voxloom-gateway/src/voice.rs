@@ -201,7 +201,7 @@ impl VoicePlane {
                 // This peer is reachable over UDP again, so its own audio goes
                 // back out that way.
                 peer.set_udp_mode(true);
-                self.route(peer, &audio, Instant::now())
+                self.route(peer, &audio, Instant::now(), plaintext.len())
             }
             Err(error) => {
                 eprintln!(
@@ -217,8 +217,17 @@ impl VoicePlane {
     ///
     /// Shared by the UDP plane and the TCP tunnel so both apply the same budget,
     /// the same target vocabulary and the same table.
-    pub fn route(&self, sender: &Arc<Peer>, audio: &udp::Audio, now: Instant) -> Vec<Datagram> {
-        if !sender.allow_voice(now) {
+    ///
+    /// `bytes` is the decoded packet as it arrived, billed to this connection's
+    /// throughput window whichever transport carried it.
+    pub fn route(
+        &self,
+        sender: &Arc<Peer>,
+        audio: &udp::Audio,
+        now: Instant,
+        bytes: usize,
+    ) -> Vec<Datagram> {
+        if !sender.allow_voice(now, bytes) {
             eprintln!(
                 "voxloom-gateway: session {:?}: voice packet dropped, budget exhausted",
                 sender.session()

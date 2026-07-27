@@ -21,7 +21,7 @@ use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use tokio::sync::watch;
 use voxloom_crypto::CryptState;
@@ -65,6 +65,33 @@ pub struct Peer {
     /// When this connection was registered, for the one statistic it may be
     /// told about itself.
     online_since: Instant,
+    /// The last numbers the client reported about its own side of the link.
+    reported: Mutex<ClientReport>,
+}
+
+/// What a client last told us about the connection, in its own `Ping`.
+///
+/// Every field is the client's claim, not a measurement of ours: the reference
+/// server stores them verbatim and hands them back in `UserStats`, which is what
+/// fills the "To Client" column and the ping statistics of the information
+/// window. Client-supplied numbers are only ever shown back to the client that
+/// supplied them, so a client that lies here lies to itself alone.
+///
+/// REF: references/mumble/src/murmur/Messages.cpp : `msgPing` assigns
+///   `uiRemoteGood/Late/Lost/Resync`, `dUDPPingAvg/Var`, `uiUDPPackets`,
+///   `dTCPPingAvg/Var` and `uiTCPPackets` straight from the message.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct ClientReport {
+    pub good: u32,
+    pub late: u32,
+    pub lost: u32,
+    pub resync: u32,
+    pub udp_packets: u32,
+    pub tcp_packets: u32,
+    pub udp_ping_avg: f32,
+    pub udp_ping_var: f32,
+    pub tcp_ping_avg: f32,
+    pub tcp_ping_var: f32,
 }
 
 /// Hand-written so key material never reaches a log. Everything printed here is
@@ -109,6 +136,7 @@ impl Peer {
             queue,
             plane: RwLock::new(plane),
             online_since: now,
+            reported: Mutex::new(ClientReport::default()),
         }
     }
 
@@ -116,6 +144,29 @@ impl Peer {
     #[must_use]
     pub fn online_since(&self) -> Instant {
         self.online_since
+    }
+
+    /// Store what the client reported about its own side of the link.
+    pub fn record_report(&self, report: ClientReport) {
+        *lock(&self.reported) = report;
+    }
+
+    #[must_use]
+    pub fn reported(&self) -> ClientReport {
+        *lock(&self.reported)
+    }
+
+    /// Voice throughput over the last second, in bytes per second, and how long
+    /// this connection has been idle.
+    #[must_use]
+    pub fn traffic(&self, now: Instant) -> (u32, Duration) {
+        let mut budget = lock(&self.budget);
+        (budget.bandwidth(now), budget.idle(now))
+    }
+
+    /// Note a control message that is not a keepalive.
+    pub fn record_activity(&self, now: Instant) {
+        lock(&self.budget).touch(now);
     }
 
     #[must_use]
@@ -192,8 +243,8 @@ impl Peer {
 
     /// Whether this peer may send one more voice packet right now.
     #[must_use]
-    pub fn allow_voice(&self, now: Instant) -> bool {
-        lock(&self.budget).allow(now)
+    pub fn allow_voice(&self, now: Instant, bytes: usize) -> bool {
+        lock(&self.budget).allow(now, bytes)
     }
 
     /// Record that this peer's audio is arriving over UDP again, or that it has
