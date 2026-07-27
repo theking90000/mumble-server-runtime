@@ -5,7 +5,11 @@
 > on en est arrivé là ; sur le modèle de visibilité, **c'est ce document-ci qui
 > fait foi**.
 >
-> **Statut : PROPOSITION.** Rien n'est implémenté.
+> **Statut : étapes 1 à 7 implémentées** dans `voxloom-shard` (branche
+> `shard-runtime`, 2026-07-27). Les étapes 8 à 10 — plan UDP, runtime
+> multi-shards, migration — restent une proposition. Le pipeline P5–P7 existant
+> n'a pas été retiré : les deux modèles coexistent le temps de la bascule.
+> Écarts assumés et points ouverts : §18.
 > Révision 3 (2026-07-27) — voir §16.
 
 ---
@@ -1190,3 +1194,60 @@ C'est la moitié du système, testable sans rien lancer.
 5. **Utilisateurs synthétiques** : `Occupant::Synthetic` leur ouvre la porte, mais
    il reste à décider comment leur session est allouée et comment l'audio les
    référence (ou pas).
+
+---
+
+## 18. Ce que l'implémentation a changé au guide
+
+Écarts délibérés entre ce document et `voxloom-shard`. Chacun est motivé, et
+motivé *par une règle du guide lui-même* : là où le pseudo-code et une règle se
+contredisaient, c'est la règle qui a gagné.
+
+| § | le guide dit | le code fait | pourquoi |
+|---|---|---|---|
+| 2.2 | `Scope::child(seg) -> Scope` | `-> Option<Scope>` | Au-delà de `MAX_DEPTH`, saturer rendrait à l'enfant la portée de son parent : une fuite de visibilité déguisée en arrondi. Refuser remonte en `BuildError` et garde la vue précédente (§11.7). |
+| 3.2 | `channel(parent, name, narrow)` | `channel(parent, key, name, narrow)` | Le guide ne dit jamais d'où vient l'**identité** d'un canal. La déduire du nom est exactement le piège du §15 (une horloge dans le nom brûlerait un ID par seconde). Le flavor la déclare, le nom reste un champ. Un utilisateur n'a pas ce problème : l'`Occupant` *est* son identité. |
+| 3.2 | `debug_assert!` sur `channel_link` | `BuildError::LinkAcrossScopes` | Une assertion de debug ne fait rien en release. Fail closed (R6). |
+| 5.1 | `UpdateChannel(ChannelPatch)` avec un jeu de liens | `links_added` / `links_removed` | Le client traite `links` non vide comme un remplacement **total** et ignore une liste vide ; `links_add`/`links_remove` sont traités dans leurs propres blocs. Les jeux incrémentaux composent sur un rejeu et n'exigent pas de connaître la vue engagée. REF `mumble/Messages.cpp::msgChannelState`. |
+| 9.2 | `version += 1` à chaque tour utile | version incrémentée **seulement** si le delta partagé est non vide | Seul le delta partagé va au journal : un replan lit les vues, un overlay se recalcule. Sans ça, une connexion durablement congestionnée fait tourner la version à chaque tour et pousse le `tail` du journal au-delà de ce dont ses pairs ont besoin. |
+| 9.4 | `replan` affecte `conn.see` avant d'envoyer | les trois composantes n'avancent qu'au succès | C'est la règle 6 du §11, que le pseudo-code du §9.4 contredisait. Sinon une connexion congestionnée garderait la nouvelle observation avec l'ancienne vue, et le filtre du tour suivant utiliserait une portée dont le client n'a jamais entendu parler. |
+| 3.5 / 8.3 | « vérifier que `r` voit `s` » sur les arêtes | vérification **par portée distincte**, jamais par paire | Matérialiser les paires d'un domaine est quadratique et tournait à *chaque* rendu. À 500 connexions, ces deux passages en `BTreeSet` coûtaient plus que tout le reste du tour (21,6 ms contre 0,74 ms une fois corrigés). `resolve()` reste la définition, et un test y épingle `compile`. |
+
+### 18.1 Ce qui n'est pas fait
+
+- **Étapes 8 à 10** : plan UDP (`Bindings`, gating par curseur côté livraison),
+  `RuntimeHandle` / `ConnectionRouter` multi-shards, migration. `AudioRouting`
+  expose déjà `receivers()` et `since()`, et chaque connexion publie son curseur
+  dans un `Arc<AtomicU64>` : c'est exactement ce que le §9.5 demande au shard, et
+  rien de plus.
+- **`voxloom-server` n'est pas rebranché.** Le modèle par connexion (P5–P7) reste
+  celui qui tourne. Le rebrancher retirerait le coordinateur de publication et les
+  jetons de commit, et casserait les tests de conformité du testkit qui jugent ce
+  pipeline — or R2 interdit de toucher `voxloom-testkit/` dans le même diff qu'un
+  `voxloom-*/src`. C'est une bascule en deux commits séparés, pas un détail.
+- **Utilisateurs synthétiques** : `Occupant::Synthetic` leur donne une session
+  stable, mais aucune politique n'est inventée pour la façon dont l'audio les
+  référence (§17.5 reste ouvert).
+- **Le proptest ne consomme pas `SimulatedMumbleClient`** (R2, même raison). Le
+  modèle strict de `voxloom-shard/tests/support/model.rs` applique les vrais
+  messages de contrôle et juge chaque état intermédiaire ; le brancher sur le
+  vérificateur officiel reste à faire.
+
+### 18.2 Mesure
+
+`ci/bench-shard.sh` fait tourner les deux modèles sur le **même** changement
+métier (un membre change de realm), aux mêmes tailles. Apple Silicon, profil
+release, médiane sur 20 tours :
+
+| connexions | tour de shard | par connexion | publication P7 | par connexion |
+|---|---|---|---|---|
+| 2 | 3,42 µs | 1,71 µs | 25,96 µs | 12,98 µs |
+| 10 | 8,88 µs | 887 ns | 156,67 µs | 15,67 µs |
+| 50 | 149,42 µs | 2,99 µs | 1,47 ms | 29,48 µs |
+| 200 | 418,75 µs | 2,09 µs | 21,39 ms | 106,97 µs |
+| 500 | **736,58 µs** | **1,47 µs** | **205,25 ms** | 410,50 µs |
+
+Ce qu'il faut lire n'est pas le facteur 279 à 500 connexions, c'est la colonne
+« par connexion » : elle **descend** dans le modèle à shards (1,71 → 1,47 µs) et
+**monte** d'un facteur 32 dans l'ancien. Le delta partagé fait 2 opérations quelle
+que soit la taille — c'est toute la thèse, et c'est ce que le binaire imprime.

@@ -632,6 +632,89 @@ déplacement à chaud, ordre vue/audio, IDs déterministes à la reconnexion et
 survie des surnoms ou volumes locaux. Les dix cas sont validés sans défaut
 observé. P6 est close.
 
+### Runtime à shards — étapes 1 à 7 (branche `shard-runtime`, 2026-07-27)
+
+Refonte du chemin rendu → réconciliation → publication suivant
+`docs/design/guide-implementation.md`. **Rien n'a été retiré** : le pipeline
+P5–P7 tourne toujours et reste ce que `voxloom-server` utilise. Le nouveau
+modèle vit dans un crate à part, `voxloom-shard`, et les deux coexistent le
+temps de la bascule.
+
+Le défaut que la refonte vise est dans une signature :
+`render(&self, snapshot, connection) -> RenderOutput`. L'unité de rendu est *le
+monde entier vu par une connexion*, donc N vues de taille O(N) coûtent Θ(N²), et
+aucun cache ne corrige ça. Le modèle à shards rend **une fois** et partage les
+*changements* au lieu des *vues*.
+
+| Étape | Livrable | Fichier |
+|---|---|---|
+| 1 | `Scope`, `ScopeSet` : `child`, `is_prefix_of`, `comparable`, `sees` | `voxloom-shard/src/scope.rs` |
+| 2 | `ShardBuilder` + types de vue + `finish()` (théorème de clôture structurel) | `voxloom-shard/src/{build,view,ids}.rs` |
+| 3 | `plan` à clé `(élément, portée)`, aucune opération audio | `voxloom-shard/src/plan.rs` |
+| 4 | `filter`, `splice`, `collapse` | `voxloom-shard/src/compose.rs` |
+| 5 | `Journal` (deltas versionnés, `tail` = fermeture ADR-009) | `voxloom-shard/src/journal.rs` |
+| 6 | Task de shard : `reconcile`, `push`, file bornée tout-ou-rien | `voxloom-shard/src/{shard,queue,emit}.rs` |
+| 7 | N connexions à portées différentes, `replan`, overlays, routage | `voxloom-shard/src/{shard,routing}.rs` |
+
+- **Une vue incohérente n'est pas exprimable.** `channel` exige un parent,
+  `user` exige un canal, et la portée se dérive du parent par un `Narrow` qui ne
+  sait qu'étendre. Il n'y a aucun paramètre de portée libre, donc la propriété
+  « si je vois un élément, je vois ce à quoi il fait référence » est un théorème,
+  pas une validation.
+- **La portée fait partie de la clé du diff.** Un joueur qui change d'équipe
+  n'est pas « un champ qui change » mais une entrée qui disparaît et une autre
+  qui apparaît ; l'ancienne équipe reçoit le `Remove` seul, la nouvelle le `Add`
+  seul, et un spectateur reçoit les deux, réglés par `collapse`. Un déplacement
+  *dans* une portée reste un `MoveUser` : c'est sémantiquement exact et ça
+  supprime une famille entière de cas particuliers.
+- **Oracle à quatre classes** (`tests/oracle.rs`) : contenu partagé, portée d'un
+  élément, portée d'une connexion, overlay, plus les deux croisements. Le modèle
+  applique les **vrais messages de contrôle** et juge chaque état intermédiaire,
+  pas seulement l'état final — c'est ce qui rend un défaut d'ordonnancement
+  visible, puisqu'il produit un état transitoire invalide et un état final
+  correct. Les trois mutations du guide §12 ont été **vérifiées en cassant le
+  code** : retirer la portée de la clé échoue à la graine 1, remplacer `splice`
+  par un `append` échoue à la graine 2, retirer `collapse` échoue à la graine 1.
+- **Trois défauts trouvés en écrivant les tests, pas après :** (1) l'allocateur
+  refusait le tout dernier identifiant au lieu de le distribuer ; (2) une
+  connexion durablement congestionnée faisait tourner la version à chaque tour
+  avec un delta vide, poussant le `tail` du journal au-delà de ce dont ses pairs
+  avaient besoin — la version n'avance plus que si le delta partagé est non vide ;
+  (3) la vérification « le destinataire voit l'émetteur » matérialisait toutes
+  les paires d'un domaine à **chaque** rendu, ce qui coûtait à soi seul 21,6 ms
+  sur 22 à 500 connexions.
+
+**Mesure** (`ci/bench-shard.sh`, qui lance les deux modèles sur le même
+changement métier, Apple Silicon, médiane sur 20 tours) :
+
+| connexions | tour de shard | par connexion | publication P7 | par connexion |
+|---|---|---|---|---|
+| 2 | 3,42 µs | 1,71 µs | 25,96 µs | 12,98 µs |
+| 50 | 149,42 µs | 2,99 µs | 1,47 ms | 29,48 µs |
+| 200 | 418,75 µs | 2,09 µs | 21,39 ms | 106,97 µs |
+| 500 | **736,58 µs** | **1,47 µs** | **205,25 ms** | 410,50 µs |
+
+Le chiffre qui compte n'est pas le facteur 279 mais la colonne « par
+connexion » : elle descend d'un côté, elle est multipliée par 32 de l'autre.
+
+**Vérifié** (`RUSTFLAGS="-D warnings"`) : `ci/gates.sh`, `ci/dep-direction.sh`,
+`ci/verifier-boundary.sh`, `cargo fmt --check`, `cargo clippy --workspace
+--all-targets --all-features`, tous verts. Done-command :
+`cargo test -p voxloom-shard` — 83 tests (63 unitaires, 13 shard live, 7 oracle) ;
+`cargo test --workspace` vert, aucun test existant modifié.
+
+**Reste avant de basculer** (détail et justification dans le §18 du guide) :
+
+- **Étapes 8 à 10** : plan UDP, runtime multi-shards, `ConnectionRouter`,
+  migration. Le shard publie déjà ce que le §9.5 lui demande (`AudioRouting`
+  avec `receivers()`/`since()`, et un `Arc<AtomicU64>` de curseur par connexion).
+- **Rebrancher `voxloom-server`**, ce qui retire le coordinateur de publication
+  et les jetons de commit. Ça casse les tests de conformité du testkit qui jugent
+  le pipeline actuel — **R2 interdit de toucher `voxloom-testkit/` dans le même
+  diff qu'un `voxloom-*/src`**, donc c'est une bascule en deux commits séparés
+  avec revue humaine, pas un détail d'intégration.
+- **Brancher l'oracle sur `SimulatedMumbleClient`** (même contrainte R2).
+
 ---
 
 ## Reste à faire
@@ -747,6 +830,10 @@ voxloom-flavor/           P7 T1 : contrat statique, snapshot opaque,
 voxloom-control/          P7 T2/T3 : rendu complet puis validation des
                           vues, routes et interactions                   (pur)
 voxloom-server/           P3+P4 : serveur minimal + routage voix, limites §15.7
+voxloom-shard/            runtime à shards (guide, étapes 1-7) : portées,
+                          constructeur, plan à clé (élément, portée), journal,
+                          composition par connexion, task de shard.
+                          Coexiste avec P5-P7, ne le remplace pas encore.
 voxloom-testkit/          P3+P4 : SimulatedMumbleClient (§20 + plan voix), juge (R2)
 fuzz/                     cibles cargo-fuzz (workspace détaché, nightly)
 references/vendored/      vérité protocolaire (R1), pin v1.5.915

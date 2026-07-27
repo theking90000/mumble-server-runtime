@@ -60,6 +60,15 @@ members = [
     # Phase 7 T8 : mesure du coût d'une publication complète (rendu, validation,
     # planification et commit de N connexions). Lancé par ci/bench-publication.sh.
     "tools/bench-publication",
+    # Contrepartie de bench-publication pour le runtime à shards : même
+    # changement métier, mêmes tailles, même statistique. Les deux tableaux se
+    # lisent côte à côte — c'est la mesure de la thèse du guide.
+    "tools/bench-shard",
+    # Runtime à shards (docs/design/guide-implementation.md, étapes 1 à 7) :
+    # portées, constructeur de vue partagée, planificateur à clé (élément, portée),
+    # composition par connexion (filter/splice/collapse), journal de deltas et
+    # task de shard. Les étapes 1 à 5 sont pures ; 6 et 7 ajoutent la boucle.
+    "voxloom-shard",
     # Phase 3 : serveur minimal — accepte la TLS, déroule le handshake sans
     # Murmur, associe l'UDP par preuve cryptographique, répond aux pings et
     # réfléchit l'audio de loopback (target 31). Dépend des crates purs P1.

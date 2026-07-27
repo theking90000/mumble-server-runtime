@@ -114,6 +114,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "bench-shard"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "tokio",
+ "voxloom-protocol",
+ "voxloom-shard",
+]
+
+[[package]]
 name = "bitflags"
 version = "2.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1278,6 +1288,15 @@ dependencies = [
  "voxloom-protocol",
  "voxloom-reconcile",
  "voxloom-render",
+]
+
+[[package]]
+name = "voxloom-shard"
+version = "0.1.0"
+dependencies = [
+ "thiserror 2.0.19",
+ "tokio",
+ "voxloom-protocol",
 ]
 
 [[package]]
