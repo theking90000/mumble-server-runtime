@@ -39,8 +39,17 @@ async fn main() -> Result<()> {
             .with_context(|| format!("{argument} is not an address like 0.0.0.0:64738"))?,
         None => default.bind,
     };
+    // A second optional argument raises the admission ceiling for load tests
+    // while preserving the demo's conservative default.
+    let max_users = match std::env::args().nth(2) {
+        Some(argument) => argument
+            .parse()
+            .with_context(|| format!("{argument} is not a maximum user count"))?,
+        None => default.max_users,
+    };
     let config = GatewayConfig {
         bind,
+        max_users,
         welcome_text: "Voxloom arena. Double-click a channel to choose.".to_owned(),
         ..default
     };
@@ -91,6 +100,7 @@ async fn main() -> Result<()> {
         "  connect a Mumble client to 127.0.0.1:{}",
         gateway.address().port()
     );
+    println!("  admission ceiling: {max_users} clients");
     println!("  password 'overwatch' joins as vanished staff");
 
     gateway

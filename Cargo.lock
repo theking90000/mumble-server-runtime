@@ -1327,6 +1327,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "voxloom-stress"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "rustls",
+ "tokio",
+ "tokio-rustls",
+ "voxloom-crypto",
+ "voxloom-protocol",
+]
+
+[[package]]
 name = "voxloom-testkit"
 version = "0.1.0"
 dependencies = [
