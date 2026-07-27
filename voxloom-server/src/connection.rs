@@ -16,24 +16,18 @@ use tokio::net::{TcpStream, UdpSocket};
 use tokio::sync::mpsc;
 use tokio_rustls::TlsAcceptor;
 use tokio_rustls::server::TlsStream;
+use voxloom_control::InboundOutcome;
 use voxloom_protocol::messages::tcp;
 use voxloom_protocol::{
     ControlMessage, UdpMessage, decode_frame, decode_udp, encode_frame, parse_frame,
 };
-use voxloom_session::{EmittedStep, InboundCommand, wire_permissions};
+use voxloom_session::wire_permissions;
 
 use crate::handshake;
 use crate::limits;
 use crate::outbound::OutboundQueue;
-use crate::projection;
 use crate::state::{SessionId, SharedState, UserEntry};
 use crate::voice;
-
-#[derive(Debug, thiserror::Error)]
-enum ConnectionStateError {
-    #[error("session {session} view lock poisoned")]
-    ViewPoisoned { session: SessionId },
-}
 
 /// Serve one accepted TCP connection to completion. Errors (TLS failure, a
 /// malformed frame, a dropped socket) end the connection cleanly: the user is
@@ -70,25 +64,28 @@ pub async fn serve(
 
     // Stub authentication (spec §10.2 token flow is P8): any username is accepted,
     // the password/token is treated as an opaque credential and not validated.
-    // The client-proposed username is only a display suggestion (§10.5).
-    let (name, realm) =
-        projection::scenario_identity(authenticate.username.as_deref().unwrap_or("Guest"));
+    // The client-proposed username is only a display suggestion (§10.5), and
+    // what it *means* is the flavor's business, not this crate's.
+    let name = authenticate
+        .username
+        .as_deref()
+        .unwrap_or("Guest")
+        .chars()
+        .take(64)
+        .collect::<String>();
 
     let session = state.allocate_session();
     let (crypt_setup, crypt_state) = voice::generate_crypt_setup(&rng)?;
 
     let (outbound, mut outbound_rx) = OutboundQueue::new(session);
-    let user = Arc::new(UserEntry::new(
+    let user = state.admit(
         session,
-        name.clone(),
+        name,
         certificate_hash,
-        realm,
         outbound,
         crypt_state,
         Instant::now(),
-    ));
-
-    state.insert_user(Arc::clone(&user));
+    );
 
     // Everything after registration is wrapped so a write/render failure during
     // the handshake gets the same cleanup as a steady-state disconnect.
@@ -99,12 +96,19 @@ pub async fn serve(
         for message in handshake::handshake_prelude(crypt_setup) {
             write_message(&mut writer, &message).await?;
         }
-        write_initial_view(&mut writer, &user, &state).await?;
+
+        // The first generation puts this connection's whole view on its own
+        // queue, alongside the updates it causes on the connections that were
+        // already there. Draining it here, before `ServerSync`, is what keeps
+        // the ordering of §20 invariants 1 and 6 without a second code path:
+        // the frames are the ordinary ones, they are just written by the
+        // handshake instead of the service loop.
+        state.publish_generation();
+        drain_queued(&mut writer, &mut outbound_rx).await?;
+
         for message in handshake::handshake_completion(state.config(), session) {
             write_message(&mut writer, &message).await?;
         }
-        user.mark_view_live();
-        state.refresh_views();
 
         service_loop(
             &mut reader,
@@ -119,7 +123,7 @@ pub async fn serve(
     .await;
 
     state.remove_user(session);
-    state.refresh_views();
+    state.publish_generation();
 
     result
 }
@@ -185,7 +189,7 @@ async fn service_loop(
                         // from the still-committed view, so this converges to
                         // the newest desired state rather than replaying stale
                         // intermediate ones.
-                        state.refresh_view(user);
+                        state.publish_generation();
                     }
                     None => return Ok(()), // no senders left (cannot happen while we hold the user)
                 }
@@ -223,46 +227,39 @@ fn handle_control(
         // plus our own crypt counters.
         ControlMessage::Ping(ping) => vec![ControlMessage::Ping(ping_reply(&ping, user))],
 
-        // Everything else a client may send is, in P3, either a self-state change
-        // we do not yet reflect or an action we refuse by default (spec §16.5-16.8,
-        // §16.11...). Drop it explicitly rather than acting on it (fail closed).
-        other => match user.view.lock() {
-            Ok(view) => match view.resolve_inbound(&other) {
-                Ok(InboundCommand::MoveSelf { channel }) => {
-                    drop(view);
-                    match projection::realm_from_channel_key(&channel) {
-                        Some(realm) if state.move_to_realm(session, realm) => Vec::new(),
-                        _ => vec![permission_denied(session)],
-                    }
-                }
-                Ok(InboundCommand::QueryPermissions {
-                    channel,
-                    permissions,
-                }) => {
-                    let Some(channel_id) = view
-                        .committed()
-                        .channels
-                        .values()
-                        .find(|candidate| candidate.key == channel)
-                        .map(|candidate| candidate.id.0)
-                    else {
-                        user.outbound.mark_fatal();
-                        return Vec::new();
-                    };
-                    vec![ControlMessage::PermissionQuery(tcp::PermissionQuery {
-                        channel_id: Some(channel_id),
-                        permissions: Some(wire_permissions(permissions)),
-                        ..Default::default()
-                    })]
-                }
-                Ok(InboundCommand::ValidatedUnsupported { .. }) | Err(_) => {
-                    drop_unsupported(&other, session);
-                    vec![permission_denied(session)]
-                }
-            },
-            Err(_) => {
-                user.outbound.mark_fatal();
+        // Everything else is resolved against this connection's committed view
+        // and then either reported to the flavor or refused. This crate decides
+        // nothing about what an action means.
+        other => match state.resolve_inbound(user.connection, &other) {
+            Ok(InboundOutcome::Event(event)) => {
+                state.report(&event);
+                // The flavor may have published a new snapshot in response; a
+                // generation that changes nothing costs one render and no
+                // traffic.
+                state.publish_generation();
                 Vec::new()
+            }
+            Ok(InboundOutcome::EffectivePermissions {
+                channel,
+                permissions,
+            }) => vec![ControlMessage::PermissionQuery(tcp::PermissionQuery {
+                channel_id: Some(channel.0),
+                permissions: Some(wire_permissions(permissions)),
+                ..Default::default()
+            })],
+            Err(error) => {
+                drop_unsupported(&other, session, &error);
+                vec![permission_denied(session)]
+            }
+            // The outcome enum is `#[non_exhaustive]`: an outcome this server
+            // was not built to answer is denied rather than ignored, so the
+            // client never keeps an expectation nothing will meet (R6).
+            Ok(_) => {
+                eprintln!(
+                    "voxloom-server: session {session}: refusing an inbound outcome this build \
+                     does not answer"
+                );
+                vec![permission_denied(session)]
             }
         },
     }
@@ -353,7 +350,11 @@ fn tunnel_audio(state: &SharedState, user: &UserEntry, raw: &[u8]) -> Vec<(Vec<u
 
 /// Log an unsupported client intent. Named so the drop is auditable rather than
 /// silent (R6).
-fn drop_unsupported(message: &ControlMessage, session: SessionId) {
+fn drop_unsupported(
+    message: &ControlMessage,
+    session: SessionId,
+    error: &voxloom_control::VoiceEventError,
+) {
     let kind = match message {
         ControlMessage::UserState(_) => "UserState",
         ControlMessage::ChannelState(_) => "ChannelState",
@@ -366,56 +367,20 @@ fn drop_unsupported(message: &ControlMessage, session: SessionId) {
         ControlMessage::PermissionQuery(_) => "PermissionQuery",
         _ => "unsupported message",
     };
-    eprintln!("voxloom-server: session {session}: refusing unsupported {kind} (P6)");
+    eprintln!("voxloom-server: session {session}: refusing {kind}: {error}");
 }
 
-async fn write_initial_view(
+/// Write every frame already queued for this connection, then return.
+///
+/// Used once, between the handshake prelude and `ServerSync`. `try_recv` is
+/// deliberate: the queue holds exactly what the publication put there, and
+/// waiting for more would wait forever.
+async fn drain_queued(
     writer: &mut WriteHalf<TlsStream<TcpStream>>,
-    user: &Arc<UserEntry>,
-    state: &SharedState,
+    outbound_rx: &mut mpsc::Receiver<ControlMessage>,
 ) -> Result<()> {
-    let scenario = state.scenario_users();
-    let viewer = scenario
-        .iter()
-        .find(|candidate| candidate.session == user.session)
-        .context("new session missing from scenario snapshot")?;
-    let (steps, token) = {
-        let mut view = user
-            .view
-            .lock()
-            .map_err(|_| ConnectionStateError::ViewPoisoned {
-                session: user.session,
-            })?;
-        let (desired, routes) = projection::render(&mut view, viewer, &scenario, state.config())
-            .context("rendering view")?;
-        view.prepare(&desired, &routes)
-            .context("preparing initial view")?
-            .context("initial view unexpectedly produced no transition")?
-            .split()
-    };
-    let mut enables = Vec::new();
-    for step in steps {
-        match step {
-            EmittedStep::Message(message) => write_message(writer, &message).await?,
-            EmittedStep::RouteChange {
-                route,
-                enabled: false,
-            } => state.set_route(route, false),
-            EmittedStep::RouteChange {
-                route,
-                enabled: true,
-            } => enables.push(route),
-        }
-    }
-    user.view
-        .lock()
-        .map_err(|_| ConnectionStateError::ViewPoisoned {
-            session: user.session,
-        })?
-        .commit(token)
-        .context("committing initial view")?;
-    for route in enables {
-        state.set_route(route, true);
+    while let Ok(message) = outbound_rx.try_recv() {
+        write_message(writer, &message).await?;
     }
     Ok(())
 }

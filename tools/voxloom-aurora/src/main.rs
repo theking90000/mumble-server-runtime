@@ -1,19 +1,29 @@
-//! CLI entry point for the minimal Voxloom server (Phase 3).
+//! Composition binary: the Aurora/Borealis reference flavor on the Voxloom
+//! runtime.
 //!
-//! Thin wiring only: parse the endpoint, build a self-signed identity (or load
-//! one), bind and serve. All behaviour lives in the library.
+//! This is the only place in the tree that names both sides. The runtime knows
+//! no realm and the flavor knows no wire format; compiling them together here
+//! is what makes a runnable server, and swapping the flavor for another one is
+//! a change to this file alone.
+//!
+//! REF: docs/voxloom-roadmap-agents-v0_1.md P7 T8
+//! REF: docs/voxloom-specification-technique-v0.1.md 24.2
 
 use std::net::SocketAddr;
+use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use clap::Parser;
+use voxloom_flavor::ServerPresentation;
+use voxloom_flavor_reference::ReferenceFlavor;
 use voxloom_server::config::ServerConfig;
 use voxloom_server::server::Server;
 use voxloom_server::tls::{self, Identity};
 
-/// A declarative Mumble-compatible voice runtime — minimal server (Phase 3).
+/// A declarative Mumble-compatible voice runtime, composed with the
+/// Aurora/Borealis reference flavor.
 #[derive(Parser, Debug)]
-#[command(name = "voxloom-server", version, about)]
+#[command(name = "voxloom-aurora", version, about)]
 struct Cli {
     /// TCP/TLS control endpoint to listen on.
     #[arg(long, default_value = "0.0.0.0:64738")]
@@ -43,20 +53,32 @@ async fn main() -> Result<()> {
         .unwrap_or_else(|| SocketAddr::new(std::net::Ipv4Addr::UNSPECIFIED.into(), cli.tcp.port()));
 
     let config = ServerConfig {
-        server_name: cli.name,
-        welcome_text: cli.welcome,
+        server_name: cli.name.clone(),
+        welcome_text: cli.welcome.clone(),
         ..Default::default()
     };
+
+    // What a client sees is the flavor's decision, so the presentation belongs
+    // to the flavor; the runtime keeps only the limits it enforces itself.
+    let flavor = Arc::new(ReferenceFlavor::new(
+        cli.name,
+        ServerPresentation {
+            welcome_text: (!cli.welcome.is_empty()).then_some(cli.welcome),
+            allow_html: config.allow_html,
+            max_message_length: Some(config.message_length),
+            recording_allowed: config.recording_allowed,
+        },
+    ));
 
     // A self-signed identity for local use. A real deployment supplies a stable
     // certificate so clients' per-server preferences survive restarts (§21.2).
     let identity =
         Identity::self_signed(vec!["localhost".to_string()]).context("building TLS identity")?;
 
-    let server = Server::bind(config, identity, cli.tcp, udp_addr).await?;
+    let server = Server::bind(config, flavor, identity, cli.tcp, udp_addr).await?;
     let tcp_addr = server.tcp_addr()?;
     let udp_bound = server.udp_addr()?;
-    eprintln!("voxloom-server: listening on TCP {tcp_addr}, UDP {udp_bound}");
+    eprintln!("voxloom-aurora: listening on TCP {tcp_addr}, UDP {udp_bound}");
 
     server.serve_forever().await
 }

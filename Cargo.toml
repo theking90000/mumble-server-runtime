@@ -54,6 +54,12 @@ members = [
     # ses mutations, et ne parle à Voxloom que par le contrat public. Aucun
     # crate central ne dépend de lui.
     "voxloom-flavor-reference",
+    # Phase 7 T8 : binaire de composition. Le seul endroit qui nomme à la fois le
+    # runtime et un flavor concret ; les crates centrales n'en dépendent jamais.
+    "tools/voxloom-aurora",
+    # Phase 7 T8 : mesure du coût d'une publication complète (rendu, validation,
+    # planification et commit de N connexions). Lancé par ci/bench-publication.sh.
+    "tools/bench-publication",
     # Phase 3 : serveur minimal — accepte la TLS, déroule le handshake sans
     # Murmur, associe l'UDP par preuve cryptographique, répond aux pings et
     # réfléchit l'audio de loopback (target 31). Dépend des crates purs P1.

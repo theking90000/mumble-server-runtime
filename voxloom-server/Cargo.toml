@@ -8,16 +8,11 @@ repository.workspace = true
 authors.workspace = true
 description = "Minimal Mumble-compatible server (Phase 3) : accept TLS, handshake (Version/Authenticate stub/CryptSetup/ServerSync/ServerConfig), UDP crypto association, ping, audio loopback and TCP tunnel fallback. Speaks the wire via voxloom-protocol + voxloom-crypto."
 
-# lib + bin : the connection state machine, the pure handshake builder and the
-# voice plane live in the lib so they are testable in integration; the bin is a
-# thin CLI wiring.
+# Library only : the runtime has no flavor of its own, so it has nothing to run.
+# A composition binary (see tools/voxloom-aurora) picks one and starts it.
 [lib]
 name = "voxloom_server"
 path = "src/voxloom_server.rs"
-
-[[bin]]
-name = "voxloom-server"
-path = "src/main.rs"
 
 [dependencies]
 voxloom-protocol = { path = "../voxloom-protocol" }
@@ -26,6 +21,8 @@ voxloom-audio = { path = "../voxloom-audio" }
 voxloom-render = { path = "../voxloom-render" }
 voxloom-reconcile = { path = "../voxloom-reconcile" }
 voxloom-session = { path = "../voxloom-session" }
+voxloom-control = { path = "../voxloom-control" }
+voxloom-flavor = { path = "../voxloom-flavor" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "sync", "time", "signal"] }
 tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12", "logging"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
@@ -35,7 +32,6 @@ rcgen = { version = "0.13", default-features = false, features = ["crypto", "rin
 ring = "0.17"
 thiserror = "2"
 anyhow = "1"
-clap = { version = "4", features = ["derive"] }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-util", "time", "net", "sync"] }

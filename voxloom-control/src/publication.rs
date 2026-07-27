@@ -258,6 +258,12 @@ impl PublicationCoordinator {
             .map(|entry| entry.view.committed())
     }
 
+    /// Every registered connection, in a deterministic order. This is the set a
+    /// generation must cover exactly.
+    pub fn connections(&self) -> impl Iterator<Item = ConnectionId> + '_ {
+        self.connections.keys().copied()
+    }
+
     /// One connection's view lifecycle, for the inbound direction: resolving a
     /// client-supplied id is only meaningful against the view that connection
     /// actually holds.

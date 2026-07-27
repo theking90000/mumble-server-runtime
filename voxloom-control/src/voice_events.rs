@@ -11,11 +11,27 @@
 //! REF: docs/voxloom-specification-technique-v0.1.md 24.1, 24.4
 
 use thiserror::Error;
-use voxloom_flavor::{ConnectionId, VoiceEvent};
+use voxloom_flavor::{ConnectionId, PermissionBits, VoiceEvent};
 use voxloom_protocol::ControlMessage;
+use voxloom_render::ChannelId;
 use voxloom_session::{InboundCommand, InboundError, UnsupportedKind};
 
 use crate::PublicationCoordinator;
+
+/// What one resolved inbound message means for the runtime.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum InboundOutcome {
+    /// A fact for the flavor to interpret. Voxloom applies nothing itself.
+    Event(VoiceEvent),
+    /// A read-only question the runtime answers from the committed view the
+    /// flavor already produced. Forwarding it would ask the flavor to re-decide
+    /// something it has decided.
+    EffectivePermissions {
+        channel: ChannelId,
+        permissions: PermissionBits,
+    },
+}
 
 /// Why an inbound message produced no voice event.
 ///
@@ -84,17 +100,12 @@ impl PublicationCoordinator {
         }
     }
 
-    /// Resolve one inbound message into the event the flavor should observe.
-    ///
-    /// `Ok(None)` means the message resolved but has no business meaning: a
-    /// permission query is answered by the runtime from the committed view the
-    /// flavor already produced, so forwarding it would ask the flavor to
-    /// re-decide something it has already decided.
+    /// Resolve one inbound message against the sender's committed view.
     pub fn resolve_event(
         &self,
         connection: ConnectionId,
         message: &ControlMessage,
-    ) -> Result<Option<VoiceEvent>, VoiceEventError> {
+    ) -> Result<InboundOutcome, VoiceEventError> {
         let view = self
             .connection_view(connection)
             .ok_or(VoiceEventError::UnknownConnection { connection })?;
@@ -103,14 +114,31 @@ impl PublicationCoordinator {
             .map_err(|source| VoiceEventError::Unresolved { connection, source })?;
 
         match command {
-            InboundCommand::MoveSelf { channel } => {
-                Ok(Some(VoiceEvent::ChannelInteractionRequested {
+            InboundCommand::MoveSelf { channel } => Ok(InboundOutcome::Event(
+                VoiceEvent::ChannelInteractionRequested {
                     connection,
                     generation: self.generation(),
                     channel,
-                }))
+                },
+            )),
+            InboundCommand::QueryPermissions {
+                channel,
+                permissions,
+            } => {
+                // The answer is addressed with the id this connection knows, so
+                // the key is resolved back through its own committed view.
+                let id = view
+                    .committed()
+                    .channels
+                    .values()
+                    .find(|candidate| candidate.key == channel)
+                    .map(|candidate| candidate.id)
+                    .ok_or(VoiceEventError::UnknownConnection { connection })?;
+                Ok(InboundOutcome::EffectivePermissions {
+                    channel: id,
+                    permissions,
+                })
             }
-            InboundCommand::QueryPermissions { .. } => Ok(None),
             // Context actions, text and voice targets resolve their references
             // but their payload is deliberately dropped by the resolver. Making
             // an event out of that would mean inventing the part the client
@@ -141,8 +169,8 @@ mod tests {
     const CONNECTION: ConnectionId = ConnectionId::new(4);
     const SESSION: SessionId = SessionId(40);
 
-    fn realm_key() -> ChannelKey {
-        ChannelKey(SemanticKey::Static("realm:aurora".to_owned()))
+    fn lobby_key() -> ChannelKey {
+        ChannelKey(SemanticKey::Static("lobby".to_owned()))
     }
 
     /// A one-connection flavor with a second channel to interact with, and a
@@ -167,13 +195,13 @@ mod tests {
         ) -> Result<RenderOutput, FlavorError> {
             self.renders.fetch_add(1, Ordering::Relaxed);
             let mut view = DesiredClientView::empty();
-            let realm = realm_key();
+            let realm = lobby_key();
             view.channels.insert(
                 realm.clone(),
                 DesiredChannel {
                     key: realm.clone(),
                     parent: view.root_channel.clone(),
-                    name: "Aurora".to_owned(),
+                    name: "Lobby".to_owned(),
                     description: None,
                     sort_order: 0,
                     temporary: false,
@@ -204,6 +232,12 @@ mod tests {
                     texture: None,
                 },
             );
+            view.permissions = view
+                .channels
+                .keys()
+                .cloned()
+                .map(|key| (key, PermissionBits(PermissionBits::ENTER)))
+                .collect();
             Ok(RenderOutput::new(
                 view,
                 BTreeSet::new(),
@@ -263,7 +297,7 @@ mod tests {
     #[test]
     fn a_self_move_becomes_an_interaction_request_stamped_with_the_generation() {
         let (coordinator, flavor) = committed();
-        let channel_id = committed_channel_id(&coordinator, &realm_key());
+        let channel_id = committed_channel_id(&coordinator, &lobby_key());
         let renders_before = flavor.renders.load(Ordering::Relaxed);
 
         let event = coordinator.resolve_event(
@@ -276,18 +310,18 @@ mod tests {
         );
 
         match event {
-            Ok(Some(event)) => {
+            Ok(InboundOutcome::Event(event)) => {
                 assert_eq!(
                     event,
                     VoiceEvent::ChannelInteractionRequested {
                         connection: CONNECTION,
                         generation: 1,
-                        channel: realm_key(),
+                        channel: lobby_key(),
                     }
                 );
                 flavor.observe(&event);
             }
-            Ok(None) => panic!("a self move must reach the flavor"),
+            Ok(outcome) => panic!("a self move must reach the flavor, got {outcome:?}"),
             Err(error) => panic!("resolution failed: {error}"),
         }
 
@@ -311,7 +345,7 @@ mod tests {
     #[test]
     fn a_permission_query_is_answered_by_the_runtime_and_never_reaches_the_flavor() {
         let (coordinator, _flavor) = committed();
-        let channel_id = committed_channel_id(&coordinator, &realm_key());
+        let channel_id = committed_channel_id(&coordinator, &lobby_key());
 
         let event = coordinator.resolve_event(
             CONNECTION,
@@ -322,8 +356,14 @@ mod tests {
         );
 
         match event {
-            Ok(None) => {}
-            Ok(Some(event)) => panic!("a read-only query became an event: {event:?}"),
+            Ok(InboundOutcome::EffectivePermissions {
+                channel,
+                permissions,
+            }) => {
+                assert_eq!(channel.0, channel_id);
+                assert_eq!(permissions, PermissionBits(PermissionBits::ENTER));
+            }
+            Ok(outcome) => panic!("a read-only query became {outcome:?}"),
             Err(error) => panic!("resolution failed: {error}"),
         }
     }

@@ -71,6 +71,18 @@ forbid "flavor/no-protocol"    'voxloom[_-]protocol'                "${flavor_fi
 forbid "flavor/no-domain"      '([Mm]inecraft|[Rr]ealm|[Pp]layer|[Tt]eam|[Pp]osition|[Rr]adio)' \
                                                                     "${flavor_files[@]}"
 
+# --- Crates centrales : aucun concept du flavor de référence (P7 T8) ---
+# L'extraction Aurora/Borealis est faite ; ces noms ne doivent plus jamais
+# revenir dans le runtime, sous peine de recréer la branche métier que P7 a
+# supprimée. Le binaire de composition (tools/) est le seul endroit qui a le
+# droit de nommer un flavor concret.
+for central in voxloom-protocol voxloom-crypto voxloom-render voxloom-reconcile \
+               voxloom-audio voxloom-session voxloom-flavor voxloom-control voxloom-server; do
+  mapfile -t central_files < <(crate_src_files "$central")
+  forbid "$central/no-reference-flavor" \
+         '([Aa]urora|[Bb]orealis|voxloom[_-]flavor[_-]reference)' "${central_files[@]}"
+done
+
 # --- voxloom-protocol / voxloom-crypto : crates purs, sans runtime ni IO ---
 for pure in voxloom-protocol voxloom-crypto; do
   mapfile -t pure_files < <(crate_src_files "$pure")

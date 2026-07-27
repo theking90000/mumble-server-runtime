@@ -9,6 +9,8 @@
 //! REF: docs/voxloom-specification-technique-v0.1.md 5.1, 5.4, 24.1
 #![forbid(unsafe_code)]
 
+use std::sync::Arc;
+
 use thiserror::Error;
 
 mod event;
@@ -123,6 +125,16 @@ pub trait VoiceFlavor: Send + Sync + 'static {
     /// flavor's own decision and its own call; ignoring the event is a valid
     /// business answer, so it is stated by an empty body rather than assumed.
     fn observe(&self, event: &VoiceEvent);
+}
+
+/// A flavor the runtime may pull the current snapshot from.
+///
+/// Publication is push-shaped: a flavor hands over a snapshot when it decides
+/// to. A runtime that has just admitted a connection cannot wait for that
+/// decision to render it, so this is the one way it may ask, and the answer is
+/// still an immutable value the flavor produced.
+pub trait SnapshotSource: VoiceFlavor {
+    fn snapshot(&self) -> Arc<Self::Snapshot>;
 }
 
 #[cfg(test)]

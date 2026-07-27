@@ -20,7 +20,7 @@ use std::sync::{Arc, Mutex};
 use voxloom_flavor::{
     ChannelKey, ConnectionId, DesiredAudioRoute, DesiredChannel, DesiredClientView, DesiredUser,
     FlavorError, FlavorRevision, InteractionRegistry, PermissionBits, RenderOutput, SemanticKey,
-    ServerPresentation, UserKey, VoiceEvent, VoiceFlavor,
+    ServerPresentation, SnapshotSource, UserKey, VoiceEvent, VoiceFlavor,
 };
 
 const AURORA_KEY: &str = "realm:aurora";
@@ -140,21 +140,6 @@ impl ReferenceFlavor {
         }
     }
 
-    /// Take an immutable copy of the current membership.
-    ///
-    /// The result is a value: mutations that happen afterwards cannot change a
-    /// snapshot Voxloom is already rendering.
-    #[must_use]
-    pub fn snapshot(&self) -> Arc<Snapshot> {
-        let world = self.world();
-        Arc::new(Snapshot {
-            revision: FlavorRevision::new(world.revision),
-            members: world.members.clone(),
-            root_name: self.root_name.clone(),
-            presentation: self.presentation.clone(),
-        })
-    }
-
     /// Lock the business state, recovering a poisoned mutex.
     ///
     /// The guarded data is a plain map with no invariant that a panic could
@@ -206,6 +191,22 @@ impl ReferenceFlavor {
 /// integration keep publishing the same one, it never rewinds.
 fn bump(world: &mut World) {
     world.revision = world.revision.saturating_add(1);
+}
+
+impl SnapshotSource for ReferenceFlavor {
+    /// Take an immutable copy of the current membership.
+    ///
+    /// The result is a value: mutations that happen afterwards cannot change a
+    /// snapshot Voxloom is already rendering.
+    fn snapshot(&self) -> Arc<Snapshot> {
+        let world = self.world();
+        Arc::new(Snapshot {
+            revision: FlavorRevision::new(world.revision),
+            members: world.members.clone(),
+            root_name: self.root_name.clone(),
+            presentation: self.presentation.clone(),
+        })
+    }
 }
 
 impl VoiceFlavor for ReferenceFlavor {

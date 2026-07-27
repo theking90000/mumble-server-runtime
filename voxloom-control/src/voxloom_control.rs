@@ -28,7 +28,7 @@ pub use validation::{
     AudioRouteValidationError, DesiredViewValidationError, FlavorOutputValidationError,
     InteractionRegistryValidationError, ValidatedSnapshot, validate_rendered_snapshot,
 };
-pub use voice_events::VoiceEventError;
+pub use voice_events::{InboundOutcome, VoiceEventError};
 
 /// Complete render result for one immutable flavor snapshot.
 ///
