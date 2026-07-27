@@ -13,6 +13,8 @@
 
 use std::time::{Duration, Instant};
 
+use voxloom_flavor::ServerPresentation;
+use voxloom_flavor_reference::ReferenceFlavor;
 use voxloom_server::config::ServerConfig;
 use voxloom_server::server::{Server, ServerHandle};
 use voxloom_server::tls::{self, Identity};
@@ -39,11 +41,28 @@ const LATENCY_BUDGET: Duration = Duration::from_millis(500);
 /// How long a listener waits for a packet it is owed before declaring it lost.
 const DELIVERY_TIMEOUT: Duration = Duration::from_secs(5);
 
+/// The reference flavor, composed with the runtime exactly as the composition
+/// binary does it. The runtime has no business model of its own, so a test that
+/// wants the Aurora/Borealis scenario has to bring it.
+fn reference_flavor(config: &ServerConfig) -> std::sync::Arc<ReferenceFlavor> {
+    std::sync::Arc::new(ReferenceFlavor::new(
+        config.server_name.clone(),
+        ServerPresentation {
+            welcome_text: (!config.welcome_text.is_empty()).then(|| config.welcome_text.clone()),
+            allow_html: config.allow_html,
+            max_message_length: Some(config.message_length),
+            recording_allowed: config.recording_allowed,
+        },
+    ))
+}
+
 async fn start_server() -> ServerHandle {
     tls::install_crypto_provider();
     let identity = Identity::self_signed(vec!["localhost".to_string()]).expect("identity");
-    let addr = "127.0.0.1:0".parse().expect("addr");
-    let server = Server::bind(ServerConfig::default(), identity, addr, addr)
+    let addr: std::net::SocketAddr = "127.0.0.1:0".parse().expect("addr");
+    let config = ServerConfig::default();
+    let flavor = reference_flavor(&config);
+    let server = Server::bind(config, flavor, identity, addr, addr)
         .await
         .expect("bind server");
     server.spawn().expect("spawn server")

@@ -30,7 +30,7 @@ use std::sync::Arc;
 
 use voxloom_audio::{AudioRoutingSnapshot, AudioTarget, SessionId as AudioSessionId};
 use voxloom_control::{PublicationCoordinator, render_snapshot, validate_rendered_snapshot};
-use voxloom_flavor::{ConnectionId, ServerPresentation, VoiceEvent, VoiceFlavor};
+use voxloom_flavor::{ConnectionId, ServerPresentation, SnapshotSource, VoiceEvent, VoiceFlavor};
 use voxloom_flavor_reference::{Realm, ReferenceFlavor, Snapshot};
 use voxloom_protocol::ControlMessage;
 use voxloom_protocol::messages::{tcp, udp};

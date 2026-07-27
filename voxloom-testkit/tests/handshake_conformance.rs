@@ -11,17 +11,36 @@
 use std::net::SocketAddr;
 use std::time::Duration;
 
+use voxloom_flavor::ServerPresentation;
+use voxloom_flavor_reference::ReferenceFlavor;
 use voxloom_server::config::ServerConfig;
 use voxloom_server::server::{Server, ServerHandle};
 use voxloom_server::tls::{self, Identity};
 use voxloom_testkit::SimulatedMumbleClient;
+
+/// The reference flavor, composed with the runtime exactly as the composition
+/// binary does it. The runtime has no business model of its own, so a test that
+/// wants the Aurora/Borealis scenario has to bring it.
+fn reference_flavor(config: &ServerConfig) -> std::sync::Arc<ReferenceFlavor> {
+    std::sync::Arc::new(ReferenceFlavor::new(
+        config.server_name.clone(),
+        ServerPresentation {
+            welcome_text: (!config.welcome_text.is_empty()).then(|| config.welcome_text.clone()),
+            allow_html: config.allow_html,
+            max_message_length: Some(config.message_length),
+            recording_allowed: config.recording_allowed,
+        },
+    ))
+}
 
 /// Start a Phase 3 server on ephemeral 127.0.0.1 ports.
 async fn start_server() -> ServerHandle {
     tls::install_crypto_provider();
     let identity = Identity::self_signed(vec!["localhost".to_string()]).expect("identity");
     let addr: SocketAddr = "127.0.0.1:0".parse().expect("addr");
-    Server::bind(ServerConfig::default(), identity, addr, addr)
+    let config = ServerConfig::default();
+    let flavor = reference_flavor(&config);
+    Server::bind(config, flavor, identity, addr, addr)
         .await
         .expect("bind")
         .spawn()
