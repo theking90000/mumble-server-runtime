@@ -36,7 +36,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use thiserror::Error;
 
 use crate::ids::{
-    ChannelId, ChannelKey, ConnectionId, Exhausted, IdAllocator, Occupant, SessionId,
+    ChannelId, ChannelKey, ConnectionId, Exhausted, Occupant, SessionId, ShardId, SharedIds,
 };
 use crate::routing::{AudioRelation, DomainId};
 use crate::scope::{Scope, ScopeSet};
@@ -181,7 +181,10 @@ pub struct Rendered {
 /// render is discarded whole. Handles returned after a refusal are meaningless,
 /// which is harmless precisely because nothing built on them will be published.
 pub struct ShardBuilder<'a> {
-    ids: &'a mut IdAllocator,
+    ids: &'a SharedIds,
+    /// Namespaces this render's channel keys. Two shards may use the same key
+    /// for two different channels, and they must not collide on the wire.
+    shard: ShardId,
     connections: &'a [ConnectionId],
     view: ShardView,
     overlays: BTreeMap<ConnectionId, Overlay>,
@@ -196,9 +199,14 @@ pub struct ShardBuilder<'a> {
 
 impl<'a> ShardBuilder<'a> {
     #[must_use]
-    pub fn new(ids: &'a mut IdAllocator, connections: &'a [ConnectionId]) -> ShardBuilder<'a> {
+    pub fn new(
+        ids: &'a SharedIds,
+        shard: ShardId,
+        connections: &'a [ConnectionId],
+    ) -> ShardBuilder<'a> {
         ShardBuilder {
             ids,
+            shard,
             connections,
             view: ShardView::empty(),
             overlays: BTreeMap::new(),
@@ -262,7 +270,7 @@ impl<'a> ShardBuilder<'a> {
             self.fail(BuildError::DuplicateChannelKey(key));
             return parent;
         }
-        let id = match self.ids.channel(key) {
+        let id = match self.ids.channel(self.shard, key) {
             Ok(id) => id,
             Err(exhausted) => {
                 self.fail(BuildError::Exhausted(exhausted));
@@ -365,6 +373,7 @@ impl<'a> ShardBuilder<'a> {
     pub fn private(&mut self, connection: ConnectionId, build: impl FnOnce(&mut PrivateBuilder)) {
         let mut private = PrivateBuilder {
             ids: self.ids,
+            shard: self.shard,
             overlay: self.overlays.entry(connection).or_default(),
             error: &mut self.error,
         };
@@ -444,7 +453,8 @@ impl<'a> ShardBuilder<'a> {
 
 /// The constructor for one connection's private elements.
 pub struct PrivateBuilder<'a> {
-    ids: &'a mut IdAllocator,
+    ids: &'a SharedIds,
+    shard: ShardId,
     overlay: &'a mut Overlay,
     error: &'a mut Option<BuildError>,
 }
@@ -482,7 +492,7 @@ impl PrivateBuilder<'_> {
 
     /// A channel visible to this connection only.
     pub fn channel(&mut self, parent: ChannelRef, key: ChannelKey, name: &str) -> ChannelRef {
-        let id = match self.ids.channel(key) {
+        let id = match self.ids.channel(self.shard, key) {
             Ok(id) => id,
             Err(exhausted) => {
                 self.error.get_or_insert(BuildError::Exhausted(exhausted));
@@ -787,9 +797,9 @@ mod tests {
 
     #[test]
     fn a_user_is_always_at_or_below_its_channels_scope() {
-        let mut ids = IdAllocator::new();
+        let ids = SharedIds::new();
         let connections = [ConnectionId(1)];
-        let mut builder = ShardBuilder::new(&mut ids, &connections);
+        let mut builder = ShardBuilder::new(&ids, ShardId(1), &connections);
 
         let root = builder.root("Lobby");
         let game = builder.channel(root, ChannelKey(1), "Game", Narrow::Into(7));
@@ -830,8 +840,8 @@ mod tests {
 
     #[test]
     fn a_render_without_a_root_is_refused() {
-        let mut ids = IdAllocator::new();
-        let builder = ShardBuilder::new(&mut ids, &[]);
+        let ids = SharedIds::new();
+        let builder = ShardBuilder::new(&ids, ShardId(1), &[]);
         assert_eq!(
             builder.finish(&BTreeMap::new()),
             Err(BuildError::MissingRoot)
@@ -840,8 +850,8 @@ mod tests {
 
     #[test]
     fn the_same_channel_key_twice_is_refused_rather_than_merged() {
-        let mut ids = IdAllocator::new();
-        let mut builder = ShardBuilder::new(&mut ids, &[]);
+        let ids = SharedIds::new();
+        let mut builder = ShardBuilder::new(&ids, ShardId(1), &[]);
         let root = builder.root("Lobby");
         builder.channel(root, ChannelKey(1), "A", Narrow::Same);
         builder.channel(root, ChannelKey(1), "B", Narrow::Same);
@@ -854,8 +864,8 @@ mod tests {
 
     #[test]
     fn narrowing_past_the_depth_bound_refuses_the_render() {
-        let mut ids = IdAllocator::new();
-        let mut builder = ShardBuilder::new(&mut ids, &[]);
+        let ids = SharedIds::new();
+        let mut builder = ShardBuilder::new(&ids, ShardId(1), &[]);
         let mut current = builder.root("Lobby");
         for depth in 0..u64::try_from(crate::scope::MAX_DEPTH).unwrap_or(4) + 1 {
             current = builder.channel(
@@ -874,8 +884,8 @@ mod tests {
 
     #[test]
     fn linking_across_incomparable_scopes_is_refused() {
-        let mut ids = IdAllocator::new();
-        let mut builder = ShardBuilder::new(&mut ids, &[]);
+        let ids = SharedIds::new();
+        let mut builder = ShardBuilder::new(&ids, ShardId(1), &[]);
         let root = builder.root("Lobby");
         let red = builder.channel(root, ChannelKey(1), "Red", Narrow::Into(2));
         let blue = builder.channel(root, ChannelKey(2), "Blue", Narrow::Into(3));
@@ -892,8 +902,8 @@ mod tests {
 
     #[test]
     fn linking_within_comparable_scopes_is_symmetric() {
-        let mut ids = IdAllocator::new();
-        let mut builder = ShardBuilder::new(&mut ids, &[]);
+        let ids = SharedIds::new();
+        let mut builder = ShardBuilder::new(&ids, ShardId(1), &[]);
         let root = builder.root("Lobby");
         let game = builder.channel(root, ChannelKey(1), "Game", Narrow::Into(7));
         let team = builder.channel(game, ChannelKey(2), "Team", Narrow::Into(2));
@@ -914,9 +924,9 @@ mod tests {
 
     #[test]
     fn the_same_person_shared_and_private_is_refused_rather_than_merged() {
-        let mut ids = IdAllocator::new();
+        let ids = SharedIds::new();
         let connections = [ConnectionId(1)];
-        let mut builder = ShardBuilder::new(&mut ids, &connections);
+        let mut builder = ShardBuilder::new(&ids, ShardId(1), &connections);
         let root = builder.root("Lobby");
         let admin = Occupant::Connection(ConnectionId(1));
         builder.user(root, admin, "admin", Narrow::Same);
@@ -932,9 +942,9 @@ mod tests {
 
     #[test]
     fn an_overlay_cannot_place_someone_in_a_channel_that_connection_cannot_see() {
-        let mut ids = IdAllocator::new();
+        let ids = SharedIds::new();
         let connections = [ConnectionId(1)];
-        let mut builder = ShardBuilder::new(&mut ids, &connections);
+        let mut builder = ShardBuilder::new(&ids, ShardId(1), &connections);
         let root = builder.root("Lobby");
         let hidden = builder.channel(root, ChannelKey(1), "Red", Narrow::Into(2));
         builder.private(ConnectionId(1), |private| {
@@ -952,9 +962,9 @@ mod tests {
 
     #[test]
     fn an_audio_edge_into_a_blind_receiver_is_refused() {
-        let mut ids = IdAllocator::new();
+        let ids = SharedIds::new();
         let connections = [ConnectionId(1), ConnectionId(2)];
-        let mut builder = ShardBuilder::new(&mut ids, &connections);
+        let mut builder = ShardBuilder::new(&ids, ShardId(1), &connections);
         let root = builder.root("Lobby");
         let red = builder.channel(root, ChannelKey(1), "Red", Narrow::Into(2));
         let blue = builder.channel(root, ChannelKey(2), "Blue", Narrow::Into(3));
@@ -986,9 +996,9 @@ mod tests {
 
     #[test]
     fn an_audio_edge_is_allowed_when_the_receiver_sees_the_sender_privately() {
-        let mut ids = IdAllocator::new();
+        let ids = SharedIds::new();
         let connections = [ConnectionId(1), ConnectionId(2)];
-        let mut builder = ShardBuilder::new(&mut ids, &connections);
+        let mut builder = ShardBuilder::new(&ids, ShardId(1), &connections);
         let root = builder.root("Lobby");
         let red = builder.channel(root, ChannelKey(1), "Red", Narrow::Into(2));
         builder.user(

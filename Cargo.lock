@@ -1137,6 +1137,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
+name = "voxloom-arena"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "tokio",
+ "voxloom-gateway",
+ "voxloom-protocol",
+ "voxloom-shard",
+]
+
+[[package]]
 name = "voxloom-audio"
 version = "0.1.0"
 dependencies = [
@@ -1201,6 +1212,22 @@ version = "0.1.0"
 dependencies = [
  "voxloom-control",
  "voxloom-flavor",
+]
+
+[[package]]
+name = "voxloom-gateway"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "rcgen",
+ "ring",
+ "rustls",
+ "thiserror 2.0.19",
+ "tokio",
+ "tokio-rustls",
+ "voxloom-crypto",
+ "voxloom-protocol",
+ "voxloom-shard",
 ]
 
 [[package]]

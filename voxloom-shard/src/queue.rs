@@ -21,6 +21,32 @@ use voxloom_protocol::ControlMessage;
 /// How many messages one connection's queue holds.
 pub const CAPACITY: usize = 1024;
 
+/// The depth past which tunnelled voice is refused.
+///
+/// Voice is bounded in **latency**, not in volume: at a speaker's usual 10 ms of
+/// framing, 64 queued messages is roughly 640 ms of backlog, and a packet that
+/// late is worth nothing to anyone. Control messages have no such bound because
+/// a skipped `UserState` leaves the client on a view that silently diverges.
+///
+/// One queue rather than two, because the client discards audio whose sender
+/// session it does not know: the `UserState` introducing a speaker has to reach
+/// the client before that speaker's tunnelled audio, and two independent queues
+/// cannot promise that.
+///
+/// REF: references/mumble/src/mumble/ServerHandler.cpp : `handleVoicePacket`
+///   looks the sender up with `ClientUser::get(senderSession)` and drops the
+///   packet when it is absent.
+pub const MAX_DEPTH_FOR_VOICE: usize = 64;
+
+/// What became of a tunnelled voice packet.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VoiceAdmission {
+    Accepted,
+    /// The queue was too deep for the packet to still be worth hearing. Counted
+    /// rather than silent (R6), and never a reason to end the connection.
+    Dropped,
+}
+
 /// Why a transition could not be admitted.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
 pub enum Refused {
@@ -116,6 +142,26 @@ impl OutboundQueue {
             permit.send(message);
         }
         Ok(())
+    }
+
+    /// Offer one tunnelled voice packet, dropping it if the queue is already
+    /// too deep for it to arrive in time.
+    ///
+    /// Deliberately not `try_send_all`: a refused transition is retried, while a
+    /// refused voice packet is gone, and conflating the two would either close
+    /// connections over lost audio or replay stale speech.
+    pub fn push_voice(&self, message: ControlMessage) -> VoiceAdmission {
+        if self.depth() >= MAX_DEPTH_FOR_VOICE {
+            return VoiceAdmission::Dropped;
+        }
+        match self.sender.try_send(message) {
+            Ok(()) => VoiceAdmission::Accepted,
+            Err(mpsc::error::TrySendError::Full(_)) => VoiceAdmission::Dropped,
+            Err(mpsc::error::TrySendError::Closed(_)) => {
+                self.must_close.store(true, Ordering::Relaxed);
+                VoiceAdmission::Dropped
+            }
+        }
     }
 
     /// Whether the owning task must end this connection.
@@ -225,6 +271,35 @@ mod tests {
 
         assert_eq!(queue.try_send_all(vec![message(1)]), Err(Refused::Closed));
         assert!(queue.must_close());
+    }
+
+    #[test]
+    fn voice_is_refused_long_before_the_queue_is_full() {
+        let (queue, _receiver) = OutboundQueue::new();
+        for _ in 0..MAX_DEPTH_FOR_VOICE {
+            assert_eq!(queue.push_voice(message(1)), VoiceAdmission::Accepted);
+        }
+
+        assert_eq!(queue.push_voice(message(1)), VoiceAdmission::Dropped);
+        assert!(
+            !queue.must_close(),
+            "dropping late audio is the correct outcome, not a fault"
+        );
+        assert!(
+            queue.depth() < CAPACITY,
+            "the point of the voice bound is that control still has room"
+        );
+    }
+
+    #[test]
+    fn control_still_fits_when_voice_has_been_refused() {
+        let (queue, _receiver) = OutboundQueue::with_capacity(MAX_DEPTH_FOR_VOICE + 8);
+        for _ in 0..MAX_DEPTH_FOR_VOICE {
+            assert_eq!(queue.push_voice(message(1)), VoiceAdmission::Accepted);
+        }
+        assert_eq!(queue.push_voice(message(1)), VoiceAdmission::Dropped);
+
+        assert_eq!(queue.try_send_all(vec![message(2); 8]), Ok(()));
     }
 
     #[test]

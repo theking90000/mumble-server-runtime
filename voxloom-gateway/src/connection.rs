@@ -1,0 +1,492 @@
+//! One task per TCP connection: terminate TLS, route, attach, serve, detach.
+//!
+//! The task owns the socket and nothing else. A migration never moves it: only
+//! the shard it sends its events to changes, which is exactly why a connection
+//! can cross shards without its client noticing anything but a new tree.
+//!
+//! ```text
+//!   TLS -> Version -> [Authenticate] -> router.route()
+//!        -> attach -> prelude -> the shard's first transition -> ServerSync
+//!        -> service loop
+//!        -> detach
+//! ```
+
+use std::net::SocketAddr;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+use anyhow::{Context, Result};
+use ring::rand::SystemRandom;
+use tokio::io::{AsyncReadExt, AsyncWriteExt, ReadHalf, WriteHalf};
+use tokio::net::{TcpStream, UdpSocket};
+use tokio::sync::mpsc;
+use tokio_rustls::TlsAcceptor;
+use tokio_rustls::server::TlsStream;
+use voxloom_protocol::messages::tcp;
+use voxloom_protocol::{
+    ControlMessage, UdpMessage, decode_frame, decode_udp, encode_frame, parse_frame,
+};
+use voxloom_shard::{ChannelId, OutboundQueue, ShardCommand};
+
+use crate::config::GatewayConfig;
+use crate::handshake;
+use crate::limits;
+use crate::peer::{Peer, ShardPlane};
+use crate::router::{ConnectionIdentity, ConnectionRouter, RouteDecision};
+use crate::runtime::RuntimeHandle;
+use crate::voice::{VoicePlane, generate_crypt_setup};
+
+/// How long the handshake waits for the shard to publish this connection's
+/// first view.
+///
+/// Generous, because the wait is only ever one shard turn plus scheduling. It
+/// exists so a shard wedged by a flavor's own bug refuses the arrival instead of
+/// leaving a client staring at a handshake that never completes.
+const FIRST_VIEW_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Serve one accepted TCP connection to completion.
+///
+/// # Errors
+///
+/// A TLS failure, a malformed frame or a dropped socket. Any of them ends the
+/// connection cleanly: it is detached and its peer record removed.
+pub async fn serve<R: ConnectionRouter>(
+    tcp: TcpStream,
+    acceptor: TlsAcceptor,
+    runtime: RuntimeHandle,
+    router: Arc<R>,
+    voice: Arc<VoicePlane>,
+    udp: Arc<UdpSocket>,
+    config: Arc<GatewayConfig>,
+) -> Result<()> {
+    // A fresh randomness handle per connection; `SystemRandom` is a cheap ZST.
+    let rng = SystemRandom::new();
+    // Nagle off: control latency matters more than coalescing small frames.
+    let _ignored = tcp.set_nodelay(true);
+    let host = tcp.peer_addr().context("TCP peer address")?.ip();
+
+    let tls = acceptor.accept(tcp).await.context("TLS handshake")?;
+    let certificate_hash = crate::tls::client_certificate_hash(&tls);
+    let (read_half, write_half) = tokio::io::split(tls);
+    let mut reader = FrameReader::new(read_half);
+    let mut writer = write_half;
+
+    // The server announces its version as soon as TLS completes, before the
+    // client authenticates (REF Server.cpp::encrypted).
+    write_message(&mut writer, &handshake::server_version(&config)).await?;
+
+    let Some(authenticate) = wait_for_authenticate(&mut reader).await? else {
+        return Ok(()); // it left before authenticating
+    };
+
+    let identity = ConnectionIdentity {
+        // The client's proposal, bounded before it is ever stored or rendered.
+        name: authenticate
+            .username
+            .as_deref()
+            .unwrap_or("Guest")
+            .chars()
+            .take(64)
+            .collect(),
+        certificate_hash,
+        credential: authenticate.password,
+    };
+
+    if runtime.peers().len() >= config.max_users as usize {
+        write_message(&mut writer, &handshake::reject("the server is full")).await?;
+        return Ok(());
+    }
+
+    // Both identifiers are reserved before the routing decision, so the router
+    // can bind this connection's claimed identity to the id every later event
+    // will carry. Neither is ever reused, so reserving one for a connection that
+    // is then rejected costs a number and nothing else.
+    let connection = runtime.next_connection();
+    let session = runtime
+        .session_for(connection)
+        .context("allocating a session")?;
+
+    let shard = match router.route(connection, &identity).await {
+        RouteDecision::Attach(shard) => shard,
+        RouteDecision::Reject(reason) => {
+            write_message(&mut writer, &handshake::reject(&reason)).await?;
+            return Ok(());
+        }
+    };
+
+    let (crypt_setup, crypt_state) = generate_crypt_setup(&rng)?;
+    let (queue, mut outbound) = OutboundQueue::new();
+
+    // The plane is a placeholder until `attach` points it at the real shard.
+    // Registering first is what lets the shard's very first render already find
+    // the connection in the peer table.
+    let placeholder = ShardPlane {
+        shard,
+        routing: tokio::sync::watch::channel(Arc::new(voxloom_shard::AudioRouting::default())).1,
+    };
+    let peer = Arc::new(Peer::new(
+        connection,
+        session,
+        host,
+        crypt_state,
+        Arc::new(queue),
+        placeholder,
+        Instant::now(),
+    ));
+    runtime.peers().insert(Arc::clone(&peer));
+
+    // Everything past registration is wrapped so a failure during the handshake
+    // gets exactly the same cleanup as a steady-state disconnect.
+    let result = async {
+        for message in handshake::prelude(crypt_setup) {
+            write_message(&mut writer, &message).await?;
+        }
+
+        let ready = runtime
+            .attach(&peer, shard)
+            .context("attaching to the routed shard")?;
+
+        // The first transition is the ordinary one: the shard plans it, the
+        // queue carries it, and the handshake merely writes it out before
+        // `ServerSync`. That is what keeps invariants 1 and 6 satisfied with a
+        // single rendering path in the runtime.
+        tokio::time::timeout(FIRST_VIEW_TIMEOUT, ready)
+            .await
+            .context("the shard did not publish a first view in time")?
+            .context("the shard dropped the connection during its first render")?;
+        drain(&mut writer, &mut outbound).await?;
+
+        for message in handshake::completion(&config, session) {
+            write_message(&mut writer, &message).await?;
+        }
+
+        service(
+            &mut reader,
+            &mut writer,
+            &mut outbound,
+            &peer,
+            &runtime,
+            &voice,
+            &udp,
+        )
+        .await
+    }
+    .await;
+
+    runtime.peers().remove(connection);
+    runtime.detach(connection, peer.shard(), "connection closed");
+
+    result
+}
+
+/// The steady state: read client frames, write what the shard pushed.
+async fn service(
+    reader: &mut FrameReader,
+    writer: &mut WriteHalf<TlsStream<TcpStream>>,
+    outbound: &mut mpsc::Receiver<ControlMessage>,
+    peer: &Arc<Peer>,
+    runtime: &RuntimeHandle,
+    voice: &Arc<VoicePlane>,
+    udp: &UdpSocket,
+) -> Result<()> {
+    loop {
+        // A refused control message means this client is too far behind to hold
+        // a correct view, so the connection ends and reconnecting rebuilds one.
+        //
+        // Polling rather than being woken is sound: the flag is only set when
+        // the queue is full, which means there are messages waiting, so the
+        // branch below fires immediately and comes straight back here.
+        if peer.queue().must_close() {
+            anyhow::bail!(
+                "session {:?}: output queue overflowed, closing rather than diverging",
+                peer.session()
+            );
+        }
+
+        tokio::select! {
+            // Cancellation-safe: `next` reads into an owned buffer and never
+            // leaves a half-consumed frame across an await, so dropping it on
+            // the other branch loses nothing.
+            incoming = reader.next() => {
+                match incoming? {
+                    None => return Ok(()), // clean close
+                    Some(ControlMessage::UdpTunnel(raw)) => {
+                        for (sealed, to) in tunnelled(voice, peer, &raw) {
+                            if let Err(error) = udp.send_to(&sealed, to).await {
+                                eprintln!("voxloom-gateway: UDP send to {to} failed: {error}");
+                            }
+                        }
+                    }
+                    Some(message) => {
+                        for reply in inbound(message, peer, runtime) {
+                            write_message(writer, &reply).await?;
+                        }
+                    }
+                }
+            }
+            // Cancellation-safe: a message leaves the channel only when this
+            // branch is selected.
+            queued = outbound.recv() => {
+                match queued {
+                    Some(message) => {
+                        let was_voice = matches!(message, ControlMessage::UdpTunnel(_));
+                        write_message(writer, &message).await?;
+                        // Draining control capacity is what a congested shard is
+                        // waiting for, so tell it - for this connection alone,
+                        // in O(1). Draining a tunnelled voice packet frees
+                        // nothing worth re-rendering for, and it happens fifty
+                        // times a second per speaker.
+                        if !was_voice {
+                            let _delivered = runtime.send(
+                                peer.shard(),
+                                ShardCommand::Drained(peer.connection()),
+                            );
+                        }
+                    }
+                    // The queue's sending half lives in the shard; losing it
+                    // means the shard is gone.
+                    None => return Ok(()),
+                }
+            }
+        }
+    }
+}
+
+/// Read frames until `Authenticate` arrives, or the client leaves.
+async fn wait_for_authenticate(reader: &mut FrameReader) -> Result<Option<tcp::Authenticate>> {
+    loop {
+        match reader.next().await? {
+            None => return Ok(None),
+            Some(ControlMessage::Authenticate(authenticate)) => return Ok(Some(authenticate)),
+            // The client's own Version, and any other pre-auth chatter, is
+            // accepted and ignored.
+            Some(_) => continue,
+        }
+    }
+}
+
+/// Handle one control message from the client.
+///
+/// Every branch ends in an explicit outcome (R6): a reply, a request forwarded
+/// to the shard, or a logged refusal.
+fn inbound(
+    message: ControlMessage,
+    peer: &Arc<Peer>,
+    runtime: &RuntimeHandle,
+) -> Vec<ControlMessage> {
+    match message {
+        // REF: references/mumble/src/murmur/Messages.cpp : `Server::msgPing`
+        //   answers with the timestamp and the OCB2 counters.
+        ControlMessage::Ping(ping) => vec![ControlMessage::Ping(ping_reply(&ping, peer))],
+
+        // The one client intent this runtime understands: "put me in that
+        // channel". It is forwarded as a *request*; the flavor decides, and a
+        // channel the connection cannot see is refused by the shard.
+        //
+        // REF: references/vendored/Mumble.proto : a client moves itself with a
+        //   `UserState` naming its own session and a `channel_id`.
+        ControlMessage::UserState(state) => {
+            let mine = state.session == Some(peer.session().0);
+            match (mine, state.channel_id) {
+                (true, Some(channel)) => {
+                    let _delivered = runtime.send(
+                        peer.shard(),
+                        ShardCommand::Requested {
+                            connection: peer.connection(),
+                            channel: ChannelId(channel),
+                        },
+                    );
+                    Vec::new()
+                }
+                // Self-mute and self-deafen are local client state this build
+                // does not mirror into the view; acknowledging them silently
+                // would be a lie, so they are refused like the rest.
+                _ => {
+                    refused("UserState", peer);
+                    vec![permission_denied(peer)]
+                }
+            }
+        }
+
+        other => {
+            refused(kind_of(&other), peer);
+            vec![permission_denied(peer)]
+        }
+    }
+}
+
+/// Route a TCP-tunnelled voice packet (the UDP fallback of spec 15.6).
+///
+/// The payload is a plaintext UDP packet, so once decoded it goes through the
+/// very same routing as a datagram. Recipients on UDP are returned as datagrams;
+/// recipients on the tunnel are served inside the voice plane.
+fn tunnelled(voice: &Arc<VoicePlane>, peer: &Arc<Peer>, raw: &[u8]) -> Vec<(Vec<u8>, SocketAddr)> {
+    // The client is telling us its UDP does not work, so its own audio goes back
+    // over the tunnel until a datagram from it reaches us again.
+    // REF: references/mumble/src/murmur/Server.cpp : the `UDPTunnel` branch sets
+    //   `u->aiUdpFlag = 0`.
+    peer.set_udp_mode(false);
+
+    if !limits::is_acceptable_size(raw.len()) {
+        eprintln!(
+            "voxloom-gateway: session {:?}: dropping a {}-byte tunnelled packet",
+            peer.session(),
+            raw.len()
+        );
+        return Vec::new();
+    }
+
+    match decode_udp(raw) {
+        Ok(UdpMessage::Audio(audio)) => voice.route(peer, &audio, Instant::now()),
+        Ok(UdpMessage::Ping(_)) => {
+            // Connectivity pings belong on the UDP socket; one arriving here
+            // measures nothing, so it is refused rather than answered.
+            eprintln!(
+                "voxloom-gateway: session {:?}: refusing a ping through the tunnel",
+                peer.session()
+            );
+            Vec::new()
+        }
+        Err(error) => {
+            eprintln!(
+                "voxloom-gateway: session {:?}: bad tunnelled envelope: {error}",
+                peer.session()
+            );
+            Vec::new()
+        }
+    }
+}
+
+/// Build the reply to a TCP `Ping`.
+///
+/// Reporting `good` is not bookkeeping. The client reads it as `uiRemoteGood`
+/// and, if it is still zero twenty seconds into the session, decides its UDP
+/// never reaches us and falls back to the TCP tunnel permanently - while the UDP
+/// plane is working in both directions.
+///
+/// REF: references/mumble/src/mumble/ServerHandler.cpp : `TCPMessageType::Ping`
+///   disables UDP on `(uiRemoteGood == 0 || uiGood == 0) && bUdp && elapsed >
+///   20000000`.
+fn ping_reply(request: &tcp::Ping, peer: &Peer) -> tcp::Ping {
+    let (good, late, lost) = peer.crypt_counters();
+    tcp::Ping {
+        timestamp: request.timestamp,
+        good: Some(good),
+        late: Some(late),
+        lost: Some(lost),
+        // Nonce resync is refused, so zero is the true count rather than a
+        // placeholder.
+        resync: Some(0),
+        ..Default::default()
+    }
+}
+
+/// REF: references/vendored/Mumble.proto : `PermissionDenied`.
+fn permission_denied(peer: &Peer) -> ControlMessage {
+    ControlMessage::PermissionDenied(tcp::PermissionDenied {
+        session: Some(peer.session().0),
+        reason: Some("This action is not available in the current view".to_owned()),
+        r#type: Some(i32::from(tcp::permission_denied::DenyType::Text)),
+        ..Default::default()
+    })
+}
+
+/// Name the drop so it is auditable rather than silent (R6).
+fn refused(kind: &str, peer: &Peer) {
+    eprintln!(
+        "voxloom-gateway: session {:?}: refusing {kind}",
+        peer.session()
+    );
+}
+
+fn kind_of(message: &ControlMessage) -> &'static str {
+    match message {
+        ControlMessage::ChannelState(_) => "ChannelState",
+        ControlMessage::ChannelRemove(_) => "ChannelRemove",
+        ControlMessage::UserRemove(_) => "UserRemove",
+        ControlMessage::TextMessage(_) => "TextMessage",
+        ControlMessage::Acl(_) => "ACL",
+        ControlMessage::VoiceTarget(_) => "VoiceTarget",
+        ControlMessage::CryptSetup(_) => "CryptSetup(resync)",
+        ControlMessage::PermissionQuery(_) => "PermissionQuery",
+        ControlMessage::UserStats(_) => "UserStats",
+        ControlMessage::RequestBlob(_) => "RequestBlob",
+        _ => "an unsupported message",
+    }
+}
+
+/// Write everything already queued, then return.
+///
+/// `try_recv` is deliberate: the queue holds exactly what the shard's first
+/// transition put there, and waiting for more would wait forever.
+async fn drain(
+    writer: &mut WriteHalf<TlsStream<TcpStream>>,
+    outbound: &mut mpsc::Receiver<ControlMessage>,
+) -> Result<()> {
+    while let Ok(message) = outbound.try_recv() {
+        write_message(writer, &message).await?;
+    }
+    Ok(())
+}
+
+async fn write_message(
+    writer: &mut WriteHalf<TlsStream<TcpStream>>,
+    message: &ControlMessage,
+) -> Result<()> {
+    let mut framed = Vec::new();
+    encode_frame(message, &mut framed).context("encoding a control frame")?;
+    writer.write_all(&framed).await.context("TCP write")?;
+    writer.flush().await.context("TCP flush")?;
+    Ok(())
+}
+
+/// Incremental frame reader over the TLS read half.
+struct FrameReader {
+    read: ReadHalf<TlsStream<TcpStream>>,
+    buffer: Vec<u8>,
+}
+
+impl FrameReader {
+    fn new(read: ReadHalf<TlsStream<TcpStream>>) -> FrameReader {
+        FrameReader {
+            read,
+            buffer: Vec::with_capacity(4096),
+        }
+    }
+
+    /// The next complete control message, or `None` at a clean EOF on a frame
+    /// boundary. Reassembles across TLS records.
+    async fn next(&mut self) -> Result<Option<ControlMessage>> {
+        loop {
+            if let Some((message, consumed)) = self.try_parse()? {
+                self.buffer.drain(..consumed);
+                return Ok(Some(message));
+            }
+
+            let mut chunk = [0u8; 4096];
+            let read = self.read.read(&mut chunk).await.context("TCP read")?;
+            if read == 0 {
+                if self.buffer.is_empty() {
+                    return Ok(None);
+                }
+                anyhow::bail!(
+                    "connection closed mid-frame ({} bytes buffered)",
+                    self.buffer.len()
+                );
+            }
+            self.buffer
+                .extend_from_slice(chunk.get(..read).unwrap_or_default());
+        }
+    }
+
+    fn try_parse(&self) -> Result<Option<(ControlMessage, usize)>> {
+        match parse_frame(&self.buffer).context("framing")? {
+            Some(frame) => {
+                let consumed = frame.total_len();
+                let message = decode_frame(&frame).context("decoding a control message")?;
+                Ok(Some((message, consumed)))
+            }
+            None => Ok(None),
+        }
+    }
+}

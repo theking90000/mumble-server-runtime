@@ -5,10 +5,12 @@
 > on en est arrivé là ; sur le modèle de visibilité, **c'est ce document-ci qui
 > fait foi**.
 >
-> **Statut : étapes 1 à 7 implémentées** dans `voxloom-shard` (branche
-> `shard-runtime`, 2026-07-27). Les étapes 8 à 10 — plan UDP, runtime
-> multi-shards, migration — restent une proposition. Le pipeline P5–P7 existant
-> n'a pas été retiré : les deux modèles coexistent le temps de la bascule.
+> **Statut : étapes 1 à 10 implémentées.** Le cœur pur et la task de shard dans
+> `voxloom-shard`, la porte d'entrée dans `voxloom-gateway` (plan de contrôle
+> TLS, `ConnectionRouter`, registre multi-shards, migration, plan vocal UDP), et
+> un flavor de démonstration dans `tools/voxloom-arena` — un seul exécutable.
+> Le pipeline P5–P7 existant n'a pas été retiré : les deux modèles coexistent le
+> temps de la bascule, et `voxloom-server` reste sur l'ancien.
 > Écarts assumés et points ouverts : §18.
 > Révision 3 (2026-07-27) — voir §16.
 
@@ -1180,9 +1182,12 @@ C'est la moitié du système, testable sans rien lancer.
 
 ## 17. Ce qui reste à trancher
 
-1. **Le client Mumble accepte-t-il des identifiants de canaux grands et épars ?**
-   À vérifier dans les sources vendorées. **La question la moins chère et la plus
-   structurante : réponds-y en premier.**
+1. ~~**Le client Mumble accepte-t-il des identifiants de canaux grands et
+   épars ?**~~ **Oui, tranché** : le client indexe ses canaux dans un
+   `QHash< unsigned int, Channel * >` et rien n'y suppose la densité ni un
+   maximum. REF `mumble/src/Channel.h:82` (`c_qhChannels`). L'allocateur peut
+   donc distribuer l'espace des `u32` sans le tasser, ce qui est ce qui rend
+   « un identifiant retiré ne revient jamais » tenable pour tout un runtime.
 2. **Écris `observation()` pour ton UHC réel** — joueur, host, spectateur ×2,
    staff, admin. Si un rôle ne rentre ni dans une portée ni dans un overlay borné,
    il vaut mieux le savoir avant cinq mille lignes.
@@ -1212,14 +1217,13 @@ contredisaient, c'est la règle qui a gagné.
 | 9.2 | `version += 1` à chaque tour utile | version incrémentée **seulement** si le delta partagé est non vide | Seul le delta partagé va au journal : un replan lit les vues, un overlay se recalcule. Sans ça, une connexion durablement congestionnée fait tourner la version à chaque tour et pousse le `tail` du journal au-delà de ce dont ses pairs ont besoin. |
 | 9.4 | `replan` affecte `conn.see` avant d'envoyer | les trois composantes n'avancent qu'au succès | C'est la règle 6 du §11, que le pseudo-code du §9.4 contredisait. Sinon une connexion congestionnée garderait la nouvelle observation avec l'ancienne vue, et le filtre du tour suivant utiliserait une portée dont le client n'a jamais entendu parler. |
 | 3.5 / 8.3 | « vérifier que `r` voit `s` » sur les arêtes | vérification **par portée distincte**, jamais par paire | Matérialiser les paires d'un domaine est quadratique et tournait à *chaque* rendu. À 500 connexions, ces deux passages en `BTreeSet` coûtaient plus que tout le reste du tour (21,6 ms contre 0,74 ms une fois corrigés). `resolve()` reste la définition, et un test y épingle `compile`. |
+| 4 | allocateur d'identifiants **par shard** | un seul allocateur pour tout le runtime, canaux indexés sur `(shard, clé)` | Dès qu'une connexion peut changer de shard, l'allocation par shard casse la règle 3 du §11 vue du client : le shard A retire le canal 5, le shard B en crée un autre qui porte aussi le 5. Les sessions sont pires — voir la ligne suivante. Comme la session est indexée sur l'`Occupant`, une migration garde la sienne **gratuitement**. |
+| 9.6 | « migrer = détacher de A, attacher à B, **rien d'autre** » | le détachement d'une migration ne pousse **rien** ; A transmet la vue tenue par le client, B planifie une seule transition dessus | Le démontage n'est pas seulement du gaspillage, il **déconnecte le client officiel**. `msgUserRemove` ne retire pas la victime du modèle quand c'est soi (`if (pDst != pSelf)`), donc le `ChannelRemove` qui suit ressemble à la suppression d'un canal occupé ; `msgChannelRemove` journalise « Protocol violation » et appelle `disconnect()`. REF `mumble/Messages.cpp`, `mumble/UserModel.cpp::removeChannel`. |
+| 9.2 | table de routage compilée depuis la vue partagée | compilée depuis la vue partagée **plus la présence propre de chaque overlay** | Une connexion sans présence partagée n'est pas absente du runtime : c'est exactement ce qu'est un vanish. L'omettre transformait silencieusement « entend tout, n'est entendu de personne » en « ne participe pas à l'audio », sans que le flavor puisse distinguer les deux. Qui l'entend reste une autre question, et le rendu refuse déjà une relation dont la réponse est non. |
+| 10.1 | `route(&identity)` | `route(connection, &identity)` | Un `VoiceEvent` ne transporte qu'un `ConnectionId` — délibérément, le runtime n'a pas d'opinion sur ce qu'est un utilisateur. Le routage est donc le seul instant où l'identité et l'identifiant se rencontrent : une application qui veut que son flavor connaisse un nom enregistre la paire là. |
 
 ### 18.1 Ce qui n'est pas fait
 
-- **Étapes 8 à 10** : plan UDP (`Bindings`, gating par curseur côté livraison),
-  `RuntimeHandle` / `ConnectionRouter` multi-shards, migration. `AudioRouting`
-  expose déjà `receivers()` et `since()`, et chaque connexion publie son curseur
-  dans un `Arc<AtomicU64>` : c'est exactement ce que le §9.5 demande au shard, et
-  rien de plus.
 - **`voxloom-server` n'est pas rebranché.** Le modèle par connexion (P5–P7) reste
   celui qui tourne. Le rebrancher retirerait le coordinateur de publication et les
   jetons de commit, et casserait les tests de conformité du testkit qui jugent ce
@@ -1228,6 +1232,11 @@ contredisaient, c'est la règle qui a gagné.
 - **Utilisateurs synthétiques** : `Occupant::Synthetic` leur donne une session
   stable, mais aucune politique n'est inventée pour la façon dont l'audio les
   référence (§17.5 reste ouvert).
+- **Cibles `VoiceTarget` (shout / whisper)** : refusées et journalisées plutôt
+  que routées comme de la parole normale, ce qui livrerait de la voix à des
+  auditeurs que le client n'a jamais adressés. Leur enregistrement est P9.
+- **Resync de nonce OCB2** : un datagramme d'un pair lié qui ne déchiffre plus
+  est jeté avec un log. Le `resync` du `Ping` TCP vaut donc 0 en vérité.
 - **Le proptest ne consomme pas `SimulatedMumbleClient`** (R2, même raison). Le
   modèle strict de `voxloom-shard/tests/support/model.rs` applique les vrais
   messages de contrôle et juge chaque état intermédiaire ; le brancher sur le

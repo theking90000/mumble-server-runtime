@@ -703,17 +703,74 @@ connexion » : elle descend d'un côté, elle est multipliée par 32 de l'autre.
 `cargo test -p voxloom-shard` — 83 tests (63 unitaires, 13 shard live, 7 oracle) ;
 `cargo test --workspace` vert, aucun test existant modifié.
 
+### Runtime à shards — étapes 8 à 10 (branche `shard-runtime`, 2026-07-27)
+
+La porte d'entrée, plus un flavor de démonstration. Toujours en coexistence :
+`voxloom-server` n'est pas touché et continue de faire tourner P5–P7.
+
+| Étape | Livrable | Fichier |
+|---|---|---|
+| 8 | Plan vocal UDP : `Peers`/`Peer` (le `Bindings` du §9.7), chemin froid par preuve cryptographique, gating par curseur, repli tunnel | `voxloom-gateway/src/{peer,voice}.rs` |
+| 9 | `Runtime`/`RuntimeHandle`, registre multi-shards, `ConnectionRouter`, attach/detach | `voxloom-gateway/src/{runtime,router,connection,serve}.rs` |
+| 10 | Migration par transmission de vue, `ShardHandle::wake`, binaire de composition | `voxloom-gateway/src/runtime.rs`, `tools/voxloom-arena/` |
+
+Trois choses que l'écriture des étapes 9 et 10 a corrigées **dans le cœur** :
+
+- **L'allocateur d'identifiants ne peut pas être par shard.** Le client indexe
+  son modèle sur l'ID de wire : le shard A retirant le canal 5 puis le shard B en
+  créant un autre qui porte aussi le 5, c'est un identifiant qui revient sous une
+  autre identité. Les canaux sont donc indexés sur `(shard, clé)` et les sessions
+  sur l'`Occupant` — d'où une migration qui garde sa session gratuitement.
+- **Une migration n'est pas un détachement suivi d'un attachement.** Le client
+  officiel ne se retire **pas** lui-même de son modèle sur un `UserRemove` qui le
+  nomme (`if (pDst != pSelf)`, `mumble/Messages.cpp`), donc le `ChannelRemove` qui
+  suivrait ressemblerait à la suppression d'un canal occupé, ce que
+  `msgChannelRemove` traite en « Protocol violation » puis `disconnect()`. Le
+  shard source transmet la vue tenue par le client, et la destination planifie
+  **une** transition dessus : le même chemin lent qu'un changement de portée, sans
+  clignotement.
+- **La table de routage doit connaître les connexions sans présence partagée.**
+  La compiler depuis la seule vue partagée transformait un vanish en « ne
+  participe pas à l'audio » : un admin invisible n'entendait plus rien. Trouvé par
+  le flavor de démonstration, corrigé dans `voxloom-shard`, verrouillé par un test
+  dans les deux crates.
+
+Deux défauts de moindre portée, trouvés par les tests : le shard publiait sa
+table avec `watch::send`, qui **n'écrit pas** quand personne n'est encore abonné
+(donc un shard ayant rendu avant que le plan vocal ne démarre gardait une table
+vide) ; et `Gateway::bind` supposait qu'un port TCP éphémère était libre en UDP,
+ce qui est une course et non une certitude.
+
+**Flavor de démonstration** (`tools/voxloom-arena`, un seul exécutable) : un
+lobby et une arène sur deux shards, où les trois mécanismes servent à trois
+choses différentes — les équipes sont des **portées** (un rouge ne voit pas que
+la base bleue existe), l'admin est un **overlay** (invisible, et rendu visible à
+exactement l'équipe qu'il choisit d'adresser), et les spectateurs sont une
+**relation audio** (`audio_listen`, unidirectionnel par construction). Tout se
+pilote depuis un client Mumble standard en double-cliquant des canaux, y compris
+la migration entre les deux shards.
+
+**Vérifié** (`RUSTFLAGS="-D warnings"`) : `ci/gates.sh`, `ci/dep-direction.sh`,
+`ci/verifier-boundary.sh`, `cargo fmt --check`, `cargo clippy --workspace
+--all-targets --all-features`, tous verts. Done-commands :
+`cargo test -p voxloom-shard` (90), `cargo test -p voxloom-gateway` (20, dont 9
+d'intégration sur de vraies sockets TLS et UDP), `cargo test -p voxloom-arena`
+(12) ; `cargo test --workspace` vert, **aucun test existant modifié**.
+
+Démonstration humaine : `cargo run -p voxloom-arena -- 127.0.0.1:64738`, puis un
+client Mumble sur `127.0.0.1` (pas `localhost`, qui résout d'abord en IPv6).
+Le mot de passe `overwatch` connecte en staff invisible.
+
 **Reste avant de basculer** (détail et justification dans le §18 du guide) :
 
-- **Étapes 8 à 10** : plan UDP, runtime multi-shards, `ConnectionRouter`,
-  migration. Le shard publie déjà ce que le §9.5 lui demande (`AudioRouting`
-  avec `receivers()`/`since()`, et un `Arc<AtomicU64>` de curseur par connexion).
 - **Rebrancher `voxloom-server`**, ce qui retire le coordinateur de publication
   et les jetons de commit. Ça casse les tests de conformité du testkit qui jugent
   le pipeline actuel — **R2 interdit de toucher `voxloom-testkit/` dans le même
   diff qu'un `voxloom-*/src`**, donc c'est une bascule en deux commits séparés
   avec revue humaine, pas un détail d'intégration.
 - **Brancher l'oracle sur `SimulatedMumbleClient`** (même contrainte R2).
+- **Checkpoint humain** sur deux vrais clients : c'est la seule chose qui puisse
+  juger les étapes 8 à 10, exactement comme pour P4 et P6.
 
 ---
 

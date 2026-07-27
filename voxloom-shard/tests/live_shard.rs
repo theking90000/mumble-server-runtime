@@ -12,6 +12,7 @@
 #![allow(clippy::expect_used)]
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use voxloom_protocol::ControlMessage;
 use voxloom_shard::{
@@ -97,6 +98,10 @@ impl ShardLogic for Realms {
             out.private(vanished, |private| {
                 private.user_in(channel, Occupant::Connection(vanished), &name);
             });
+            // Hears its realm without being heard by it: the shape a vanished
+            // staff member takes, and the reason a connection with no shared
+            // presence still has to be nameable by the routing table.
+            out.audio_listen(vanished, DomainId(u64::from(realm)));
         }
     }
 
@@ -152,7 +157,7 @@ impl Harness {
         for (connection, _) in realms {
             let connection = ConnectionId(*connection);
             let (queue, receiver) = OutboundQueue::with_capacity(capacity);
-            shard.handle(ShardCommand::Attach { connection, queue });
+            shard.handle(ShardCommand::attach(connection, Arc::new(queue)));
             clients.insert(
                 connection,
                 Client {
@@ -250,10 +255,7 @@ async fn the_shard_task_renders_on_a_wake_and_then_sleeps() {
 
     let (queue, mut receiver) = OutboundQueue::with_capacity(1024);
     handle
-        .send(ShardCommand::Attach {
-            connection: ConnectionId(1),
-            queue,
-        })
+        .send(ShardCommand::attach(ConnectionId(1), Arc::new(queue)))
         .expect("the mailbox has room");
 
     let task = tokio::spawn(voxloom_shard::run(shard, wake, mailbox));
@@ -346,6 +348,33 @@ fn changing_realm_converges_without_flickering_the_common_ancestors() {
 }
 
 #[test]
+fn a_vanished_connection_can_still_be_routed() {
+    // It is absent from the shared view, which is what a vanish is - but it is
+    // not absent from the runtime. Compiling the routing table from the shared
+    // view alone would silently turn "hears everything, heard by nobody" into
+    // "takes no part in audio", and the flavor would have no way to tell.
+    let mut harness = Harness::new(&[(1, 0), (2, 0), (3, 0)], 1024);
+    harness
+        .shard
+        .logic_mut()
+        .world
+        .vanished
+        .push(ConnectionId(1));
+    let routing = harness.shard.routing();
+    harness.step("vanished from the start");
+
+    let table = routing.borrow();
+    assert!(
+        table.may_hear(SessionId(2), SessionId(1)),
+        "the vanished listener hears its realm"
+    );
+    assert!(
+        !table.may_hear(SessionId(1), SessionId(2)),
+        "and is heard by nobody"
+    );
+}
+
+#[test]
 fn a_vanish_appears_to_exactly_one_connection() {
     let mut harness = Harness::new(&[(1, 0), (2, 0), (3, 1)], 1024);
     harness.step("initial");
@@ -417,10 +446,7 @@ fn a_congested_connection_commits_nothing_and_converges_after_draining() {
     queue
         .try_send_all(vec![filler(); 6])
         .expect("six of eight slots");
-    shard.handle(ShardCommand::Attach {
-        connection: ConnectionId(1),
-        queue,
-    });
+    shard.handle(ShardCommand::attach(ConnectionId(1), Arc::new(queue)));
 
     let report = shard.reconcile();
     assert!(
@@ -499,6 +525,22 @@ fn a_transition_larger_than_the_queue_closes_the_connection() {
 // ---------------------------------------------------------------------------
 
 #[test]
+fn a_table_published_before_anyone_subscribed_is_still_there() {
+    // The voice plane subscribes when it starts, which may be after a shard has
+    // already rendered. A publication that only lands when someone is listening
+    // would leave the plane holding an empty table and drop every route.
+    let mut harness = Harness::new(&[(1, 0), (2, 0)], 1024);
+    harness.step("initial");
+
+    let routing = harness.shard.routing();
+    let table = routing.borrow();
+    assert!(
+        table.senders().next().is_some(),
+        "the table was rendered before anyone subscribed, and lost"
+    );
+}
+
+#[test]
 fn the_routing_table_is_published_and_gated_on_the_receivers_cursor() {
     let mut harness = Harness::new(&[(1, 0), (2, 0)], 1024);
     let routing = harness.shard.routing();
@@ -555,10 +597,9 @@ fn attaching_and_detaching_are_the_same_mechanism() {
     harness.step("initial");
     assert!(harness.model(2).has_user(1));
 
-    harness.shard.handle(ShardCommand::Detach {
-        connection: ConnectionId(1),
-        reason: "left".to_owned(),
-    });
+    harness
+        .shard
+        .handle(ShardCommand::detach(ConnectionId(1), "left"));
     // The detached connection is told to tear its own view down.
     harness
         .clients
@@ -619,10 +660,7 @@ fn a_refused_render_keeps_the_previous_view_and_closes_nothing() {
 
     let mut broken = Shard::new(ShardId(2), Broken);
     let (queue, _receiver) = OutboundQueue::with_capacity(1024);
-    broken.handle(ShardCommand::Attach {
-        connection: ConnectionId(1),
-        queue,
-    });
+    broken.handle(ShardCommand::attach(ConnectionId(1), Arc::new(queue)));
     let report = broken.reconcile();
 
     assert!(report.refused.is_some(), "the render must be refused");

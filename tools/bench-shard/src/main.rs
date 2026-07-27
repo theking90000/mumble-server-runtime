@@ -17,6 +17,7 @@
 //! REF: docs/design/guide-implementation.md 13 (the cost law)
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
@@ -75,10 +76,10 @@ fn measure(size: u32) -> Result<(Vec<Duration>, usize)> {
 
     for index in 1..=size {
         let (queue, receiver) = OutboundQueue::with_capacity(QUEUE);
-        shard.handle(ShardCommand::Attach {
-            connection: ConnectionId(u64::from(index)),
-            queue,
-        });
+        shard.handle(ShardCommand::attach(
+            ConnectionId(u64::from(index)),
+            Arc::new(queue),
+        ));
         receivers.push(receiver);
     }
 

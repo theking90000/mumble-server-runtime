@@ -1,0 +1,30 @@
+[package]
+name = "voxloom-arena"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Composition binary and demo flavor for the shard runtime : a lobby and an arena on two shards, teams as scopes, a vanished admin as an overlay, spectators as one-way listeners, and migration between the two. The only place that names both the runtime and a concrete business."
+
+[[bin]]
+name = "voxloom-arena"
+path = "src/main.rs"
+
+[lib]
+name = "voxloom_arena"
+path = "src/voxloom_arena.rs"
+
+[dependencies]
+voxloom-shard = { path = "../../voxloom-shard" }
+voxloom-gateway = { path = "../../voxloom-gateway" }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal"] }
+anyhow = "1"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "sync", "time", "test-util"] }
+voxloom-protocol = { path = "../../voxloom-protocol" }
+
+[lints]
+workspace = true

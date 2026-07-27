@@ -27,6 +27,7 @@
 #![allow(clippy::expect_used)]
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use voxloom_protocol::ControlMessage;
 use voxloom_shard::{
@@ -214,7 +215,7 @@ impl Harness {
         for index in 0..players {
             let connection = ConnectionId(index as u64 + 1);
             let (queue, receiver) = OutboundQueue::with_capacity(queue_capacity);
-            shard.handle(ShardCommand::Attach { connection, queue });
+            shard.handle(ShardCommand::attach(connection, Arc::new(queue)));
             models.insert(connection, ClientModel::new());
             receivers.insert(connection, receiver);
         }

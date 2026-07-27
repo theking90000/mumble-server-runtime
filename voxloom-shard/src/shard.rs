@@ -42,12 +42,12 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
-use tokio::sync::{Notify, mpsc, watch};
+use tokio::sync::{Notify, mpsc, oneshot, watch};
 
 use crate::build::{BuildError, ShardBuilder};
 use crate::compose::{collapse, filter};
 use crate::emit::emit;
-use crate::ids::{ConnectionId, IdAllocator, Occupant, SessionId, ShardId};
+use crate::ids::{ChannelId, ChannelKey, ConnectionId, Occupant, SessionId, ShardId, SharedIds};
 use crate::journal::Journal;
 use crate::plan::{PlanOp, plan, plan_elements};
 use crate::queue::{OutboundQueue, Refused};
@@ -75,6 +75,28 @@ pub enum VoiceEvent {
     Disconnected {
         connection: ConnectionId,
         reason: String,
+    },
+    /// A connection left for another shard. Its socket is still alive and its
+    /// session is unchanged; only this shard stops describing it.
+    ///
+    /// Distinct from [`VoiceEvent::Disconnected`] because the two mean opposite
+    /// things to a flavor: a disconnect frees a slot, a migration hands it over.
+    Migrated {
+        connection: ConnectionId,
+        to: ShardId,
+    },
+    /// The client asked to enter a channel, by double-clicking it or dragging
+    /// itself into it.
+    ///
+    /// A request, never a fact: the channel is one this connection can actually
+    /// see, and nothing has moved. What it means is entirely the flavor's
+    /// business, up to and including ignoring it.
+    ///
+    /// REF: references/vendored/Mumble.proto : `UserState.channel_id` sent by a
+    ///   client for its own session.
+    RequestedChannel {
+        connection: ConnectionId,
+        channel: ChannelKey,
     },
 }
 
@@ -104,14 +126,69 @@ pub trait ShardLogic: Send + 'static {
 pub enum ShardCommand {
     Attach {
         connection: ConnectionId,
-        queue: OutboundQueue,
+        /// Shared with the connection's writer task, which is what lets a
+        /// migration hand the same queue to the next shard.
+        queue: Arc<OutboundQueue>,
+        /// The cell the voice plane gates on. Owned by the runtime rather than
+        /// by the shard, so a migration does not have to republish it.
+        cursor: Arc<AtomicU64>,
+        /// What the client already holds. Empty for a fresh connection, and the
+        /// previous shard's composed view for a migration.
+        held: ShardView,
+        /// Fired once the connection's first transition has been accepted, so
+        /// the handshake knows when it may send `ServerSync`.
+        ready: Option<oneshot::Sender<()>>,
     },
     Detach {
         connection: ConnectionId,
         reason: String,
+        /// Set when the connection is moving to another shard rather than
+        /// leaving. It receives the view the client still holds, and the
+        /// teardown is **skipped**: the destination plans one transition from
+        /// that view instead.
+        handover: Option<Handover>,
     },
     /// A connection's queue drained: retry for **that one alone**, in O(1).
     Drained(ConnectionId),
+    /// The client asked to enter a channel. Resolved against this connection's
+    /// own view and reported to the flavor, or refused.
+    Requested {
+        connection: ConnectionId,
+        channel: ChannelId,
+    },
+}
+
+impl ShardCommand {
+    /// Attach a connection that holds nothing yet: a fresh arrival.
+    #[must_use]
+    pub fn attach(connection: ConnectionId, queue: Arc<OutboundQueue>) -> ShardCommand {
+        ShardCommand::Attach {
+            connection,
+            queue,
+            cursor: Arc::new(AtomicU64::new(0)),
+            held: ShardView::empty(),
+            ready: None,
+        }
+    }
+
+    /// Detach a connection that is leaving for good.
+    #[must_use]
+    pub fn detach(connection: ConnectionId, reason: impl Into<String>) -> ShardCommand {
+        ShardCommand::Detach {
+            connection,
+            reason: reason.into(),
+            handover: None,
+        }
+    }
+}
+
+/// Where a migrating connection's held view is sent.
+#[derive(Debug)]
+pub struct Handover {
+    /// The shard the connection is moving to, reported to the flavor.
+    pub to: ShardId,
+    /// Receives the composed view the client still holds.
+    pub view: oneshot::Sender<ShardView>,
 }
 
 /// One connection attached to a shard, and its committed state.
@@ -125,7 +202,17 @@ pub struct AttachedConnection {
     see: ScopeSet,
     /// What PRIVATE elements it has received.
     overlay_sent: Overlay,
-    queue: OutboundQueue,
+    /// What the client holds, when this shard cannot derive it from its own
+    /// previous view: right after an attach, and right after a migration.
+    ///
+    /// `Some` only until the first transition is accepted, and then never again.
+    /// Keeping one view per connection permanently is exactly the O(N·W) memory
+    /// this whole design exists to avoid, so the field is a transient rather
+    /// than a cache.
+    held: Option<ShardView>,
+    /// Fired once, when the connection's first transition lands.
+    ready: Option<oneshot::Sender<()>>,
+    queue: Arc<OutboundQueue>,
     /// Read by the voice plane to gate newly granted routes (guide 9.5).
     shared_cursor: Arc<AtomicU64>,
 }
@@ -176,6 +263,22 @@ impl AttachedConnection {
         self.see = see;
         self.overlay_sent = overlay;
         self.shared_cursor.store(cursor, Ordering::Relaxed);
+        // Whatever the client held before this transition is now described by
+        // the triplet, so the transient copy is dropped rather than kept.
+        self.held = None;
+        if let Some(ready) = self.ready.take() {
+            // Nobody waiting is the normal case for every connection but the
+            // one still in its handshake.
+            let _awaited = ready.send(());
+        }
+    }
+
+    /// The view this connection's client actually holds right now.
+    fn composed(&self, shared: &ShardView) -> ShardView {
+        match &self.held {
+            Some(held) => held.clone(),
+            None => shared.restrict(self.see).compose(&self.overlay_sent),
+        }
     }
 }
 
@@ -203,7 +306,7 @@ pub struct ReconcileReport {
 pub struct Shard<L: ShardLogic> {
     id: ShardId,
     logic: L,
-    ids: IdAllocator,
+    ids: SharedIds,
     view: ShardView,
     journal: Journal,
     version: u64,
@@ -219,13 +322,24 @@ pub struct Shard<L: ShardLogic> {
 }
 
 impl<L: ShardLogic> Shard<L> {
+    /// A shard with an allocator of its own.
+    ///
+    /// Correct for a runtime that will only ever hold one shard. As soon as a
+    /// connection can move, every shard must share one allocator: see
+    /// [`Shard::with_ids`] and [`SharedIds`].
     #[must_use]
     pub fn new(id: ShardId, logic: L) -> Shard<L> {
+        Shard::with_ids(id, logic, SharedIds::new())
+    }
+
+    /// A shard drawing its identifiers from a runtime-wide allocator.
+    #[must_use]
+    pub fn with_ids(id: ShardId, logic: L, ids: SharedIds) -> Shard<L> {
         let (routing, _) = watch::channel(Arc::new(AudioRouting::default()));
         Shard {
             id,
             logic,
-            ids: IdAllocator::new(),
+            ids,
             view: ShardView::empty(),
             journal: Journal::new(),
             version: 0,
@@ -280,20 +394,42 @@ impl<L: ShardLogic> Shard<L> {
     /// Apply a command. Never renders: the caller reconciles afterwards.
     pub fn handle(&mut self, command: ShardCommand) {
         match command {
-            ShardCommand::Attach { connection, queue } => self.attach(connection, queue),
-            ShardCommand::Detach { connection, reason } => self.detach(connection, &reason),
+            ShardCommand::Attach {
+                connection,
+                queue,
+                cursor,
+                held,
+                ready,
+            } => self.attach(connection, queue, cursor, held, ready),
+            ShardCommand::Detach {
+                connection,
+                reason,
+                handover,
+            } => self.detach(connection, &reason, handover),
             ShardCommand::Drained(connection) => self.retry(connection),
+            ShardCommand::Requested {
+                connection,
+                channel,
+            } => self.requested(connection, channel),
         }
     }
 
     /// Attach a connection.
     ///
-    /// It starts observing **nothing**, which is what makes attaching an
-    /// ordinary scope change rather than a mechanism of its own: the next
-    /// reconcile sees its observation move away from empty, takes the slow path,
-    /// and plans from the empty view. Attach, detach and migrate are then all
-    /// the same code (guide 9.6).
-    fn attach(&mut self, connection: ConnectionId, queue: OutboundQueue) {
+    /// It starts observing **nothing** and holding `held`, which is what makes
+    /// attaching an ordinary scope change rather than a mechanism of its own:
+    /// the next reconcile sees a connection that holds a view this shard did not
+    /// produce, takes the slow path, and plans one transition from it. Attach,
+    /// detach and migrate are then all the same code (guide 9.6), and a
+    /// migration inherits the no-flicker property for free.
+    fn attach(
+        &mut self,
+        connection: ConnectionId,
+        queue: Arc<OutboundQueue>,
+        cursor: Arc<AtomicU64>,
+        held: ShardView,
+        ready: Option<oneshot::Sender<()>>,
+    ) {
         let Ok(session) = self.ids.session(Occupant::Connection(connection)) else {
             // The session space is exhausted. Refuse the connection rather than
             // attaching one that can never be rendered.
@@ -301,6 +437,7 @@ impl<L: ShardLogic> Shard<L> {
             return;
         };
 
+        cursor.store(self.version, Ordering::Relaxed);
         self.connections.insert(
             connection,
             AttachedConnection {
@@ -309,28 +446,47 @@ impl<L: ShardLogic> Shard<L> {
                 cursor: self.version,
                 see: ScopeSet::NONE,
                 overlay_sent: Overlay::default(),
+                held: Some(held),
+                ready,
                 queue,
-                shared_cursor: Arc::new(AtomicU64::new(self.version)),
+                shared_cursor: cursor,
             },
         );
         self.logic.observe(&VoiceEvent::Connected { connection });
     }
 
-    /// Detach a connection: it stops hearing and being heard immediately, and is
-    /// told to tear its view down.
-    fn detach(&mut self, connection: ConnectionId, reason: &str) {
+    /// Detach a connection: it stops hearing and being heard immediately.
+    ///
+    /// A connection that is **leaving** is told to tear its view down. One that
+    /// is **migrating** is not: its held view is handed to the destination,
+    /// which plans a single transition onto its own tree. Tearing down first
+    /// would be worse than wasteful, it would be wrong - the client keeps itself
+    /// in its own model after a `UserRemove` for its own session, so the
+    /// following `ChannelRemove` would look like a removal of an occupied
+    /// channel and the client would disconnect over a protocol violation.
+    ///
+    /// REF: references/mumble/src/mumble/Messages.cpp : `msgUserRemove` skips
+    ///   `removeUser` when the victim is self; `msgChannelRemove` disconnects
+    ///   when `UserModel::removeChannel(c, true)` refuses an occupied channel.
+    fn detach(&mut self, connection: ConnectionId, reason: &str, handover: Option<Handover>) {
         let Some(mut attached) = self.connections.remove(&connection) else {
             return;
         };
 
-        // The teardown plan is what makes a migration work: the connection's
-        // socket survives, so it has to be told to forget this shard's subtree
-        // before the next one starts describing its own.
-        let before = self
-            .view
-            .restrict(attached.see)
-            .compose(&attached.overlay_sent);
-        let mut ops: Vec<PlanOp> = plan(&before, &ShardView::empty())
+        let held = attached.composed(&self.view);
+        if let Some(handover) = handover {
+            // A closed receiver means the migration was abandoned between the
+            // two commands; the connection is then attached nowhere, and its
+            // own task tears it down.
+            let _received = handover.view.send(held);
+            self.logic.observe(&VoiceEvent::Migrated {
+                connection,
+                to: handover.to,
+            });
+            return;
+        }
+
+        let mut ops: Vec<PlanOp> = plan(&held, &ShardView::empty())
             .into_iter()
             .map(|planned| planned.op)
             .collect();
@@ -348,6 +504,51 @@ impl<L: ShardLogic> Shard<L> {
             connection,
             reason: reason.to_owned(),
         });
+    }
+
+    /// Resolve a client's channel request against what that client can see.
+    ///
+    /// Refusing an id the connection does not observe is not politeness: it
+    /// keeps a guessed number from working as an existence oracle for channels
+    /// in another team's subtree.
+    fn requested(&mut self, connection: ConnectionId, channel: ChannelId) {
+        let Some(attached) = self.connections.get(&connection) else {
+            return;
+        };
+        let visible = self
+            .view
+            .channels
+            .get(&channel)
+            .filter(|rendered| attached.see.sees(rendered.scope))
+            .map(|rendered| rendered.key)
+            .or_else(|| {
+                attached
+                    .held
+                    .as_ref()
+                    .and_then(|held| held.channels.get(&channel))
+                    .map(|rendered| rendered.key)
+            })
+            .or_else(|| {
+                attached
+                    .overlay_sent
+                    .channels
+                    .get(&channel)
+                    .map(|rendered| rendered.key)
+            });
+
+        match visible {
+            Some(key) => self.logic.observe(&VoiceEvent::RequestedChannel {
+                connection,
+                channel: key,
+            }),
+            // Fail closed and stay audible: an operator seeing this repeatedly
+            // is looking at either a stale client or a probe.
+            None => eprintln!(
+                "voxloom-shard: shard {:?}: {connection:?} asked for channel {channel:?}, which it \
+                 cannot see",
+                self.id
+            ),
+        }
     }
 
     /// Retry one connection whose queue drained, without touching the others.
@@ -371,7 +572,7 @@ impl<L: ShardLogic> Shard<L> {
             .collect();
 
         let rendered = {
-            let mut builder = ShardBuilder::new(&mut self.ids, &attached);
+            let mut builder = ShardBuilder::new(&self.ids, self.id, &attached);
             self.logic.render(&mut builder);
             match builder.finish(&observations) {
                 Ok(rendered) => rendered,
@@ -397,9 +598,12 @@ impl<L: ShardLogic> Shard<L> {
                     .get(connection)
                     .copied()
                     .unwrap_or(ScopeSet::NONE);
-                self.connections
-                    .get(connection)
-                    .is_some_and(|attached| attached.see != observed)
+                self.connections.get(connection).is_some_and(|attached| {
+                    // A connection holding a view this shard did not produce
+                    // has to be replanned whatever its observation says, and
+                    // that includes the case where both are empty.
+                    attached.held.is_some() || attached.see != observed
+                })
             })
             .collect();
         let overlays_changed = attached.iter().any(|connection| {
@@ -445,19 +649,41 @@ impl<L: ShardLogic> Shard<L> {
         }
 
         // Rule 2: publish routing BEFORE pushing views.
-        let session_of: BTreeMap<ConnectionId, SessionId> = self
+        let mut session_of: BTreeMap<ConnectionId, SessionId> = self
             .view
             .users
             .values()
             .filter_map(|user| user.occupant.connection().map(|c| (c, user.session)))
             .collect();
+        // A connection with no shared presence is not absent from the runtime,
+        // only from the shared view: that is exactly what a vanish is. Leaving it
+        // out here would quietly turn "hears everything, heard by nobody" into
+        // "takes no part in audio at all", and the flavor would have no way to
+        // tell the two apart. Whether any given receiver may actually hear it is
+        // a separate question, and the render already refuses a relation where
+        // the answer is no.
+        for (connection, overlay) in &rendered.overlays {
+            if session_of.contains_key(connection) {
+                continue;
+            }
+            let own = overlay
+                .users
+                .values()
+                .find(|user| user.occupant == Occupant::Connection(*connection));
+            if let Some(user) = own {
+                session_of.insert(*connection, user.session);
+            }
+        }
         let routing_recompiled =
             since_changed || rendered.audio != self.declared_audio || session_of != self.session_of;
         if routing_recompiled {
             let table = compile(&rendered.audio, &session_of, &self.since);
-            // A receiver with no reader is not an error: the voice plane
-            // subscribes when it starts, and a shard may outlive it.
-            let _delivered = self.routing.send(Arc::new(table));
+            // `send_replace` rather than `send`: the latter reports "no reader"
+            // as an error and, crucially, does **not** store the value. A shard
+            // that rendered before its voice plane subscribed would then keep
+            // publishing tables into a channel that still held the empty one,
+            // and every route would be silently missing.
+            let _previous = self.routing.send_replace(Arc::new(table));
             self.declared_audio = rendered.audio;
             self.session_of = session_of;
         }
@@ -563,9 +789,7 @@ fn replan(
     new_see: ScopeSet,
     overlay: &Overlay,
 ) -> Outcome {
-    let from = before
-        .restrict(attached.see)
-        .compose(&attached.overlay_sent);
+    let from = attached.composed(before);
     let to = after.restrict(new_see).compose(overlay);
 
     let mut ops: Vec<PlanOp> = plan(&from, &to)
