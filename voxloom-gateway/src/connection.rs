@@ -281,6 +281,34 @@ fn inbound(
 
         ControlMessage::UserState(state) => user_state(&state, peer, runtime),
 
+        // Both are questions rather than intents, so the flavor never sees them:
+        // the shard answers from the render it already published, for the asking
+        // connection alone.
+        //
+        // REF: references/mumble/src/mumble/MainWindow.cpp : the client asks
+        //   these of its own accord, on channel selection and on opening a
+        //   user's information window.
+        ControlMessage::PermissionQuery(query) => match query.channel_id {
+            Some(channel) => {
+                let _delivered = runtime.send(
+                    peer.shard(),
+                    ShardCommand::QueriedPermissions {
+                        connection: peer.connection(),
+                        channel: ChannelId(channel),
+                    },
+                );
+                Vec::new()
+            }
+            // `flush` is the server's word to the client, and a query about no
+            // channel at all has no answer.
+            None => {
+                refused("PermissionQuery naming no channel", peer);
+                vec![permission_denied(peer)]
+            }
+        },
+
+        ControlMessage::UserStats(request) => user_stats(&request, peer, runtime),
+
         other => {
             refused(kind_of(&other), peer);
             vec![permission_denied(peer)]
@@ -356,6 +384,71 @@ fn user_state(
     // view, and acknowledging them silently would be a lie (R6).
     refused("UserState", peer);
     vec![permission_denied(peer)]
+}
+
+/// Handle a client's `UserStats` question.
+///
+/// Split in two because the two halves know different things. What the runtime
+/// publishes about *another* user is a view question, so the shard answers it
+/// and only for a user this connection can see. What it knows about the asker
+/// itself is a transport question - the OCB2 counters live here, in the peer -
+/// and it is the same triplet every `Ping` reply already carries, so answering
+/// discloses nothing new.
+///
+/// A `UserStats` with no session at all is about its sender, like every other
+/// message that omits it.
+///
+/// REF: references/mumble/src/murmur/Messages.cpp : `msgUserStats` answers the
+///   full detail only for `extend` - self, or Ban at the root - and the packet
+///   counters only for `local`.
+fn user_stats(
+    request: &tcp::UserStats,
+    peer: &Arc<Peer>,
+    runtime: &RuntimeHandle,
+) -> Vec<ControlMessage> {
+    let target = request.session.unwrap_or(peer.session().0);
+    if target == peer.session().0 {
+        return vec![own_stats(peer)];
+    }
+
+    let _delivered = runtime.send(
+        peer.shard(),
+        ShardCommand::QueriedUserStats {
+            connection: peer.connection(),
+            target: voxloom_shard::SessionId(target),
+        },
+    );
+    Vec::new()
+}
+
+/// What this connection may be told about itself.
+///
+/// `from_client` is the server's own decryption tally for this peer, which is
+/// exactly what its `Ping` replies carry. `from_server` is deliberately absent:
+/// it would be the client's report of what *it* received, and this build stores
+/// nothing the client tells it about that, so filling it in would be inventing
+/// numbers.
+///
+/// REF: references/mumble/src/murmur/Messages.cpp : `msgUserStats` fills
+///   `from_client` from `csCrypt->uiGood/uiLate/uiLost` and `from_server` from
+///   the `uiRemote*` counters.
+fn own_stats(peer: &Peer) -> ControlMessage {
+    let (good, late, lost) = peer.crypt_counters();
+    let online = peer.online_since().elapsed().as_secs();
+
+    ControlMessage::UserStats(tcp::UserStats {
+        session: Some(peer.session().0),
+        from_client: Some(tcp::user_stats::Stats {
+            good: Some(good),
+            late: Some(late),
+            lost: Some(lost),
+            // Nonce resync is refused, so zero is the count rather than a
+            // placeholder, exactly as in the `Ping` reply.
+            resync: Some(0),
+        }),
+        onlinesecs: Some(u32::try_from(online).unwrap_or(u32::MAX)),
+        ..Default::default()
+    })
 }
 
 /// The self-mute and self-deafen a `UserState` asks for, with the two
@@ -481,8 +574,6 @@ fn kind_of(message: &ControlMessage) -> &'static str {
         ControlMessage::Acl(_) => "ACL",
         ControlMessage::VoiceTarget(_) => "VoiceTarget",
         ControlMessage::CryptSetup(_) => "CryptSetup(resync)",
-        ControlMessage::PermissionQuery(_) => "PermissionQuery",
-        ControlMessage::UserStats(_) => "UserStats",
         ControlMessage::RequestBlob(_) => "RequestBlob",
         _ => "an unsupported message",
     }

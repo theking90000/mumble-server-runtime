@@ -63,7 +63,7 @@ pub mod view;
 
 pub use build::{BuildError, ChannelRef, Narrow, PrivateBuilder, Rendered, ShardBuilder, UserRef};
 pub use compose::{collapse, filter, splice};
-pub use emit::emit;
+pub use emit::{emit, perm, permission_query, permissions_of, user_stats};
 pub use ids::{
     ChannelId, ChannelKey, ConnectionId, Exhausted, IdAllocator, Occupant, SessionId, ShardId,
     SharedIds, SyntheticId,

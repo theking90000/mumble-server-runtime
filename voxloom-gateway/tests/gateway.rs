@@ -714,3 +714,72 @@ async fn a_deafened_client_is_given_nothing() -> Result<()> {
     );
     Ok(())
 }
+
+// ---------------------------------------------------------------------------
+// Client questions: answered from the render, never from the flavor
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn a_client_is_told_what_it_may_do_in_a_channel_it_can_see() -> Result<()> {
+    let harness = Harness::start().await?;
+    let mut alice = Client::connect(harness.address, "alice", None).await?;
+    let left = alice
+        .model
+        .channel_named("Left")
+        .expect("Left is in its view");
+
+    alice.query_permissions(left).await?;
+    alice
+        .settle("the permissions of Left", |model| {
+            model.permissions.contains_key(&left)
+        })
+        .await?;
+
+    assert_eq!(
+        alice.model.permissions.get(&left),
+        Some(&voxloom_shard::perm::DEFAULT),
+        "an enterable channel is advertised with the default bits"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_client_gets_its_own_statistics_and_only_a_name_for_others() -> Result<()> {
+    let harness = Harness::start().await?;
+    let mut alice = Client::connect(harness.address, "alice", None).await?;
+    let bob = Client::connect(harness.address, "bob", None).await?;
+    alice
+        .settle("bob to appear", |model| model.user_named("bob").is_some())
+        .await?;
+
+    // Its own information window: the counters it already sees in every Ping.
+    alice.request_user_stats(alice.session()).await?;
+    alice
+        .settle("its own statistics", |model| !model.stats.is_empty())
+        .await?;
+    let own = alice.model.stats.first().expect("one answer").clone();
+    assert_eq!(own.session, Some(alice.session()));
+    assert!(
+        own.from_client.is_some(),
+        "a connection may know how its own packets are arriving"
+    );
+
+    // Somebody else's, resolved by the shard against what alice can see.
+    let bob_session = bob.session();
+    alice.request_user_stats(bob_session).await?;
+    alice
+        .settle("bob's statistics", |model| model.stats.len() > 1)
+        .await?;
+    let other = alice.model.stats.get(1).expect("a second answer").clone();
+
+    assert_eq!(other.session, Some(bob_session));
+    assert!(other.certificates.is_empty(), "no certificate may leak");
+    assert_eq!(other.address, None, "no address may leak");
+    assert_eq!(other.version, None, "no client version may leak");
+    assert_eq!(other.from_client, None, "no counters about a third party");
+    assert_eq!(
+        other.onlinesecs, None,
+        "no connection time about a third party"
+    );
+    Ok(())
+}

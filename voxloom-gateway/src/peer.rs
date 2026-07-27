@@ -62,6 +62,9 @@ pub struct Peer {
     cursor: Arc<AtomicU64>,
     queue: Arc<OutboundQueue>,
     plane: RwLock<ShardPlane>,
+    /// When this connection was registered, for the one statistic it may be
+    /// told about itself.
+    online_since: Instant,
 }
 
 /// Hand-written so key material never reaches a log. Everything printed here is
@@ -105,7 +108,14 @@ impl Peer {
             cursor: Arc::new(AtomicU64::new(0)),
             queue,
             plane: RwLock::new(plane),
+            online_since: now,
         }
+    }
+
+    /// When this connection was registered.
+    #[must_use]
+    pub fn online_since(&self) -> Instant {
+        self.online_since
     }
 
     #[must_use]

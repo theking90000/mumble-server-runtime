@@ -22,22 +22,11 @@ use voxloom_shard::SessionId;
 use crate::config::GatewayConfig;
 
 /// Effective-permission bits, as the Mumble client understands them.
-/// REF: references/mumble/src/ACL.h : `enum ChanACL::Perm`.
-pub mod perm {
-    pub const TRAVERSE: u32 = 0x2;
-    pub const ENTER: u32 = 0x4;
-    pub const SPEAK: u32 = 0x8;
-    pub const WHISPER: u32 = 0x100;
-    pub const TEXT_MESSAGE: u32 = 0x200;
-
-    /// What the client is told it may do at the root.
-    ///
-    /// Deliberately excludes channel and administration rights: the tree is
-    /// rendered by a flavor and nothing a client sends can edit it, so
-    /// advertising those bits would only put buttons in the UI that answer with
-    /// `PermissionDenied`.
-    pub const ROOT_DEFAULT: u32 = TRAVERSE | ENTER | SPEAK | WHISPER | TEXT_MESSAGE;
-}
+///
+/// Re-exported rather than restated: the shard answers `PermissionQuery` from
+/// the same bits, and two definitions of one constant is one definition too
+/// many.
+pub use voxloom_shard::perm;
 
 /// The server's own `Version`, sent immediately after the TLS handshake
 /// completes and before the client's `Authenticate`.
@@ -87,7 +76,7 @@ pub fn completion(config: &GatewayConfig, session: SessionId) -> Vec<ControlMess
             } else {
                 Some(config.welcome_text.clone())
             },
-            permissions: Some(u64::from(perm::ROOT_DEFAULT)),
+            permissions: Some(u64::from(perm::DEFAULT)),
         }),
         ControlMessage::ServerConfig(tcp::ServerConfig {
             max_bandwidth: Some(config.max_bandwidth),

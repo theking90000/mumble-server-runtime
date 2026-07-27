@@ -837,3 +837,76 @@ fn a_self_state_request_reaches_the_flavor_and_only_for_a_connection_it_holds() 
         other => panic!("expected exactly one request, got {other:?}"),
     }
 }
+
+#[test]
+fn a_query_is_answered_only_about_what_the_asker_can_see() {
+    // Connections 1 and 2 share realm 0; connection 3 is in realm 1 and is
+    // therefore not merely filtered out of the view, but absent from it.
+    let mut harness = Harness::new(&[(1, 0), (2, 0), (3, 1)], 1024);
+    harness.step("initial");
+
+    let named = |name: &str| {
+        harness
+            .shard
+            .view()
+            .channels
+            .values()
+            .find(|channel| channel.name == name)
+            .map(|channel| channel.id)
+            .expect("a rendered channel")
+    };
+    let mine = named("Realm 0 0");
+    let theirs = named("Realm 1 0");
+    let session_of = |connection: u64| {
+        harness
+            .shard
+            .connection(ConnectionId(connection))
+            .expect("attached")
+            .session()
+    };
+    let neighbour = session_of(2);
+    let stranger = session_of(3);
+
+    for command in [
+        ShardCommand::QueriedPermissions {
+            connection: ConnectionId(1),
+            channel: mine,
+        },
+        ShardCommand::QueriedPermissions {
+            connection: ConnectionId(1),
+            channel: theirs,
+        },
+        ShardCommand::QueriedUserStats {
+            connection: ConnectionId(1),
+            target: neighbour,
+        },
+        ShardCommand::QueriedUserStats {
+            connection: ConnectionId(1),
+            target: stranger,
+        },
+    ] {
+        harness.shard.handle(command);
+    }
+
+    let client = harness
+        .clients
+        .get_mut(&ConnectionId(1))
+        .expect("connection 1");
+    let answers: Vec<ControlMessage> =
+        std::iter::from_fn(|| client.receiver.try_recv().ok()).collect();
+
+    // Two questions out of four are about something this connection has been
+    // told exists. The other two are answered with silence, because any answer
+    // at all - even a refusal - would confirm that the identifier is real.
+    match answers.as_slice() {
+        [
+            ControlMessage::PermissionQuery(permissions),
+            ControlMessage::UserStats(stats),
+        ] => {
+            assert_eq!(permissions.channel_id, Some(mine.0));
+            assert_eq!(permissions.permissions, Some(voxloom_shard::perm::DEFAULT));
+            assert_eq!(stats.session, Some(neighbour.0));
+        }
+        other => panic!("expected exactly the two answerable questions, got {other:?}"),
+    }
+}

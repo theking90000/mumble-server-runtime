@@ -45,6 +45,7 @@ use std::time::Duration;
 use tokio::sync::mpsc::error::TryRecvError;
 use tokio::sync::{Notify, mpsc, oneshot, watch};
 use tokio::time::Instant;
+use voxloom_protocol::ControlMessage;
 
 use crate::build::{BuildError, ShardBuilder};
 use crate::compose::{collapse, filter};
@@ -55,7 +56,7 @@ use crate::plan::{PlanOp, plan, plan_elements};
 use crate::queue::{OutboundQueue, Refused};
 use crate::routing::{AudioRelation, AudioRouting, Silence, compile};
 use crate::scope::ScopeSet;
-use crate::view::{Overlay, ShardView};
+use crate::view::{Channel, Overlay, ShardView};
 
 /// The floor between two publications.
 ///
@@ -183,6 +184,18 @@ pub enum ShardCommand {
         connection: ConnectionId,
         self_mute: Option<bool>,
         self_deaf: Option<bool>,
+    },
+    /// The client asked what it may do in a channel. Answered from the render,
+    /// for that connection alone.
+    QueriedPermissions {
+        connection: ConnectionId,
+        channel: ChannelId,
+    },
+    /// The client asked what the server publishes about a user. Answered only
+    /// for a user this connection can actually see.
+    QueriedUserStats {
+        connection: ConnectionId,
+        target: SessionId,
     },
 }
 
@@ -447,6 +460,13 @@ impl<L: ShardLogic> Shard<L> {
                 self_mute,
                 self_deaf,
             } => self.requested_self_state(connection, self_mute, self_deaf),
+            ShardCommand::QueriedPermissions {
+                connection,
+                channel,
+            } => self.queried_permissions(connection, channel),
+            ShardCommand::QueriedUserStats { connection, target } => {
+                self.queried_user_stats(connection, target);
+            }
         }
     }
 
@@ -551,28 +571,11 @@ impl<L: ShardLogic> Shard<L> {
         let Some(attached) = self.connections.get(&connection) else {
             return;
         };
-        let visible = self
-            .view
-            .channels
-            .get(&channel)
-            .filter(|rendered| attached.see.sees(rendered.scope))
-            .map(|rendered| rendered.key)
-            .or_else(|| {
-                attached
-                    .held
-                    .as_ref()
-                    .and_then(|held| held.channels.get(&channel))
-                    .map(|rendered| rendered.key)
-            })
-            .or_else(|| {
-                attached
-                    .overlay_sent
-                    .channels
-                    .get(&channel)
-                    .map(|rendered| rendered.key)
-            });
+        let key = self
+            .visible_channel(attached, channel)
+            .map(|rendered| rendered.key);
 
-        match visible {
+        match key {
             Some(key) => self.logic.observe(&VoiceEvent::RequestedChannel {
                 connection,
                 channel: key,
@@ -584,6 +587,97 @@ impl<L: ShardLogic> Shard<L> {
                  cannot see",
                 self.id
             ),
+        }
+    }
+
+    /// A channel as this connection can see it: shared and observed, or held
+    /// from before its first transition, or private to it.
+    ///
+    /// The three places are the whole of what a client may legitimately name.
+    /// Answering about anything else, however harmlessly, would turn a guessed
+    /// identifier into an existence oracle for another team's subtree.
+    fn visible_channel<'a>(
+        &'a self,
+        attached: &'a AttachedConnection,
+        channel: ChannelId,
+    ) -> Option<&'a Channel> {
+        self.view
+            .channels
+            .get(&channel)
+            .filter(|rendered| attached.see.sees(rendered.scope))
+            .or_else(|| {
+                attached
+                    .held
+                    .as_ref()
+                    .and_then(|held| held.channels.get(&channel))
+            })
+            .or_else(|| attached.overlay_sent.channels.get(&channel))
+    }
+
+    /// Whether this connection has been told about a session at all. The same
+    /// three places, and the same reason.
+    fn sees_session(&self, attached: &AttachedConnection, session: SessionId) -> bool {
+        let shared = self
+            .view
+            .users
+            .get(&session)
+            .is_some_and(|user| attached.see.sees(user.scope));
+        shared
+            || attached
+                .held
+                .as_ref()
+                .is_some_and(|held| held.users.contains_key(&session))
+            || attached.overlay_sent.users.contains_key(&session)
+    }
+
+    /// Answer "what may I do in that channel", from the current render.
+    ///
+    /// The flavor is not consulted and has nothing to decide: it already said
+    /// everything it had to say by rendering the channel, and a query is not an
+    /// intent. Keeping it here also keeps it cheap - one lookup, one message -
+    /// where a round trip through business code would cost a turn.
+    fn queried_permissions(&self, connection: ConnectionId, channel: ChannelId) {
+        let Some(attached) = self.connections.get(&connection) else {
+            return;
+        };
+        match self.visible_channel(attached, channel) {
+            Some(rendered) => self.reply(attached, crate::emit::permission_query(rendered)),
+            None => eprintln!(
+                "voxloom-shard: shard {:?}: {connection:?} queried permissions on channel \
+                 {channel:?}, which it cannot see",
+                self.id
+            ),
+        }
+    }
+
+    /// Answer "what do you publish about that user", for a user it can see.
+    fn queried_user_stats(&self, connection: ConnectionId, target: SessionId) {
+        let Some(attached) = self.connections.get(&connection) else {
+            return;
+        };
+        if self.sees_session(attached, target) {
+            self.reply(attached, crate::emit::user_stats(target));
+        } else {
+            eprintln!(
+                "voxloom-shard: shard {:?}: {connection:?} queried stats about session {target:?}, \
+                 which it cannot see",
+                self.id
+            );
+        }
+    }
+
+    /// Push one message that answers a question, rather than describing a
+    /// change.
+    ///
+    /// Refusing it is an outcome, not a fault: a query the client can simply ask
+    /// again is worth less than the transitions queued ahead of it, so a
+    /// congested connection drops the answer instead of being torn down for it.
+    fn reply(&self, attached: &AttachedConnection, message: ControlMessage) {
+        if let Err(refused) = attached.queue.try_send_all(vec![message]) {
+            eprintln!(
+                "voxloom-shard: shard {:?}: dropping an answer for {:?}: {refused}",
+                self.id, attached.id
+            );
         }
     }
 

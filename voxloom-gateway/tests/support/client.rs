@@ -83,6 +83,10 @@ pub struct Model {
     pub removed_channels: Vec<u32>,
     /// Tunnelled voice packets, still sealed in their envelope.
     pub tunnelled: Vec<udp::Audio>,
+    /// Effective permissions, per channel, as the server answered them.
+    pub permissions: BTreeMap<u32, u32>,
+    /// Every `UserStats` answer, in order.
+    pub stats: Vec<tcp::UserStats>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -172,6 +176,12 @@ impl Model {
                 self.removed_users.push(remove.session);
             }
             ControlMessage::ServerSync(sync) => self.session = sync.session,
+            ControlMessage::PermissionQuery(query) => {
+                if let (Some(channel), Some(permissions)) = (query.channel_id, query.permissions) {
+                    self.permissions.insert(channel, permissions);
+                }
+            }
+            ControlMessage::UserStats(stats) => self.stats.push(stats.clone()),
             ControlMessage::UdpTunnel(raw) => {
                 if let Ok(UdpMessage::Audio(audio)) = decode_udp(raw) {
                     self.tunnelled.push(audio);
@@ -284,6 +294,30 @@ impl Client {
         self.send(&ControlMessage::UserState(tcp::UserState {
             self_mute: Some(mute),
             self_deaf: Some(deaf),
+            ..Default::default()
+        }))
+        .await
+    }
+
+    /// Ask what may be done in a channel, the way selecting it does.
+    ///
+    /// REF: references/mumble/src/mumble/ServerHandler.cpp :
+    ///   `requestChannelPermissions`.
+    pub async fn query_permissions(&mut self, channel: u32) -> Result<()> {
+        self.send(&ControlMessage::PermissionQuery(tcp::PermissionQuery {
+            channel_id: Some(channel),
+            ..Default::default()
+        }))
+        .await
+    }
+
+    /// Open somebody's information window.
+    ///
+    /// REF: references/mumble/src/mumble/ServerHandler.cpp : `requestUserStats`.
+    pub async fn request_user_stats(&mut self, session: u32) -> Result<()> {
+        self.send(&ControlMessage::UserStats(tcp::UserStats {
+            session: Some(session),
+            stats_only: Some(false),
             ..Default::default()
         }))
         .await

@@ -24,6 +24,82 @@ use crate::ids::{ChannelId, SessionId};
 use crate::plan::{ChannelPatch, PlanOp, UserPatch};
 use crate::view::{Channel, User};
 
+/// Effective-permission bits, as the Mumble client understands them.
+///
+/// REF: references/mumble/src/ACL.h : `enum ChanACL::Perm`.
+pub mod perm {
+    pub const TRAVERSE: u32 = 0x2;
+    pub const ENTER: u32 = 0x4;
+    pub const SPEAK: u32 = 0x8;
+    pub const WHISPER: u32 = 0x100;
+    pub const TEXT_MESSAGE: u32 = 0x200;
+
+    /// What a client is told it may do where nothing forbids it.
+    ///
+    /// Deliberately excludes channel and administration rights: the tree is
+    /// rendered by a flavor and nothing a client sends can edit it, so
+    /// advertising those bits would only put buttons in the UI that answer with
+    /// `PermissionDenied`.
+    pub const DEFAULT: u32 = TRAVERSE | ENTER | SPEAK | WHISPER | TEXT_MESSAGE;
+}
+
+/// What a connection may do in a channel it can see, derived from the render.
+///
+/// There is no permission model to consult: the flavor renders a tree, and the
+/// only thing it says about a channel's accessibility is `can_enter`. Deriving
+/// the answer from that is what keeps the reply honest for the generation it was
+/// asked about, rather than replaying a cache nothing invalidates (spec 16.16).
+///
+/// `TRAVERSE` is unconditional here because the question is only ever asked
+/// about a channel the connection already observes: it has traversed it by
+/// definition.
+#[must_use]
+pub fn permissions_of(channel: &Channel) -> u32 {
+    if channel.can_enter {
+        perm::DEFAULT
+    } else {
+        perm::DEFAULT & !perm::ENTER
+    }
+}
+
+/// The reply to a client's `PermissionQuery` about one visible channel.
+#[must_use]
+pub fn permission_query(channel: &Channel) -> ControlMessage {
+    ControlMessage::PermissionQuery(tcp::PermissionQuery {
+        channel_id: Some(channel.id.0),
+        permissions: Some(permissions_of(channel)),
+        // A flush would tell the client to drop what it knows about **every**
+        // channel. This answers one question about one channel.
+        //
+        // REF: references/mumble/src/mumble/Messages.cpp : `msgPermissionQuery`
+        //   zeroes every channel's permissions when `flush()` is set.
+        flush: Some(false),
+    })
+}
+
+/// The reply to a client's `UserStats` about **somebody else** it can see.
+///
+/// It names the session and stops there. Everything the reference server puts in
+/// this message - certificate chain, client version, IP address, packet
+/// counters, connected and idle times - is either something this runtime does
+/// not know or something spec 16.17 forbids disclosing without an explicit
+/// authorization no flavor can currently express. An empty information window is
+/// the honest rendering of "the server publishes nothing about this user".
+///
+/// The requester's own statistics are a different question, answered where the
+/// transport lives rather than here.
+///
+/// REF: references/mumble/src/murmur/Messages.cpp : `msgUserStats` gates the
+///   certificates, version and address behind `extend` (self, or Ban at the
+///   root) and the counters behind `local`, and always answers with the session.
+#[must_use]
+pub fn user_stats(session: SessionId) -> ControlMessage {
+    ControlMessage::UserStats(tcp::UserStats {
+        session: Some(session.0),
+        ..Default::default()
+    })
+}
+
 /// Translate a composed transition into ordered control messages.
 ///
 /// `self_session` is the connection's own session, used only for the
@@ -227,6 +303,55 @@ mod tests {
                 _ => None,
             })
             .collect()
+    }
+
+    #[test]
+    fn a_channel_nobody_may_enter_is_advertised_without_the_enter_bit() {
+        let mut open = channel(1, 0);
+        assert_eq!(permissions_of(&open), perm::DEFAULT);
+
+        open.can_enter = false;
+        let closed = permissions_of(&open);
+        assert_eq!(
+            closed & perm::ENTER,
+            0,
+            "the client must not offer to enter"
+        );
+        assert_eq!(
+            closed & perm::TRAVERSE,
+            perm::TRAVERSE,
+            "a channel it can see is a channel it has traversed"
+        );
+    }
+
+    #[test]
+    fn a_permission_answer_never_flushes_the_client_s_cache() {
+        let ControlMessage::PermissionQuery(answer) = permission_query(&channel(4, 0)) else {
+            panic!("expected a PermissionQuery");
+        };
+        assert_eq!(answer.channel_id, Some(4));
+        assert_eq!(answer.permissions, Some(perm::DEFAULT));
+        assert_eq!(
+            answer.flush,
+            Some(false),
+            "answering one question must not invalidate every other channel"
+        );
+    }
+
+    #[test]
+    fn stats_about_somebody_else_carry_the_session_and_nothing_more() {
+        let ControlMessage::UserStats(answer) = user_stats(SessionId(7)) else {
+            panic!("expected a UserStats");
+        };
+        assert_eq!(answer.session, Some(7));
+        assert!(answer.certificates.is_empty(), "no certificate ever leaves");
+        assert_eq!(answer.address, None, "no address ever leaves");
+        assert_eq!(answer.version, None);
+        assert_eq!(answer.from_client, None, "no counters about a third party");
+        assert_eq!(
+            answer.onlinesecs, None,
+            "no connection time about a third party"
+        );
     }
 
     #[test]

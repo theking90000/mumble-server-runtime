@@ -1245,6 +1245,24 @@ contredisaient, c'est la règle qui a gagné.
   auditeurs que le client n'a jamais adressés. Leur enregistrement est P9.
 - **Resync de nonce OCB2** : un datagramme d'un pair lié qui ne déchiffre plus
   est jeté avec un log. Le `resync` du `Ping` TCP vaut donc 0 en vérité.
+- **Messages de contrôle client encore refusés.** Ce qui est traité aujourd'hui :
+  `Ping`, `UserState` (entrée de canal, self-mute, self-deafen), `PermissionQuery`
+  et `UserStats`. Tout le reste reçoit un `PermissionDenied` journalisé. Le
+  backlog, par ordre de valeur décroissante :
+
+  | message | ce qu'il demande |
+  |---|---|
+  | `TextMessage` | Résoudre les cibles dans la vue de l'émetteur, un événement pour laisser le flavor filtrer ou rerouter, puis la livraison dans les files des destinataires. Demande un envoi **non fatal** dans `queue.rs` : un texte perdu se redemande, il ne justifie pas de fermer la connexion. |
+  | `ContextAction` / `ContextActionModify` | Le canal d'intention déclaratif de la spec 16.13, et le seul moyen pour un flavor d'exposer un bouton qui ne soit pas un canal à double-cliquer. Le registre d'actions devient un état rendu **par connexion**, diffé comme un overlay, avec révalidation contre la génération à l'invocation. |
+  | `ChannelState` / `ChannelRemove` / `UserRemove` | Créer, renommer, kick. Même forme que `RequestedChannel` (un événement, le flavor tranche), donc bon marché, mais sans utilisateur concret aujourd'hui. |
+  | `UserState` visant une autre session | Mute serveur, déplacement d'autrui. Refusé explicitement, pas par omission. |
+  | `RequestBlob` | La `ShardView` ne porte ni commentaire, ni texture, ni description : il n'y a rien à répondre tant qu'elle ne les porte pas. |
+  | `UserList` / `BanList` / `ACL` / `QueryUsers` | Administration d'utilisateurs enregistrés. Aucun registre n'existe, donc le refus **est** la réponse correcte (spec 16.10 à 16.14). |
+
+  Piège à connaître : `perm::DEFAULT` annonce `TEXT_MESSAGE` au client, alors que
+  `TextMessage` est refusé. La boîte de dialogue existe donc dans l'interface et
+  répond `PermissionDenied`. Retirer le bit serait plus honnête, mais changerait
+  aussi ce que `ServerSync` annonce ; à trancher en même temps que `TextMessage`.
 - **Le proptest ne consomme pas `SimulatedMumbleClient`** (R2, même raison). Le
   modèle strict de `voxloom-shard/tests/support/model.rs` applique les vrais
   messages de contrôle et juge chaque état intermédiaire ; le brancher sur le
