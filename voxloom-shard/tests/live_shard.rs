@@ -11,13 +11,14 @@
 //! deterministic without a clock.
 #![allow(clippy::expect_used)]
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
+use std::sync::atomic::AtomicU64;
 
 use voxloom_protocol::ControlMessage;
 use voxloom_shard::{
     ChannelKey, ConnectionId, DomainId, Narrow, Occupant, OutboundQueue, ScopeSet, SessionId,
-    Shard, ShardBuilder, ShardCommand, ShardId, ShardLogic, VoiceEvent,
+    Shard, ShardBuilder, ShardCommand, ShardId, ShardLogic, ShardView, VoiceEvent,
 };
 
 #[path = "support/model.rs"]
@@ -245,7 +246,7 @@ fn a_connection_that_sees_no_change_still_advances_its_cursor() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn the_shard_task_renders_on_a_wake_and_then_sleeps() {
+async fn the_shard_task_renders_when_its_mailbox_receives_a_command() {
     let world = World {
         realms: BTreeMap::from([(ConnectionId(1), 0)]),
         ..World::default()
@@ -277,6 +278,123 @@ async fn the_shard_task_renders_on_a_wake_and_then_sleeps() {
     tokio::time::advance(voxloom_shard::MIN_INTERVAL * 2).await;
     let shard = task.await.expect("the task ends when its handles are gone");
     assert!(shard.version() > 0);
+}
+
+struct Arrivals {
+    connected: BTreeSet<ConnectionId>,
+    observed: tokio::sync::watch::Sender<usize>,
+}
+
+impl ShardLogic for Arrivals {
+    fn render(&mut self, out: &mut ShardBuilder<'_>) {
+        let root = out.root("Burst");
+        for connection in &self.connected {
+            out.user(
+                root,
+                Occupant::Connection(*connection),
+                &format!("arrival-{}", connection.0),
+                Narrow::Same,
+            );
+        }
+    }
+
+    fn observation(&mut self, _connection: ConnectionId) -> ScopeSet {
+        ScopeSet::new(&[voxloom_shard::Scope::ROOT]).unwrap_or(ScopeSet::NONE)
+    }
+
+    fn observe(&mut self, event: &VoiceEvent) {
+        if let VoiceEvent::Connected { connection } = event {
+            self.connected.insert(*connection);
+            let _previous = self.observed.send_replace(self.connected.len());
+        }
+    }
+}
+
+fn queued_arrival(
+    connection: ConnectionId,
+) -> (
+    ShardCommand,
+    tokio::sync::mpsc::Receiver<ControlMessage>,
+    tokio::sync::oneshot::Receiver<()>,
+) {
+    let (queue, receiver) = OutboundQueue::with_capacity(1024);
+    let (ready, awaited) = tokio::sync::oneshot::channel();
+    (
+        ShardCommand::Attach {
+            connection,
+            queue: Arc::new(queue),
+            cursor: Arc::new(AtomicU64::new(0)),
+            held: ShardView::empty(),
+            ready: Some(ready),
+        },
+        receiver,
+        awaited,
+    )
+}
+
+#[tokio::test(start_paused = true)]
+async fn command_bursts_are_observed_immediately_and_published_at_twenty_hertz() {
+    const FIRST_BURST: u64 = 200;
+    const SECOND_BURST: u64 = 50;
+
+    let (observed, mut observations) = tokio::sync::watch::channel(0);
+    let shard = Shard::new(
+        ShardId(8),
+        Arrivals {
+            connected: BTreeSet::new(),
+            observed,
+        },
+    );
+    let (handle, wake, mailbox) = voxloom_shard::spawn_parts(ShardId(8));
+    let mut receivers = Vec::new();
+    let mut first_ready = Vec::new();
+
+    for raw in 1..=FIRST_BURST {
+        let (command, receiver, ready) = queued_arrival(ConnectionId(raw));
+        handle.send(command).expect("the burst fits the mailbox");
+        receivers.push(receiver);
+        first_ready.push(ready);
+    }
+
+    let task = tokio::spawn(voxloom_shard::run(shard, wake, mailbox));
+    for ready in first_ready {
+        ready.await.expect("the first burst is published");
+    }
+    assert_eq!(*observations.borrow(), 200);
+
+    let mut second_ready = Vec::new();
+    for raw in (FIRST_BURST + 1)..=(FIRST_BURST + SECOND_BURST) {
+        let (command, receiver, ready) = queued_arrival(ConnectionId(raw));
+        handle.send(command).expect("the cooldown burst fits");
+        receivers.push(receiver);
+        second_ready.push(ready);
+    }
+
+    observations
+        .wait_for(|count| *count == 250)
+        .await
+        .expect("commands are observed during the cooldown");
+    assert!(
+        matches!(
+            second_ready
+                .first_mut()
+                .expect("the second burst is not empty")
+                .try_recv(),
+            Err(tokio::sync::oneshot::error::TryRecvError::Empty)
+        ),
+        "the second publication must respect the 50 ms floor"
+    );
+
+    tokio::time::advance(voxloom_shard::MIN_INTERVAL).await;
+    for ready in second_ready {
+        ready.await.expect("the second burst is published");
+    }
+
+    drop(handle);
+    let shard = task.await.expect("the task ends when its handles are gone");
+    assert_eq!(shard.version(), 2, "each burst becomes one publication");
+    assert_eq!(shard.connections().count(), 250);
+    drop(receivers);
 }
 
 // ---------------------------------------------------------------------------

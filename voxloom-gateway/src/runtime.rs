@@ -259,7 +259,6 @@ impl RuntimeHandle {
                 ready: Some(ready),
             })
             .map_err(|_full| AttachError::Unreachable(shard))?;
-        handle.wake();
         Ok(awaited)
     }
 
@@ -274,10 +273,9 @@ impl RuntimeHandle {
         if let Err(error) = handle.send(ShardCommand::detach(connection, reason)) {
             eprintln!("voxloom-gateway: shard {shard:?} did not take a detach: {error}");
         }
-        handle.wake();
     }
 
-    /// Forward a command to a shard, waking it.
+    /// Forward a command to a shard.
     ///
     /// # Errors
     ///
@@ -289,7 +287,6 @@ impl RuntimeHandle {
         handle
             .send(command)
             .map_err(|_full| AttachError::Unreachable(shard))?;
-        handle.wake();
         Ok(())
     }
 
@@ -405,7 +402,6 @@ async fn migrate(inner: Arc<RuntimeInner>, connection: ConnectionId, to: ShardId
                 peer.close();
                 return;
             }
-            source.wake();
             match awaited.await {
                 Ok(held) => held,
                 Err(_dropped) => {
@@ -437,9 +433,7 @@ async fn migrate(inner: Arc<RuntimeInner>, connection: ConnectionId, to: ShardId
         // Attached nowhere and holding a view no shard will ever update.
         eprintln!("voxloom-gateway: {connection:?} could not be handed to {to:?}");
         peer.close();
-        return;
     }
-    destination.wake();
 }
 
 fn destroy(inner: &Arc<RuntimeInner>, shard: ShardId, reason: &str) {

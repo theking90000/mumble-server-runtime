@@ -750,13 +750,18 @@ tout ça ne touche au routage.
 
 ```rust
 async fn shard_task(mut shard: Shard) {
+    let mut prochaine_publication = Instant::now();
     loop {
-        tokio::select! {
-            _   = shard.wake.notified() => {}
-            cmd = shard.mailbox.recv()  => shard.handle(cmd),
+        attendre_un_premier_evenement().await;
+        vider_la_mailbox_sans_attendre(&mut shard);
+
+        if Instant::now() < prochaine_publication {
+            // Les commandes continuent d'être traitées pendant cette attente.
+            absorber_jusqu_a(prochaine_publication, &mut shard).await;
         }
+
         shard.reconcile();
-        tokio::time::sleep(MIN_INTERVAL).await;   // plafond de débit
+        prochaine_publication = Instant::now() + MIN_INTERVAL;
     }
 }
 ```
@@ -764,7 +769,10 @@ async fn shard_task(mut shard: Shard) {
 **Il n'y a aucun tick dans le runtime.** Voxloom ne sait pas pourquoi un flavor
 voudrait un rythme : un flavor qui en veut un lance son propre
 `tokio::interval` et appelle `wake()`. `MIN_INTERVAL` (50 ms pour commencer) est
-le seul réglage, et c'est une **protection**, pas une politique.
+le seul réglage, et c'est une **protection**, pas une politique. Il borne les
+publications à 20 Hz, jamais la consommation de la mailbox : `observe()` reste
+immédiat et toutes les commandes reçues dans la fenêtre sont coalescées dans le
+même `reconcile()`.
 
 ```rust
 enum ShardCommand {

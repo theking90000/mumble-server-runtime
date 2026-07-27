@@ -42,7 +42,9 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
+use tokio::sync::mpsc::error::TryRecvError;
 use tokio::sync::{Notify, mpsc, oneshot, watch};
+use tokio::time::Instant;
 
 use crate::build::{BuildError, ShardBuilder};
 use crate::compose::{collapse, filter};
@@ -55,11 +57,11 @@ use crate::routing::{AudioRelation, AudioRouting, compile};
 use crate::scope::ScopeSet;
 use crate::view::{Overlay, ShardView};
 
-/// The floor between two renders.
+/// The floor between two publications.
 ///
-/// A throughput guard, not a policy. There is **no tick** in the runtime:
-/// Voxloom has no idea why a flavor would want a rhythm, so a flavor that wants
-/// one runs its own timer and calls [`ShardHandle::wake`].
+/// Commands and flavor events are still absorbed immediately while this
+/// cooldown runs. Only reconciliation is rate-limited, so a burst becomes one
+/// publication instead of one 50 ms delay per command.
 pub const MIN_INTERVAL: Duration = Duration::from_millis(50);
 
 /// A voice-plane fact reported to the flavor.
@@ -866,26 +868,81 @@ pub async fn run<L: ShardLogic>(
     wake: Arc<Notify>,
     mut mailbox: mpsc::Receiver<ShardCommand>,
 ) -> Shard<L> {
+    let mut dirty = false;
+    let mut mailbox_open = true;
+    let mut next_reconcile = Instant::now();
+
     loop {
-        tokio::select! {
-            // Cancellation-safe: `Notified` returns its permit on drop, so a
-            // wake-up racing with a command is not lost, only deferred to the
-            // next iteration.
-            () = wake.notified() => {}
-            // Cancellation-safe: `recv` does not consume a message unless it
-            // completes.
-            command = mailbox.recv() => match command {
-                Some(command) => shard.handle(command),
-                // Every handle is gone; nothing can ever wake this shard again.
-                None => break,
-            },
+        if dirty && (!mailbox_open || Instant::now() >= next_reconcile) {
+            mailbox_open = drain_commands(&mut shard, &mut mailbox);
+            let _report = shard.reconcile();
+            dirty = false;
+            next_reconcile = Instant::now() + MIN_INTERVAL;
+            if !mailbox_open {
+                break;
+            }
+            continue;
         }
 
-        let _report = shard.reconcile();
-        tokio::time::sleep(MIN_INTERVAL).await;
+        if !mailbox_open {
+            break;
+        }
+
+        if dirty {
+            tokio::select! {
+                biased;
+                // Cancellation-safe: recreating Sleep with the same absolute
+                // deadline neither loses nor extends the cooldown.
+                () = tokio::time::sleep_until(next_reconcile) => {}
+                // Cancellation-safe: `recv` consumes a command only when this
+                // branch completes.
+                command = mailbox.recv() => match command {
+                    Some(command) => shard.handle(command),
+                    None => mailbox_open = false,
+                },
+                // Cancellation-safe: a cancelled `Notified` returns its permit.
+                // The flavor state is external, so the signal only keeps this
+                // turn dirty.
+                () = wake.notified() => {},
+            }
+        } else {
+            tokio::select! {
+                // Cancellation-safe: `recv` consumes a command only when this
+                // branch completes.
+                command = mailbox.recv() => match command {
+                    Some(command) => {
+                        shard.handle(command);
+                        dirty = true;
+                    }
+                    // Every handle is gone; nothing can ever wake this shard again.
+                    None => break,
+                },
+                // Cancellation-safe: a cancelled `Notified` returns its permit.
+                () = wake.notified() => dirty = true,
+            }
+        }
     }
 
     shard
+}
+
+/// Absorb one bounded burst before publishing.
+///
+/// The bound guarantees that a producer which continuously refills the channel
+/// cannot postpone reconciliation forever. Commands arriving after the batch
+/// are still consumed during the publication cooldown.
+fn drain_commands<L: ShardLogic>(
+    shard: &mut Shard<L>,
+    mailbox: &mut mpsc::Receiver<ShardCommand>,
+) -> bool {
+    for _ in 0..MAILBOX_DEPTH {
+        match mailbox.try_recv() {
+            Ok(command) => shard.handle(command),
+            Err(TryRecvError::Empty) => return true,
+            Err(TryRecvError::Disconnected) => return false,
+        }
+    }
+    true
 }
 
 /// The handle and the driver halves for one shard.
