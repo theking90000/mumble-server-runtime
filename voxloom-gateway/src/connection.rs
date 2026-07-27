@@ -279,40 +279,113 @@ fn inbound(
         //   answers with the timestamp and the OCB2 counters.
         ControlMessage::Ping(ping) => vec![ControlMessage::Ping(ping_reply(&ping, peer))],
 
-        // The one client intent this runtime understands: "put me in that
-        // channel". It is forwarded as a *request*; the flavor decides, and a
-        // channel the connection cannot see is refused by the shard.
-        //
-        // REF: references/vendored/Mumble.proto : a client moves itself with a
-        //   `UserState` naming its own session and a `channel_id`.
-        ControlMessage::UserState(state) => {
-            let mine = state.session == Some(peer.session().0);
-            match (mine, state.channel_id) {
-                (true, Some(channel)) => {
-                    let _delivered = runtime.send(
-                        peer.shard(),
-                        ShardCommand::Requested {
-                            connection: peer.connection(),
-                            channel: ChannelId(channel),
-                        },
-                    );
-                    Vec::new()
-                }
-                // Self-mute and self-deafen are local client state this build
-                // does not mirror into the view; acknowledging them silently
-                // would be a lie, so they are refused like the rest.
-                _ => {
-                    refused("UserState", peer);
-                    vec![permission_denied(peer)]
-                }
-            }
-        }
+        ControlMessage::UserState(state) => user_state(&state, peer, runtime),
 
         other => {
             refused(kind_of(&other), peer);
             vec![permission_denied(peer)]
         }
     }
+}
+
+/// Handle a `UserState` a client sent about itself.
+///
+/// Both intents this build understands are forwarded as *requests*: the flavor
+/// decides, and until it renders something new nothing about the view changes.
+/// Anything aimed at another session is moderation, which no flavor here
+/// exposes, so it is refused.
+///
+/// A `UserState` carrying **no** session at all is about its own sender. That is
+/// not a leniency, it is how the official client mutes itself.
+///
+/// REF: references/mumble/src/murmur/Messages.cpp : `VICTIM_SETUP` starts from
+///   `uSource` and only looks a session up when the message carries one.
+/// REF: references/mumble/src/mumble/ServerHandler.cpp : `setSelfMuteDeafState`
+///   sends a `UserState` with both flags and no session.
+fn user_state(
+    state: &tcp::UserState,
+    peer: &Arc<Peer>,
+    runtime: &RuntimeHandle,
+) -> Vec<ControlMessage> {
+    let mine = state
+        .session
+        .is_none_or(|session| session == peer.session().0);
+    if !mine {
+        refused("UserState aimed at another session", peer);
+        return vec![permission_denied(peer)];
+    }
+
+    let mut forwarded = false;
+
+    // "Put me in that channel", the double-click. A channel the connection
+    // cannot see is refused by the shard, which is what keeps a guessed id from
+    // working as an existence oracle.
+    //
+    // REF: references/vendored/Mumble.proto : a client moves itself with a
+    //   `UserState` naming its own session and a `channel_id`.
+    if let Some(channel) = state.channel_id {
+        let _delivered = runtime.send(
+            peer.shard(),
+            ShardCommand::Requested {
+                connection: peer.connection(),
+                channel: ChannelId(channel),
+            },
+        );
+        forwarded = true;
+    }
+
+    let (self_mute, self_deaf) = self_state(state);
+    if self_mute.is_some() || self_deaf.is_some() {
+        let _delivered = runtime.send(
+            peer.shard(),
+            ShardCommand::RequestedSelfState {
+                connection: peer.connection(),
+                self_mute,
+                self_deaf,
+            },
+        );
+        forwarded = true;
+    }
+
+    if forwarded {
+        return Vec::new();
+    }
+
+    // Recording announcements, plugin context, listener registrations and
+    // temporary access tokens all land here. None of them is mirrored into a
+    // view, and acknowledging them silently would be a lie (R6).
+    refused("UserState", peer);
+    vec![permission_denied(peer)]
+}
+
+/// The self-mute and self-deafen a `UserState` asks for, with the two
+/// implications that need no memory of the current state.
+///
+/// Deafened implies muted, and unmuting undeafens. Both are what the reference
+/// server does, and applying them at the protocol boundary keeps the flavor from
+/// having to know a Mumble rule. The order matters: a message asking to be
+/// deafened while unmuted resolves to "both", exactly as Murmur resolves it,
+/// because the deafen rewrite runs first and the unmute test then sees the
+/// rewritten value.
+///
+/// A flag the client did not mention stays `None`, because only the flavor knows
+/// what it currently renders.
+///
+/// REF: references/mumble/src/murmur/Messages.cpp : `msgUserState` sets
+///   `self_mute` when `self_deaf` is true, then clears `self_deaf` when
+///   `self_mute` is false.
+fn self_state(state: &tcp::UserState) -> (Option<bool>, Option<bool>) {
+    let mut self_mute = state.self_mute;
+    let mut self_deaf = state.self_deaf;
+
+    if self_deaf == Some(true) {
+        self_mute = Some(true);
+    }
+    if self_mute == Some(false) {
+        self_deaf = Some(false);
+    }
+
+    (self_mute, self_deaf)
 }
 
 /// Route a TCP-tunnelled voice packet (the UDP fallback of spec 15.6).
@@ -488,5 +561,49 @@ impl FrameReader {
             }
             None => Ok(None),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn asked(self_mute: Option<bool>, self_deaf: Option<bool>) -> (Option<bool>, Option<bool>) {
+        self_state(&tcp::UserState {
+            self_mute,
+            self_deaf,
+            ..Default::default()
+        })
+    }
+
+    /// The whole table, because the two implications interact and the
+    /// interesting cases are the contradictory ones.
+    ///
+    /// REF: references/mumble/src/murmur/Messages.cpp : `msgUserState`. Each row
+    /// is what that code leaves in the broadcast message for the same input.
+    #[test]
+    fn the_self_state_resolves_the_way_the_reference_server_resolves_it() {
+        // What the official client always sends: both flags, no contradiction.
+        assert_eq!(asked(Some(true), Some(false)), (Some(true), Some(false)));
+        assert_eq!(asked(Some(false), Some(false)), (Some(false), Some(false)));
+        assert_eq!(asked(Some(true), Some(true)), (Some(true), Some(true)));
+
+        // Deafened wins over unmuted: Murmur overwrites `self_mute` before it
+        // ever reads it, so "deafen me but leave me unmuted" means both.
+        assert_eq!(asked(Some(false), Some(true)), (Some(true), Some(true)));
+
+        // One flag alone. Deafening still implies muting; unmuting still
+        // undeafens; the two that imply nothing leave the other untouched.
+        assert_eq!(asked(None, Some(true)), (Some(true), Some(true)));
+        assert_eq!(asked(Some(false), None), (Some(false), Some(false)));
+        assert_eq!(asked(Some(true), None), (Some(true), None));
+        assert_eq!(asked(None, Some(false)), (None, Some(false)));
+    }
+
+    #[test]
+    fn a_user_state_about_nothing_asks_for_nothing() {
+        // The guard that keeps `user_state` from forwarding an empty request,
+        // and therefore from acknowledging one.
+        assert_eq!(asked(None, None), (None, None));
     }
 }

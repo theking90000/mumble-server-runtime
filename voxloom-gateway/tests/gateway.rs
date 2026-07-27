@@ -21,7 +21,7 @@ use voxloom_gateway::{
 };
 use voxloom_shard::{
     ChannelKey, ConnectionId, DomainId, Narrow, Occupant, Scope, ScopeSet, ShardBuilder, ShardId,
-    ShardLogic, VoiceEvent,
+    ShardLogic, UserFlags, VoiceEvent,
 };
 
 #[path = "support/client.rs"]
@@ -47,6 +47,9 @@ struct Roster {
     /// connection -> (name, room). Room 2 means "a listener": it observes both
     /// rooms and speaks into neither.
     people: std::sync::Mutex<BTreeMap<ConnectionId, (String, u32)>>,
+    /// What each connection asked for its own audio state. The flavor owns it:
+    /// the runtime keeps no copy.
+    flags: std::sync::Mutex<BTreeMap<ConnectionId, UserFlags>>,
 }
 
 impl Roster {
@@ -74,6 +77,36 @@ impl Roster {
         self.people
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// Grant a self-state request. A flag the client did not mention keeps the
+    /// value this flavor already renders.
+    fn set_self_state(
+        &self,
+        connection: ConnectionId,
+        self_mute: Option<bool>,
+        self_deaf: Option<bool>,
+    ) {
+        let mut flags = self
+            .flags
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let entry = flags.entry(connection).or_default();
+        if let Some(mute) = self_mute {
+            entry.self_mute = mute;
+        }
+        if let Some(deaf) = self_deaf {
+            entry.self_deaf = deaf;
+        }
+    }
+
+    fn flags(&self, connection: ConnectionId) -> UserFlags {
+        self.flags
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(&connection)
+            .copied()
+            .unwrap_or_default()
     }
 }
 
@@ -113,18 +146,21 @@ impl ShardLogic for Rooms {
             match self.roster.room(*connection) {
                 Some(room @ 0..=1) => {
                     let channel = if room == 0 { left } else { right };
-                    out.user(
+                    let user = out.user(
                         channel,
                         Occupant::Connection(*connection),
                         &name,
                         Narrow::Same,
                     );
+                    out.user_flags(user, self.roster.flags(*connection));
                     rooms.entry(room).or_default().push(*connection);
                 }
                 // A listener sits in Left so it is somewhere, and is in no voice
                 // domain: it hears without being heard.
                 _ => {
-                    out.user(left, Occupant::Connection(*connection), &name, Narrow::Same);
+                    let user =
+                        out.user(left, Occupant::Connection(*connection), &name, Narrow::Same);
+                    out.user_flags(user, self.roster.flags(*connection));
                     listeners.push(*connection);
                 }
             }
@@ -168,6 +204,15 @@ impl ShardLogic for Rooms {
                     }
                 }
             },
+            // Granted as asked. A flavor is free to refuse by rendering
+            // nothing new, which is what makes this a request.
+            VoiceEvent::RequestedSelfState {
+                connection,
+                self_mute,
+                self_deaf,
+            } => self
+                .roster
+                .set_self_state(*connection, *self_mute, *self_deaf),
             other => eprintln!("test flavor ignores {other:?}"),
         }
     }
@@ -527,5 +572,145 @@ async fn the_cursor_gate_holds_a_route_until_the_receiver_has_been_told() -> Res
         .await?
         .expect("the gate opens once the view is in");
     assert_eq!(heard.sender_session, alice.session());
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Client intents: the self-state request
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn a_client_that_mutes_itself_is_shown_muted_to_everyone() -> Result<()> {
+    let harness = Harness::start().await?;
+    let mut alice = Client::connect(harness.address, "alice", None).await?;
+    let mut bob = Client::connect(harness.address, "bob", None).await?;
+    bob.settle("alice to appear", |model| {
+        model.user_named("alice").is_some()
+    })
+    .await?;
+    let alice_session = alice.session();
+
+    // The mute button: both flags, and no session field at all.
+    alice.set_self_state(true, false).await?;
+
+    // The request reaches the flavor, the flavor renders the flag, and the
+    // ordinary delta path carries it. Nothing here is a special case: it is one
+    // `UserState` patch among the others.
+    let muted = |model: &support::Model| {
+        model
+            .users
+            .get(&alice_session)
+            .is_some_and(|user| user.self_mute)
+    };
+    alice.settle("its own mute to come back", muted).await?;
+    bob.settle("alice to be shown muted", muted).await?;
+    assert!(
+        !bob.model
+            .users
+            .get(&alice_session)
+            .is_some_and(|user| user.self_deaf),
+        "asking to be muted must not deafen"
+    );
+
+    alice.set_self_state(false, false).await?;
+    bob.settle("alice to be unmuted again", |model| {
+        model
+            .users
+            .get(&alice_session)
+            .is_some_and(|user| !user.self_mute)
+    })
+    .await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_muted_client_is_not_heard_and_still_hears() -> Result<()> {
+    let harness = Harness::start().await?;
+    let mut alice = Client::connect(harness.address, "alice", None).await?;
+    let mut bob = Client::connect(harness.address, "bob", None).await?;
+    alice
+        .settle("bob to appear", |model| model.user_named("bob").is_some())
+        .await?;
+    bob.settle("alice to appear", |model| {
+        model.user_named("alice").is_some()
+    })
+    .await?;
+
+    alice.open_udp().await?;
+    bob.open_udp().await?;
+    let _ping = alice.hear().await;
+    let _ping = bob.hear().await;
+
+    // The line works before the mute, so what follows is the mute and nothing
+    // else.
+    alice.speak(b"before").await?;
+    let _heard = bob.hear().await?.expect("bob hears alice before the mute");
+
+    alice.set_self_state(true, false).await?;
+    let alice_session = alice.session();
+    // No sleep: the shard publishes its routing table before it pushes any view,
+    // so bob holding the flag proves the table that carries it is already live.
+    bob.settle("alice to be shown muted", |model| {
+        model
+            .users
+            .get(&alice_session)
+            .is_some_and(|user| user.self_mute)
+    })
+    .await?;
+
+    alice.speak(b"after").await?;
+    assert!(
+        bob.hear().await?.is_none(),
+        "a muted microphone must reach nobody, whatever the flavor declared"
+    );
+
+    // The ear is untouched: muting is one direction only.
+    bob.speak(b"reply").await?;
+    let back = alice.hear().await?.expect("a muted client still hears");
+    assert_eq!(back.sender_session, bob.session());
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_deafened_client_is_given_nothing() -> Result<()> {
+    let harness = Harness::start().await?;
+    let mut alice = Client::connect(harness.address, "alice", None).await?;
+    let mut bob = Client::connect(harness.address, "bob", None).await?;
+    alice
+        .settle("bob to appear", |model| model.user_named("bob").is_some())
+        .await?;
+    bob.settle("alice to appear", |model| {
+        model.user_named("alice").is_some()
+    })
+    .await?;
+
+    alice.open_udp().await?;
+    bob.open_udp().await?;
+    let _ping = alice.hear().await;
+    let _ping = bob.hear().await;
+
+    bob.speak(b"before").await?;
+    let _heard = alice
+        .hear()
+        .await?
+        .expect("alice hears bob before deafening");
+
+    // The headphone button. Deafening implies muting, which is why the client
+    // never sends the two apart.
+    alice.set_self_state(false, true).await?;
+    let alice_session = alice.session();
+    bob.settle("alice to be shown deafened", |model| {
+        model
+            .users
+            .get(&alice_session)
+            .is_some_and(|user| user.self_deaf && user.self_mute)
+    })
+    .await?;
+
+    bob.speak(b"after").await?;
+    assert!(
+        alice.hear().await?.is_none(),
+        "a deafened client must be given nothing at all"
+    );
     Ok(())
 }

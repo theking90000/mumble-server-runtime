@@ -53,7 +53,7 @@ use crate::ids::{ChannelId, ChannelKey, ConnectionId, Occupant, SessionId, Shard
 use crate::journal::Journal;
 use crate::plan::{PlanOp, plan, plan_elements};
 use crate::queue::{OutboundQueue, Refused};
-use crate::routing::{AudioRelation, AudioRouting, compile};
+use crate::routing::{AudioRelation, AudioRouting, Silence, compile};
 use crate::scope::ScopeSet;
 use crate::view::{Overlay, ShardView};
 
@@ -99,6 +99,25 @@ pub enum VoiceEvent {
     RequestedChannel {
         connection: ConnectionId,
         channel: ChannelKey,
+    },
+    /// The client asked to mute or deafen **itself**.
+    ///
+    /// A request like the others: the flags a client sees are the ones the
+    /// flavor renders, so refusing is simply rendering nothing new. A flavor
+    /// that grants it stores the pair and hands it back through
+    /// [`crate::build::ShardBuilder::user_flags`].
+    ///
+    /// `None` means the client said nothing about that flag, so whatever the
+    /// flavor currently renders stands. The runtime holds no copy of the pair:
+    /// that state belongs to the flavor, and keeping a second one here is how
+    /// the two start disagreeing.
+    ///
+    /// REF: references/mumble/src/mumble/ServerHandler.cpp :
+    ///   `setSelfMuteDeafState` sends a `UserState` carrying both flags.
+    RequestedSelfState {
+        connection: ConnectionId,
+        self_mute: Option<bool>,
+        self_deaf: Option<bool>,
     },
 }
 
@@ -157,6 +176,13 @@ pub enum ShardCommand {
     Requested {
         connection: ConnectionId,
         channel: ChannelId,
+    },
+    /// The client asked to mute or deafen itself. Reported to the flavor, which
+    /// alone decides what the view ends up saying.
+    RequestedSelfState {
+        connection: ConnectionId,
+        self_mute: Option<bool>,
+        self_deaf: Option<bool>,
     },
 }
 
@@ -319,6 +345,8 @@ pub struct Shard<L: ShardLogic> {
     /// The inputs the routing table was last compiled from. Comparing against
     /// them is what makes a channel rename cost nothing on the audio plane.
     declared_audio: AudioRelation,
+    /// Part of the same comparison: who was muted or deafened last time.
+    declared_silence: Silence,
     session_of: BTreeMap<ConnectionId, SessionId>,
     routing: watch::Sender<Arc<AudioRouting>>,
 }
@@ -348,6 +376,7 @@ impl<L: ShardLogic> Shard<L> {
             connections: BTreeMap::new(),
             since: BTreeMap::new(),
             declared_audio: AudioRelation::default(),
+            declared_silence: Silence::default(),
             session_of: BTreeMap::new(),
             routing,
         }
@@ -413,6 +442,11 @@ impl<L: ShardLogic> Shard<L> {
                 connection,
                 channel,
             } => self.requested(connection, channel),
+            ShardCommand::RequestedSelfState {
+                connection,
+                self_mute,
+                self_deaf,
+            } => self.requested_self_state(connection, self_mute, self_deaf),
         }
     }
 
@@ -553,6 +587,34 @@ impl<L: ShardLogic> Shard<L> {
         }
     }
 
+    /// Report a client's request about its own audio state to the flavor.
+    ///
+    /// There is nothing to resolve against the view: the request names no
+    /// element, only the connection making it, so the visibility question that
+    /// guards [`Shard::requested`] does not arise. It is still refused for a
+    /// connection this shard does not hold, so a command that raced a detach
+    /// cannot reach the flavor as if the connection were still here.
+    fn requested_self_state(
+        &mut self,
+        connection: ConnectionId,
+        self_mute: Option<bool>,
+        self_deaf: Option<bool>,
+    ) {
+        if !self.connections.contains_key(&connection) {
+            eprintln!(
+                "voxloom-shard: shard {:?}: {connection:?} asked to change its own state, but it \
+                 is not attached here",
+                self.id
+            );
+            return;
+        }
+        self.logic.observe(&VoiceEvent::RequestedSelfState {
+            connection,
+            self_mute,
+            self_deaf,
+        });
+    }
+
     /// Retry one connection whose queue drained, without touching the others.
     fn retry(&mut self, connection: ConnectionId) {
         let head = self.journal.head();
@@ -651,12 +713,18 @@ impl<L: ShardLogic> Shard<L> {
         }
 
         // Rule 2: publish routing BEFORE pushing views.
-        let mut session_of: BTreeMap<ConnectionId, SessionId> = self
-            .view
-            .users
-            .values()
-            .filter_map(|user| user.occupant.connection().map(|c| (c, user.session)))
-            .collect();
+        //
+        // The flags are read exactly where the sessions are, and from the same
+        // presence: whichever rendering of a user is the one the audio plane
+        // will name it by is also the one that decides whether it may speak.
+        let mut session_of: BTreeMap<ConnectionId, SessionId> = BTreeMap::new();
+        let mut silence = Silence::default();
+        for user in self.view.users.values() {
+            silence.record(user.session, user.flags);
+            if let Some(connection) = user.occupant.connection() {
+                session_of.insert(connection, user.session);
+            }
+        }
         // A connection with no shared presence is not absent from the runtime,
         // only from the shared view: that is exactly what a vanish is. Leaving it
         // out here would quietly turn "hears everything, heard by nobody" into
@@ -674,12 +742,18 @@ impl<L: ShardLogic> Shard<L> {
                 .find(|user| user.occupant == Occupant::Connection(*connection));
             if let Some(user) = own {
                 session_of.insert(*connection, user.session);
+                silence.record(user.session, user.flags);
             }
         }
-        let routing_recompiled =
-            since_changed || rendered.audio != self.declared_audio || session_of != self.session_of;
+        // Muting somebody changes neither the declared relation nor the session
+        // map, so without this term the table would keep every route the flavor
+        // declared and the flag would be pure decoration.
+        let routing_recompiled = since_changed
+            || rendered.audio != self.declared_audio
+            || session_of != self.session_of
+            || silence != self.declared_silence;
         if routing_recompiled {
-            let table = compile(&rendered.audio, &session_of, &self.since);
+            let table = compile(&rendered.audio, &session_of, &self.since, &silence);
             // `send_replace` rather than `send`: the latter reports "no reader"
             // as an error and, crucially, does **not** store the value. A shard
             // that rendered before its voice plane subscribed would then keep
@@ -688,6 +762,7 @@ impl<L: ShardLogic> Shard<L> {
             let _previous = self.routing.send_replace(Arc::new(table));
             self.declared_audio = rendered.audio;
             self.session_of = session_of;
+            self.declared_silence = silence;
         }
 
         let head = self.version;

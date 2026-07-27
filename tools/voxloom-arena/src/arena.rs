@@ -195,15 +195,22 @@ impl ShardLogic for Arena {
 
         for (connection, role) in &self.roles {
             let name = self.directory.name(*connection);
+            let flags = self.directory.flags(*connection);
             match role {
                 Role::Player(Side::Red) => {
-                    out.user(red, Occupant::Connection(*connection), &name, Narrow::Same);
+                    let user =
+                        out.user(red, Occupant::Connection(*connection), &name, Narrow::Same);
+                    out.user_flags(user, flags);
                 }
                 Role::Player(Side::Blue) => {
-                    out.user(blue, Occupant::Connection(*connection), &name, Narrow::Same);
+                    let user =
+                        out.user(blue, Occupant::Connection(*connection), &name, Narrow::Same);
+                    out.user_flags(user, flags);
                 }
                 Role::Spectator => {
-                    out.user(deck, Occupant::Connection(*connection), &name, Narrow::Same);
+                    let user =
+                        out.user(deck, Occupant::Connection(*connection), &name, Narrow::Same);
+                    out.user_flags(user, flags);
                 }
                 // Staff have no shared presence. This is the vanish, and it is
                 // an absence rather than a flag: there is nothing to filter out
@@ -230,17 +237,19 @@ impl ShardLogic for Arena {
 
         for (admin, addressing) in self.admins() {
             let name = self.directory.name(admin);
+            let flags = self.directory.flags(admin);
 
             // The admin's own presence, visible to nobody else. Without it the
             // client has no self to find when `ServerSync` names its session.
             let overwatch = ChannelKey(OVERWATCH_BASE.wrapping_add(admin.0));
             out.private(admin, |private| {
                 let room = private.channel(root, overwatch, "Overwatch");
-                private.user_in(
+                let user = private.user_in(
                     room,
                     Occupant::Connection(admin),
                     &format!("{name} (vanished)"),
                 );
+                private.user_flags(user, flags);
             });
 
             // Staff hear everything, and are heard by nobody.
@@ -260,11 +269,12 @@ impl ShardLogic for Arena {
             // see its sender is a receiver whose client throws the audio away.
             for member in self.members_of(side) {
                 out.private(member, |private| {
-                    private.user_in(
+                    let user = private.user_in(
                         base,
                         Occupant::Connection(admin),
                         &format!("[Staff] {name}"),
                     );
+                    private.user_flags(user, flags);
                 });
                 out.audio_edge(admin, member);
             }
@@ -310,6 +320,15 @@ impl ShardLogic for Arena {
                 connection,
                 channel,
             } => self.requested(*connection, *channel),
+            // Granted, including for a vanished admin: the flag rides in its own
+            // overlay, so muting itself changes nothing anyone else can see.
+            VoiceEvent::RequestedSelfState {
+                connection,
+                self_mute,
+                self_deaf,
+            } => self
+                .directory
+                .set_self_state(*connection, *self_mute, *self_deaf),
             other => eprintln!("voxloom-arena: the arena ignores {other:?}"),
         }
     }

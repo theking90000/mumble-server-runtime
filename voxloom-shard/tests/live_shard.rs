@@ -790,3 +790,50 @@ fn a_refused_render_keeps_the_previous_view_and_closes_nothing() {
     assert_eq!(broken.version(), 0, "the previous view is kept");
     assert_eq!(harness.shard.version(), version);
 }
+
+#[test]
+fn a_self_state_request_reaches_the_flavor_and_only_for_a_connection_it_holds() {
+    let mut harness = Harness::new(&[(1, 0)], 1024);
+    harness.step("initial");
+
+    harness.shard.handle(ShardCommand::RequestedSelfState {
+        connection: ConnectionId(1),
+        self_mute: Some(true),
+        self_deaf: None,
+    });
+    // Never attached here: a command that raced a detach, or a client of another
+    // shard. It must reach nothing.
+    harness.shard.handle(ShardCommand::RequestedSelfState {
+        connection: ConnectionId(99),
+        self_mute: Some(true),
+        self_deaf: Some(true),
+    });
+
+    let requests: Vec<VoiceEvent> = harness
+        .shard
+        .logic_mut()
+        .world
+        .events
+        .iter()
+        .filter(|event| matches!(event, VoiceEvent::RequestedSelfState { .. }))
+        .cloned()
+        .collect();
+
+    match requests.as_slice() {
+        [
+            VoiceEvent::RequestedSelfState {
+                connection,
+                self_mute,
+                self_deaf,
+            },
+        ] => {
+            assert_eq!(*connection, ConnectionId(1));
+            assert_eq!(*self_mute, Some(true));
+            assert_eq!(
+                *self_deaf, None,
+                "a flag the client did not mention must not be invented for the flavor"
+            );
+        }
+        other => panic!("expected exactly one request, got {other:?}"),
+    }
+}

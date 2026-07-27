@@ -91,10 +91,12 @@ pub struct Channel {
     pub parent: Option<u32>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct User {
     pub name: String,
     pub channel: u32,
+    pub self_mute: bool,
+    pub self_deaf: bool,
 }
 
 impl Model {
@@ -149,15 +151,20 @@ impl Model {
             }
             ControlMessage::UserState(state) => {
                 let Some(session) = state.session else { return };
-                let entry = self.users.entry(session).or_insert(User {
-                    name: String::new(),
-                    channel: 0,
-                });
+                let entry = self.users.entry(session).or_default();
                 if let Some(name) = &state.name {
                     entry.name.clone_from(name);
                 }
                 if let Some(channel) = state.channel_id {
                     entry.channel = channel;
+                }
+                // Sparse, like the real client's model: a field the server left
+                // out is a field nobody touched.
+                if let Some(mute) = state.self_mute {
+                    entry.self_mute = mute;
+                }
+                if let Some(deaf) = state.self_deaf {
+                    entry.self_deaf = deaf;
                 }
             }
             ControlMessage::UserRemove(remove) => {
@@ -260,6 +267,23 @@ impl Client {
         self.send(&ControlMessage::UserState(tcp::UserState {
             session: Some(session),
             channel_id: Some(channel),
+            ..Default::default()
+        }))
+        .await
+    }
+
+    /// Mute or deafen itself, the way the mute button does.
+    ///
+    /// No session field, deliberately: that is exactly what the official client
+    /// sends, and it is the case a server that only accepts an explicit session
+    /// would silently ignore.
+    ///
+    /// REF: references/mumble/src/mumble/ServerHandler.cpp :
+    ///   `setSelfMuteDeafState`.
+    pub async fn set_self_state(&mut self, mute: bool, deaf: bool) -> Result<()> {
+        self.send(&ControlMessage::UserState(tcp::UserState {
+            self_mute: Some(mute),
+            self_deaf: Some(deaf),
             ..Default::default()
         }))
         .await

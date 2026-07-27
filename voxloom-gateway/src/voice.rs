@@ -287,9 +287,28 @@ impl VoicePlane {
     /// because echoing a speaker back to itself is the classic doubled-voice
     /// bug. This is a separate mechanism the client explicitly asks for, and it
     /// stays because it is how a human checks a fresh deployment end to end.
+    ///
+    /// Going through no route means it has to ask the mute question itself.
+    /// Deafness is deliberately not asked: the reference server tests it when
+    /// adding a *receiver*, and the loopback skips that path entirely, so a
+    /// deafened speaker still hears its own echo.
+    ///
+    /// REF: references/mumble/src/murmur/Server.cpp : `processMsg` returns on
+    ///   `bMute || bSuppress || bSelfMute` before it reaches the
+    ///   `SERVER_LOOPBACK` branch.
+    /// REF: references/mumble/src/murmur/AudioReceiverBuffer.cpp : the loopback
+    ///   goes through `forceAddReceiver`, which does not test `bDeaf`.
     fn reflect(&self, sender: &Arc<Peer>, audio: &udp::Audio) -> Vec<Datagram> {
+        let session = sender.session();
+        if !sender.routing().may_speak(session) {
+            eprintln!(
+                "voxloom-gateway: session {session:?}: refusing loopback, this speaker is muted"
+            );
+            return Vec::new();
+        }
+
         let mut datagrams = Vec::new();
-        self.deliver(sender, audio, sender.session(), &mut datagrams);
+        self.deliver(sender, audio, session, &mut datagrams);
         datagrams
     }
 

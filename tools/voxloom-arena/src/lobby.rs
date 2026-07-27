@@ -148,12 +148,13 @@ impl ShardLogic for Lobby {
                 Intent::Spectate => spectate,
             };
             let name = self.directory.name(*connection);
-            out.user(
+            let user = out.user(
                 placement,
                 Occupant::Connection(*connection),
                 &name,
                 Narrow::Same,
             );
+            out.user_flags(user, self.directory.flags(*connection));
         }
 
         let everyone: Vec<ConnectionId> = self.waiting.keys().copied().collect();
@@ -185,6 +186,14 @@ impl ShardLogic for Lobby {
                 connection,
                 channel,
             } => self.requested(*connection, *channel),
+            // Granted, and stored where a migration will find it again.
+            VoiceEvent::RequestedSelfState {
+                connection,
+                self_mute,
+                self_deaf,
+            } => self
+                .directory
+                .set_self_state(*connection, *self_mute, *self_deaf),
             // The event enum is non-exhaustive on purpose: a runtime that starts
             // reporting something new must not silently change what this flavor
             // does.

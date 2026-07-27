@@ -8,7 +8,7 @@
 use std::collections::BTreeMap;
 use std::sync::{Mutex, MutexGuard, OnceLock, PoisonError};
 
-use voxloom_shard::{ConnectionId, ShardId};
+use voxloom_shard::{ConnectionId, ShardId, UserFlags};
 
 /// What this application knows about one connection.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -27,6 +27,13 @@ pub struct Member {
 #[derive(Debug, Default)]
 pub struct Directory {
     members: Mutex<BTreeMap<ConnectionId, Member>>,
+    /// What each connection asked for its own audio state.
+    ///
+    /// Here rather than in a shard because a migration moves a connection
+    /// between two of them: a player who muted itself in the lobby stays muted
+    /// when the arena takes it. Kept apart from [`Member`], which is identity
+    /// the router writes once, while this changes at every click.
+    voice: Mutex<BTreeMap<ConnectionId, UserFlags>>,
 }
 
 impl Directory {
@@ -43,6 +50,38 @@ impl Directory {
     /// never outlives the connection it describes.
     pub fn forget(&self, connection: ConnectionId) {
         guard(&self.members).remove(&connection);
+        guard(&self.voice).remove(&connection);
+    }
+
+    /// Grant a self-mute or self-deafen request.
+    ///
+    /// This application says yes to both, which is the ordinary policy: nothing
+    /// in an arena depends on hearing someone who asked not to speak. A flag the
+    /// client did not mention keeps whatever is already rendered, so a message
+    /// about one flag never silently clears the other.
+    pub fn set_self_state(
+        &self,
+        connection: ConnectionId,
+        self_mute: Option<bool>,
+        self_deaf: Option<bool>,
+    ) {
+        let mut voice = guard(&self.voice);
+        let entry = voice.entry(connection).or_default();
+        if let Some(mute) = self_mute {
+            entry.self_mute = mute;
+        }
+        if let Some(deaf) = self_deaf {
+            entry.self_deaf = deaf;
+        }
+    }
+
+    /// The flags to render for a connection. Unknown means nothing was asked.
+    #[must_use]
+    pub fn flags(&self, connection: ConnectionId) -> UserFlags {
+        guard(&self.voice)
+            .get(&connection)
+            .copied()
+            .unwrap_or_default()
     }
 
     #[must_use]
