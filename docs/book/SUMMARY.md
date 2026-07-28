@@ -22,6 +22,7 @@
 - [Scope or overlay](build/scope-or-overlay.md)
 - [Declaring audio](build/audio.md)
 - [Client interactions](build/interactions.md)
+- [Migration between shards](build/migration.md)
 
 # Reference
 
@@ -38,7 +39,6 @@ Plan du livre. Une entrée est décommentée quand la page est écrite : avec
 - [Establishing compatibility](mumble/oracles.md)
 
 # Building an application (suite)
-- [Migration between shards](build/migration.md)
 - [Configuration and limits](build/configuration.md)
 - [Load testing](build/load-testing.md)
 
