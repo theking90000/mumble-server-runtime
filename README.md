@@ -1,11 +1,16 @@
 # Mumble Server Runtime
 
-**A Mumble-compatible voice server your application drives.**
+**A programmable, declarative Mumble server runtime.**
 
-Mumble Server Runtime speaks the Mumble protocol to unmodified clients. No plugin, no custom
-client, no protocol extension. What it does not have is a channel tree you
-configure: the channels, who sees whom and who hears whom are all computed from
-your application's state, live.
+Mumble Server Runtime aims to be for Mumble what
+[Minestom](https://minestom.net/) is for Minecraft servers: a from-scratch,
+programmable server implementation that speaks the Mumble protocol to unmodified
+clients while replacing the traditional server model with one driven entirely
+by application state.
+
+No plugin, custom client or protocol extension is required. Instead of a channel
+tree you configure, channels, visibility and audibility are computed live from
+your application's state.
 
 > **Preliminary.** The runtime works and ships with a runnable demo, but this
 > README is ahead of its documentation. The published API is still work-in-progress,
