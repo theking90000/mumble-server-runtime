@@ -1,12 +1,12 @@
 # Modèle de rendu, d'ordonnancement et de sharding (proposition)
 
-> **Document vivant.** Il décrit une refonte *proposée* du chemin
-> rendu → réconciliation → publication, et son intégration avec le sharding.
-> Rien ici n'est implémenté. Ce document n'est pas une autorité : la spec et la
-> roadmap le restent. Il est destiné à être révisé jusqu'à ce que les questions
-> ouvertes (§12) soient tranchées, puis figé en ADR.
+> **Document historique.** Il conserve le diagnostic et le raisonnement qui ont
+> mené au runtime à shards. La carte de crates proposée au §13 était une étape
+> intermédiaire et n'a pas été retenue telle quelle. L'implémentation courante
+> est `voxloom-shard` + `voxloom-gateway`, décrite intégralement dans
+> `guide-implementation.md`, qui fait foi.
 >
-> **Statut : PROPOSITION — non implémentée.**
+> **Statut : RAISONNEMENT ARCHIVÉ — implémentation achevée ailleurs.**
 > Dernière révision : 2026-07-27 (révision 6). Voir le journal (§15).
 >
 > ⚠️ **Dépassé sur le modèle de visibilité.** Les sections qui parlent de `Params`
@@ -21,7 +21,7 @@
 
 ## 1. Pourquoi
 
-Le pipeline actuel (P5–P7) est correct et vérifié, mais son coût est quadratique
+Le pipeline P5–P7 était correct et vérifié, mais son coût était quadratique
 et son ordonnancement est implicite. Les deux défauts ont **la même cause
 unique**, et c'est une signature :
 
@@ -1005,7 +1005,7 @@ n'est donc pas une commodité de rangement : **c'est le seul moyen d'imposer
 mécaniquement une règle d'architecture**. On n'en crée un que s'il existe une
 dépendance qu'on veut rendre impossible à écrire.
 
-### 13.2 Carte des crates proposée
+### 13.2 Carte de crates proposée à l'époque (non retenue)
 
 ```
 PURS (ni tokio, ni socket, gates R4)

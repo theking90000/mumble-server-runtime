@@ -1,95 +1,22 @@
-# Workspace Voxloom — manifeste virtuel.
-#
-# Phase 0 : le workspace est VIDE (aucun membre). Conformément à la règle R5 de
-# la roadmap, un crate n'existe que lorsqu'une phase le remplit. Les crates de la
-# spec §7.1 (voxloom-protocol, voxloom-crypto, voxloom-transport, voxloom-session,
-# voxloom-auth, voxloom-flavor, voxloom-render, voxloom-reconcile, voxloom-audio,
-# voxloom-control, voxloom-observe, voxloom-testkit) seront ajoutés ici au fil des
-# phases, pas avant.
+# Workspace Voxloom — runtime vocal declaratif compatible Mumble.
 [workspace]
 resolver = "3"
 members = [
-    # Outil de Phase 0 : proxy d'enregistrement du corpus (livrable P0 #3).
-    # Ce n'est PAS un crate de domaine (voir R5) : c'est le binaire démontrable
-    # de la Phase 0, il vit sous tools/.
+    # Outils d'observation et de verification du protocole.
     "tools/recording-proxy",
-    # Phase 1 : critère de « done » — décodeur de corpus (transcript lisible,
-    # aucun octet inexpliqué). Binaire de vérification sous tools/ (R5), dépend
-    # des crates purs sans jamais l'inverse (R4).
     "tools/corpus-decode",
-    # Phase 2 : proxy MITM oracle. Termine la TLS des deux côtés, décode/ré-encode
-    # chaque message de contrôle (le codec exercé sur du trafic vivant), et ré-écrit
-    # l'échange de clés OCB2 pour tenir un domaine crypto indépendant vers chaque
-    # bord. Outil sous tools/ (R5), dépend des crates purs.
     "tools/mitm-proxy",
-    # Phase 1 : codec pur (framing TCP, protobuf, enveloppes UDP).
+    # Fondations pures.
     "voxloom-protocol",
-    # Phase 1 : crypto pure (OCB2-AES128, nonces, anti-rejeu).
     "voxloom-crypto",
-    # Phase 5 : moteur de vues pur — types de vue normalisée + validation des
-    # invariants §20. Sans IO, sans wire format (gate render/no-protocol).
-    "voxloom-render",
-    # Phase 5 : réconciliation pure — diff logique (§12.4), planificateur de
-    # transitions (§12.5/§12.6), résolution clé→ID stable (ADR-007). Dépend
-    # uniquement des types de vue de voxloom-render.
-    "voxloom-reconcile",
-    # Phase 4 : routage audio pur — compilation du snapshot de routage (§15.3),
-    # politique directionnelle (§15.4), réécriture d'enveloppe (§15.2). Hot path
-    # d'ADR-005 : ni verrou, ni await, ni accès à l'état vivant (gates R4).
-    "voxloom-audio",
-    # Phase 6 : cycle de vie de la vue d'une connexion — vue engagée, résolution
-    # clé→ID stable (ADR-007), traduction du plan abstrait en messages de
-    # contrôle, et règle de commit atomique (§12.7, invariant 20). Crate pur :
-    # ni runtime, ni socket, ni file d'attente.
-    "voxloom-session",
-    # Phase 7 T1 : contrat statique entre le runtime vocal et un flavor compilé.
-    # Le snapshot métier reste opaque ; seules les sorties sémantiques de vue et
-    # de routage traversent cette frontière.
-    "voxloom-flavor",
-    # Phase 7 T2/T3/T4/T5 : rendu complet d'un snapshot métier opaque, validation
-    # des vues, routes et interactions, publication atomique dans l'ordre de
-    # sécurité, et conversion des actions résolues en événements vocaux.
-    "voxloom-control",
-    # Phase 7 T6 : flavor de référence Aurora/Borealis. Possède ses realms et
-    # ses mutations, et ne parle à Voxloom que par le contrat public. Aucun
-    # crate central ne dépend de lui.
-    "voxloom-flavor-reference",
-    # Phase 7 T8 : binaire de composition. Le seul endroit qui nomme à la fois le
-    # runtime et un flavor concret ; les crates centrales n'en dépendent jamais.
-    "tools/voxloom-aurora",
-    # Runtime à shards (étape 10) : binaire de composition et flavor de
-    # démonstration. Le seul endroit qui nomme à la fois le runtime et un métier
-    # concret : lobby et arène sur deux shards, équipes en portées, admin
-    # invisible en overlay, spectateurs en écoute unidirectionnelle, migration.
-    "tools/voxloom-arena",
-    # Générateur de charge Mumble headless. Déroule le handshake TLS/TCP, tient
-    # un modèle client minimal, établit l'UDP chiffré et exécute des scénarios
-    # extensibles. `arena` exerce les interactions du flavor de démonstration.
-    "tools/voxloom-stress",
-    # Phase 7 T8 : mesure du coût d'une publication complète (rendu, validation,
-    # planification et commit de N connexions). Lancé par ci/bench-publication.sh.
-    "tools/bench-publication",
-    # Contrepartie de bench-publication pour le runtime à shards : même
-    # changement métier, mêmes tailles, même statistique. Les deux tableaux se
-    # lisent côte à côte — c'est la mesure de la thèse du guide.
-    "tools/bench-shard",
-    # Runtime à shards (docs/design/guide-implementation.md, étapes 1 à 7) :
-    # portées, constructeur de vue partagée, planificateur à clé (élément, portée),
-    # composition par connexion (filter/splice/collapse), journal de deltas et
-    # task de shard. Les étapes 1 à 5 sont pures ; 6 et 7 ajoutent la boucle.
+    # Runtime courant : logique de shard sans IO, puis gateway TLS/TCP/UDP.
     "voxloom-shard",
-    # Runtime à shards (étapes 8 à 10) : la porte d'entrée. Plan de contrôle TLS,
-    # handshake, routeur de connexions, registre multi-shards, migration, et un
-    # plan vocal UDP qui ne touche jamais une task de shard. Coexiste avec
-    # voxloom-server, qui reste sur le pipeline P5–P7.
     "voxloom-gateway",
-    # Phase 3 : serveur minimal — accepte la TLS, déroule le handshake sans
-    # Murmur, associe l'UDP par preuve cryptographique, répond aux pings et
-    # réfléchit l'audio de loopback (target 31). Dépend des crates purs P1.
-    "voxloom-server",
-    # Phase 3 : testkit vérificateur — SimulatedMumbleClient, modèle strict qui
-    # applique les messages serveur et panique sur toute violation §20. Zone
-    # vérificateur (R2) : jamais dans le même diff qu'un voxloom-*/src.
+    # Composition et charge de demonstration.
+    "tools/voxloom-arena",
+    "tools/voxloom-stress",
+    "tools/bench-shard",
+    # Verificateur indépendant : client Mumble simule et modele strict.
     "voxloom-testkit",
 ]
 
@@ -102,9 +29,8 @@ repository = "https://github.com/theking90000/voxloom"
 authors = ["Voxloom contributors"]
 
 # Lints partagés — encodent une partie de R4 au niveau du compilateur. Chaque
-# crate futur les active via `[lints] workspace = true`. Le reste de R4 (règles
-# par-crate : Mutex/await dans voxloom-audio, imports interdits, etc.) est appliqué
-# par les gates grep de ci/gates.sh, car clippy ne peut pas les exprimer.
+# crate les active via `[lints] workspace = true`. Le reste de R4 est applique
+# par les gates de `ci/`, car clippy ne peut pas l'exprimer.
 [workspace.lints.rust]
 unsafe_op_in_unsafe_fn = "deny"
 unused_must_use = "deny"

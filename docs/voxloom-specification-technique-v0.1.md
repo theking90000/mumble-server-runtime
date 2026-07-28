@@ -2,7 +2,7 @@
 
 ## Spécification technique d’un runtime vocal déclaratif compatible Mumble
 
-**Statut :** document d’architecture, version 0.1  
+**Statut :** spécification protocolaire et historique d’architecture, version 0.1
 **Langage d’implémentation ciblé :** Rust  
 **Compatibilité ciblée :** clients Mumble standards, avec une première cible recommandée Mumble 1.5+ et Opus uniquement  
 **Nature du projet :** nouvelle implémentation serveur compatible avec le protocole Mumble, sans chercher à reproduire la sémantique interne de Murmur
@@ -12,6 +12,12 @@
 > appartient au flavor compilé, pas au runtime Voxloom. Le terme historique
 > `CanonicalState` désigne ici le snapshot d'un flavor, jamais un modèle imposé
 > par le cœur.
+>
+> **Topologie courante :** les sections qui découpent l'implémentation en crates
+> P4–P7 décrivent l'architecture exploratoire conservée au tag
+> `legacy-p7-final`. Le runtime actif est `voxloom-shard` +
+> `voxloom-gateway`, selon `docs/design/guide-implementation.md`. Les exigences
+> protocolaires et les invariants de ce document restent applicables.
 
 ---
 
