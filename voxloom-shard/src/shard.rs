@@ -1303,6 +1303,7 @@ impl<L: ShardLogic> Shard<L> {
     /// source shard survives the migration with nothing left to remove it.
     fn retry(&mut self, connection: ConnectionId) {
         let head = self.journal.head();
+        let mut retired_channels = BTreeSet::new();
         if let Some(attached) = self.connections.get_mut(&connection) {
             if attached.held.is_some() {
                 return;
@@ -1312,8 +1313,10 @@ impl<L: ShardLogic> Shard<L> {
             // render. Cloning here keeps `push` free of a self-borrow.
             let overlay = attached.overlay_sent.clone();
             let actions = attached.actions_sent.clone();
-            let _outcome = push(attached, &self.journal, head, &overlay, &actions);
+            let (_outcome, retired) = push(attached, &self.journal, head, &overlay, &actions);
+            retired_channels = retired;
         }
+        self.ids.retire_channel_ids(self.id, &retired_channels);
     }
 
     /// Render, plan, journal, publish routing, and push to every connection.
@@ -1402,7 +1405,24 @@ impl<L: ShardLogic> Shard<L> {
             self.version = self.version.saturating_add(1);
             self.journal.push(ops);
         }
+        let retained_channels: BTreeSet<ChannelKey> = rendered
+            .view
+            .channels
+            .values()
+            .chain(
+                rendered
+                    .overlays
+                    .values()
+                    .flat_map(|overlay| overlay.channels.values()),
+            )
+            .filter(|channel| channel.id != ChannelId::ROOT)
+            .map(|channel| channel.key)
+            .collect();
         let previous = std::mem::replace(&mut self.view, rendered.view);
+        // The render is valid and has replaced the desired view. Any key absent
+        // from both its shared and private parts has now been withdrawn from
+        // every client view; if it returns, the wire id must not.
+        self.ids.retain_channels(self.id, &retained_channels);
 
         // A session that has just appeared is dated to this version, so the
         // voice plane can tell a receiver has not been told about it yet.
@@ -1470,6 +1490,7 @@ impl<L: ShardLogic> Shard<L> {
         let head = self.version;
         let moved_set: BTreeSet<ConnectionId> = moved.iter().copied().collect();
         let mut closed = Vec::new();
+        let mut retired_channels = BTreeSet::new();
         for attached in self.connections.values_mut() {
             let overlay = rendered
                 .overlays
@@ -1481,7 +1502,7 @@ impl<L: ShardLogic> Shard<L> {
                 .get(&attached.id)
                 .cloned()
                 .unwrap_or_default();
-            let outcome = if moved_set.contains(&attached.id) {
+            let (outcome, retired) = if moved_set.contains(&attached.id) {
                 let new_see = observations
                     .get(&attached.id)
                     .copied()
@@ -1492,11 +1513,17 @@ impl<L: ShardLogic> Shard<L> {
             } else {
                 push(attached, &self.journal, head, &overlay, &actions)
             };
+            retired_channels.extend(retired);
             if outcome == Outcome::Close {
                 attached.queue.mark_fatal();
                 closed.push(attached.id);
             }
         }
+        // Mumble clients remember every ChannelId they have removed. Since ids
+        // are shard-global, one accepted removal retires that wire id for the
+        // whole shard; the next render will rotate it for any peers that still
+        // see the semantic channel.
+        self.ids.retire_channel_ids(self.id, &retired_channels);
 
         ReconcileReport {
             version: self.version,
@@ -1528,10 +1555,10 @@ fn push(
     head: u64,
     overlay: &Overlay,
     actions: &Actions,
-) -> Outcome {
+) -> (Outcome, BTreeSet<ChannelId>) {
     let Ok(replayed) = journal.replay(attached.cursor, head) else {
         // Below the tail: unrepairable from deltas, and dying anyway.
-        return Outcome::Close;
+        return (Outcome::Close, BTreeSet::new());
     };
 
     let shared = filter(replayed, attached.see);
@@ -1550,16 +1577,16 @@ fn push(
         // a connection that sees nothing change would drift off the tail of the
         // journal and be closed for no reason.
         attached.commit(head, attached.see, overlay.clone(), actions.clone());
-        return Outcome::Advanced;
+        return (Outcome::Advanced, BTreeSet::new());
     }
 
     match attached.queue.try_send_all(messages) {
         Ok(()) => {
             attached.commit(head, attached.see, overlay.clone(), actions.clone());
-            Outcome::Advanced
+            (Outcome::Advanced, retired_channels(&ops))
         }
-        Err(Refused::Congested { .. }) => Outcome::Congested,
-        Err(Refused::TooLarge { .. } | Refused::Closed) => Outcome::Close,
+        Err(Refused::Congested { .. }) => (Outcome::Congested, BTreeSet::new()),
+        Err(Refused::TooLarge { .. } | Refused::Closed) => (Outcome::Close, BTreeSet::new()),
     }
 }
 
@@ -1581,7 +1608,7 @@ fn replan(
     new_see: ScopeSet,
     overlay: &Overlay,
     actions: &Actions,
-) -> Outcome {
+) -> (Outcome, BTreeSet<ChannelId>) {
     let from = attached.composed(before);
     let to = after.restrict(new_see).compose(overlay);
 
@@ -1597,7 +1624,7 @@ fn replan(
 
     if messages.is_empty() {
         attached.commit(head, new_see, overlay.clone(), actions.clone());
-        return Outcome::Advanced;
+        return (Outcome::Advanced, BTreeSet::new());
     }
 
     match attached.queue.try_send_all(messages) {
@@ -1608,11 +1635,20 @@ fn replan(
         // was never told about.
         Ok(()) => {
             attached.commit(head, new_see, overlay.clone(), actions.clone());
-            Outcome::Advanced
+            (Outcome::Advanced, retired_channels(&ops))
         }
-        Err(Refused::Congested { .. }) => Outcome::Congested,
-        Err(Refused::TooLarge { .. } | Refused::Closed) => Outcome::Close,
+        Err(Refused::Congested { .. }) => (Outcome::Congested, BTreeSet::new()),
+        Err(Refused::TooLarge { .. } | Refused::Closed) => (Outcome::Close, BTreeSet::new()),
     }
+}
+
+fn retired_channels(ops: &[PlanOp]) -> BTreeSet<ChannelId> {
+    ops.iter()
+        .filter_map(|op| match op {
+            PlanOp::RemoveChannel(channel) => Some(*channel),
+            _ => None,
+        })
+        .collect()
 }
 
 /// The handle a flavor uses to say "my state changed".
