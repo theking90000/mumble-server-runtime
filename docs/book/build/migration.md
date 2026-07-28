@@ -82,26 +82,57 @@ has to survive a move therefore lives in the application, shared by both shards:
 
 ```rust
 let directory = Arc::new(Directory::new());
-let chosen = Arc::new(Choices::new());
+let destinations = Arc::new(Destinations::new());
 
-let lobby = runtime.create_shard({
-    let directory = Arc::clone(&directory);
-    let chosen = Arc::clone(&chosen);
-    move |_handle| Lobby::new(directory, chosen)
+let lobby_directory = Arc::clone(&directory);
+let lobby_destinations = Arc::clone(&destinations);
+let lobby = runtime.create_shard(move |_handle| {
+    Lobby::new(lobby_directory, lobby_destinations)
 });
-let arena = runtime.create_shard(move |_handle| Arena::new(directory, chosen));
+
+let arena_directory = Arc::clone(&directory);
+let arena_destinations = Arc::clone(&destinations);
+let arena = runtime.create_shard(move |_handle| {
+    Arena::new(arena_directory, arena_destinations)
+});
 ```
 
 The demonstration application records a name and a staff flag in the router, and
-the side a player picked in the lobby. The arena reads both without either shard
-knowing the other exists.
+the side a player picked in the lobby. The arena reads both, and neither shard
+holds a reference to the other's logic.
+
+## Learning the destination
+
+`switch` names a `ShardId`, so two shards that can send connections to each
+other have to learn the other's identifier. Neither exists when the first is
+built, which is the whole difficulty.
+
+A write-once cell is the smallest thing that resolves it without a placeholder
+that could be read before it is filled:
+
+```rust
+destinations.set_lobby(lobby.shard());
+destinations.set_arena(arena.shard());
+```
+
+The logic reads it back when an event calls for a move, and treats absence as a
+refusal rather than an impossibility:
+
+```rust
+match self.destinations.arena() {
+    Some(arena) => out.switch(connection, arena),
+    None => out.refuse(connection, "The arena is not running yet."),
+}
+```
 
 ## Both ends have to exist
 
 A move naming a shard that does not exist is refused and logged, and the
-connection stays where it is. Creating every shard a router or a logic can name
-before the first connection is accepted avoids the case entirely, which is what
-the closure passed to `serve` is for.
+connection stays where it is. Creating every shard before the first connection
+is accepted avoids the case, which is what the closure passed to `serve` is for.
+Filling the cells right after creating both shards keeps the refusal branch
+above unreachable in a composed binary, and correct if the composition ever
+changes.
 
 ## Scope
 
