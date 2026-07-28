@@ -2,125 +2,171 @@
 
 ## Mumble
 
-Mumble is a low-latency voice chat protocol, with free client implementations
-for Windows, macOS, Linux, Android and iOS. Participants are placed in a tree of
-channels held by the server, and audio is exchanged between participants that
-share a channel. In the usual deployment, the tree comes from a configuration
-file and an administrative interface: its shape is decided ahead of time, and
-changes to it are the work of an operator or of a participant moving between
-channels.
+Mumble is a low-latency voice communication protocol. Free client
+implementations are available for Windows, macOS, Linux, Android and iOS.
+
+Participants are represented in a tree of channels maintained by the server.
+Audio is normally exchanged between participants in the same channel.
+
+In a conventional deployment, one channel tree is shared by all participants.
+Its structure is defined through configuration or administrative actions.
+Channel changes are initiated by participants, administrators or external
+scripts.
+
+## Mumble in games
+
+Mumble is often used alongside multiplayer games, particularly for positional
+audio.
+
+Through Mumble Link, positional and contextual data may be transferred from a
+game client to the local Mumble client. Audio positioning can then be derived
+from information such as the current map, player position and orientation.
+
+This integration remains local to each participant. No authoritative game state
+is synchronized with the Mumble server through Mumble Link.
+
+Authoritative state is often held by the game server instead. It may include:
+
+- team membership,
+- match phase,
+- player role,
+- alive or spectator state,
+- location or region,
+- permissions derived from game rules.
+
+Voice behaviour based on this state usually requires custom channel management,
+permissions or scripted moves. The resulting voice structure is maintained in
+parallel with the game state.
 
 ## Voxloom
 
-Voxloom is a server implementation of that protocol, driven by code instead of
-by configuration. Nothing about the channel tree, the participant list or the
-audio topology is fixed in a file. All of it is produced from the state of an
-external authority: a game server, a match, a dispatch system, a training
-exercise, whatever system already holds the truth.
+Voxloom is a Mumble-compatible server runtime for application-controlled voice
+sessions.
 
-Connections come from unmodified official Mumble clients. No plugin, no protocol
-extension and no client-side configuration are involved.
+The channel structure, participant visibility and audio routing are derived
+from authoritative state held by another system. That authority may be a game
+server, a match controller, a dispatch system or a training platform.
 
-## A projection of authoritative state
+No voice topology is fixed in a configuration file. The current voice session
+is computed from the current application state.
 
-Whenever the authoritative state changes, the affected part of the voice session
-is recomputed and the difference is sent to each connection concerned. The voice
-session is therefore a live projection of that state rather than a structure
-maintained in parallel with it.
+Voice rules are defined in application code. Changes to authoritative state are
+therefore reflected in the corresponding Mumble session without a separately
+maintained channel model.
 
-Stated as examples, with a game server as the authority:
+Connections are accepted from unmodified Mumble clients. No plugin, custom
+client or protocol extension is required.
 
-- a player crossing into a cave is placed in the voice topology of that cave,
-- the end of a round dissolves the team channels and restores the lobby,
-- a role granted mid-game changes who is audible to whom,
-- a player being spectated is moved out of the channel of the living.
+Mumble Link and Voxloom address separate parts of game integration. Positional
+metadata may still be provided through Mumble Link, while server-controlled
+visibility, grouping and audio routing are derived through Voxloom.
 
-None of these require a participant to select a channel, and none require an
-operator. The move in the game and the move in the voice session are the same
-event.
+## Application-controlled voice
 
-## Views
+A voice session consists of three elements:
 
-A *view* is what a single client holds: the channel tree presented to it, the
-participants listed in that tree, and the speakers it is able to hear.
+- the channels visible to each connection,
+- the participants visible to each connection,
+- the directed audio relation between participants.
 
-Views in Voxloom are per connection, and they are allowed to disagree. Two
-clients connected to the same server, at the same moment, can hold entirely
-different trees. Each client receives an ordinary Mumble session and has no way
-of telling that anything unusual is happening.
+After a relevant change in authoritative state, the affected portion of the
+voice session is recomputed. Only the resulting difference is propagated to the
+affected connections.
 
-## What a shared tree cannot express
+The voice session is therefore a live projection of application state rather
+than a second structure maintained independently.
 
-With one tree shared by everyone, membership in a channel is the only vocabulary
-available, and it answers the visibility question and the audio question at
-once. Topologies that separate the two have no expression:
+For a game, the rendered voice state may include:
 
-- two teams that must not see each other, sharing a lobby before the match,
-- spectators who hear both sides without being audible to either,
-- staff present in no channel until addressing one,
-- proximity, where audibility is a function of distance rather than of position
-  in a tree.
+- placement in a cave-specific voice group after entry into a cave,
+- removal of team channels at the end of a round,
+- modified audibility after assignment of a role,
+- removal from the living-player view after transition to spectator state,
+- audibility derived from distance rather than channel membership.
 
-Approximating these with per-participant permissions and scripted channel moves
-produces a model whose special cases grow with the number of roles.
+No manual channel selection or administrative intervention is required. A
+change in application state and the corresponding change in voice state form
+one operation.
 
-## Ownership
+## Per-connection views
 
-The voice state belongs to the runtime: connections, sessions, encryption keys,
-and the view each client holds. The authoritative state belongs to the
-application and is never inspected by the runtime, which has no notion of a
-player, a match or a team.
+A _view_ is the portion of a Mumble session represented to one connection. It
+contains the visible channel tree, the participants represented within that
+tree and the speakers whose audio may be received.
 
-The interface between the two is a render function, supplied by the application
-and called whenever the authoritative state changes. Its output is a shared
-view, a set of scopes describing who observes what, and a directed audio
-relation. The translation into Mumble messages is derived from that output
-alone.
+Views are computed independently for each connection and may differ at the same
+instant. Different channel trees may therefore be sent to two clients connected
+to the same server.
 
-## Three mechanisms
+For example, only one team may be visible to a player, while both teams remain
+visible to a spectator. A separate structure may be visible to staff members.
 
-Visibility and audibility are not the same question, and are answered by
-separate mechanisms.
+Each result remains an ordinary Mumble session from the client perspective.
 
-| mechanism | describes | used for |
-|---|---|---|
-| scope | a group | teams, spectators, staff, the common case |
-| overlay | an individual exception | a private channel, a hidden participant |
-| audio relation | who hears whom, one way or both | all audio |
+## Visibility and audibility
 
-The rule that selects between the first two: a scope describes a group, an
-overlay describes an individual exception. A scope observed by a single
-connection is an overlay under another name.
+_Visibility_ is the set of channels and participants represented to a client.
 
-One constraint couples the mechanisms, imposed by the client rather than by the
-design: audio from a session unknown to the client is discarded, so a receiver
-has to see the speaker. A render whose audio relation violates that is refused
-rather than partially applied.
+_Audibility_ is the directed relation defining which participants may receive
+audio from which speakers.
 
-## Cost
+These concerns are represented separately. Visibility does not imply
+audibility, and audibility may be one-way.
 
-Rendering is done once per shard, not once per connection. A change produces a
-delta, filtered independently for each connection. The cost of propagating a
-change is therefore proportional to the size of the delta times the number of
-connections, and is independent of the size of the world. That property holds
-even when every connection holds a different view, which is the case Voxloom
-exists for.
+The following topologies can therefore be represented:
+
+- teams hidden from one another while sharing a pre-match lobby,
+- spectators receiving audio from both teams without being audible,
+- staff remaining outside participant views until addressing a group,
+- proximity voice derived from distance,
+- private communication visible only to selected participants.
+
+A single shared channel tree cannot represent these cases directly. Channel
+membership is the only available grouping mechanism, so visibility and
+audibility remain coupled. Approximation through permissions and scripted
+channel moves requires additional special cases for each role.
+
+## Responsibility boundary
+
+Application state remains outside the Voxloom runtime. Domain concepts such as
+players, matches, teams, roles and locations are not inspected by the runtime.
+
+Runtime ownership is limited to Mumble-specific state:
+
+- network connections,
+- protocol sessions,
+- encryption state,
+- client views,
+- audio routing.
+
+The boundary between both systems is a render function supplied by the
+application. Evaluation occurs after a relevant change in authoritative state.
+
+The render result consists of the desired views and directed audio relations.
+Mumble protocol messages are derived exclusively from that result.
+
+At a high level:
+
+```text
+authoritative application state
+              ↓
+     rendered voice state
+              ↓
+       Mumble sessions
+```
 
 ## Reading this book
 
-The book is ordered by increasing commitment, and each part is a complete
-reading on its own.
+The documentation is divided into the following parts:
 
-- **What Voxloom does** covers the capabilities and their limits, without types
-  or code.
-- **The model** covers scopes, overlays, audio relations, deltas and cost.
-  Sufficient to evaluate whether a given topology is expressible.
-- **Mumble compatibility** covers the implemented protocol surface and the
-  method used to establish it.
-- **Building an application** covers the render function, the shard, the
-  connection router, and the configuration of a running server.
+- **What Voxloom does** describes the available capabilities and their limits
+  without types or implementation details.
+- **The model** defines views, scopes, overlays, audio relations, deltas and
+  propagation cost.
+- **Mumble compatibility** documents the implemented protocol surface and the
+  compatibility validation method.
+- **Building an application** covers the render function, shards, connection
+  routing and server configuration.
 
-Generated API documentation is published separately and linked from the
-reference section.
-
-Voxloom is distributed under the AGPL-3.0-or-later license.
+Generated API documentation is published separately and referenced from the
+appropriate sections. See [API documentation](reference/api.md).
