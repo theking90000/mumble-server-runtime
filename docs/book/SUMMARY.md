@@ -24,6 +24,7 @@
 - [Client interactions](build/interactions.md)
 - [Migration between shards](build/migration.md)
 - [Configuration and limits](build/configuration.md)
+- [Load testing](build/load-testing.md)
 
 # Reference
 
@@ -38,9 +39,6 @@ Plan du livre. Une entrée est décommentée quand la page est écrite : avec
 - [The control plane](mumble/control-plane.md)
 - [The voice plane](mumble/voice-plane.md)
 - [Establishing compatibility](mumble/oracles.md)
-
-# Building an application (suite)
-- [Load testing](build/load-testing.md)
 
 # Development
 - [Building and testing](dev/building.md)
