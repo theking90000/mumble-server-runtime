@@ -64,6 +64,14 @@ impl ChannelId {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ChannelKey(pub u64);
 
+impl ChannelKey {
+    /// The key [`crate::build::ShardBuilder::root`] gives the shard's root.
+    ///
+    /// Named because a flavor addressing its whole tree has to spell it, and a
+    /// bare zero in that position reads like a mistake.
+    pub const ROOT: ChannelKey = ChannelKey(0);
+}
+
 /// A flavor's name for a context action, stable across renders.
 ///
 /// Same idea as [`ChannelKey`], for the same reason: the wire identifier is a
@@ -202,6 +210,16 @@ impl IdAllocator {
     pub fn allocated_session(&self, occupant: Occupant) -> Option<SessionId> {
         self.sessions.get(&occupant).copied()
     }
+
+    /// The id already allocated for `key` within `shard`, without allocating.
+    ///
+    /// What a lookup outside a render needs: asking [`IdAllocator::channel`]
+    /// there would hand out an id for a key nothing rendered, and an id handed
+    /// out is an id spent for the life of the runtime.
+    #[must_use]
+    pub fn allocated_channel(&self, shard: ShardId, key: ChannelKey) -> Option<ChannelId> {
+        self.channels.get(&(shard, key)).copied()
+    }
 }
 
 /// One allocator, shared by every shard of a runtime.
@@ -243,6 +261,12 @@ impl SharedIds {
     #[must_use]
     pub fn allocated_session(&self, occupant: Occupant) -> Option<SessionId> {
         self.guard().allocated_session(occupant)
+    }
+
+    /// The id already allocated for `key` within `shard`, without allocating.
+    #[must_use]
+    pub fn allocated_channel(&self, shard: ShardId, key: ChannelKey) -> Option<ChannelId> {
+        self.guard().allocated_channel(shard, key)
     }
 
     /// A poisoned allocator means a panic unwound while an id was being handed

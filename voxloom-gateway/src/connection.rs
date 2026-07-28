@@ -26,7 +26,7 @@ use voxloom_protocol::messages::tcp;
 use voxloom_protocol::{
     ControlMessage, UdpMessage, decode_frame, decode_udp, encode_frame, parse_frame,
 };
-use voxloom_shard::{ChannelId, OutboundQueue, ShardCommand};
+use voxloom_shard::{ChannelId, OutboundQueue, ShardCommand, TextTarget};
 
 use crate::config::GatewayConfig;
 use crate::handshake;
@@ -164,10 +164,13 @@ pub async fn serve<R: ConnectionRouter>(
             &mut reader,
             &mut writer,
             &mut outbound,
-            &peer,
-            &runtime,
-            &voice,
-            &udp,
+            &Serving {
+                peer: &peer,
+                runtime: &runtime,
+                voice: &voice,
+                udp: &udp,
+                config: &config,
+            },
         )
         .await
     }
@@ -179,16 +182,33 @@ pub async fn serve<R: ConnectionRouter>(
     result
 }
 
+/// Everything the service loop needs from the gateway around one connection.
+///
+/// Grouped rather than passed one by one: they share a lifetime, none of them
+/// changes while a connection lives, and a handler that needs three of them
+/// should not have to say so in its signature.
+struct Serving<'a> {
+    peer: &'a Arc<Peer>,
+    runtime: &'a RuntimeHandle,
+    voice: &'a Arc<VoicePlane>,
+    udp: &'a UdpSocket,
+    config: &'a GatewayConfig,
+}
+
 /// The steady state: read client frames, write what the shard pushed.
 async fn service(
     reader: &mut FrameReader,
     writer: &mut WriteHalf<TlsStream<TcpStream>>,
     outbound: &mut mpsc::Receiver<ControlMessage>,
-    peer: &Arc<Peer>,
-    runtime: &RuntimeHandle,
-    voice: &Arc<VoicePlane>,
-    udp: &UdpSocket,
+    serving: &Serving<'_>,
 ) -> Result<()> {
+    let Serving {
+        peer,
+        runtime,
+        voice,
+        udp,
+        config,
+    } = *serving;
     loop {
         // A refused control message means this client is too far behind to hold
         // a correct view, so the connection ends and reconnecting rebuilds one.
@@ -218,7 +238,7 @@ async fn service(
                         }
                     }
                     Some(message) => {
-                        for reply in inbound(message, peer, runtime) {
+                        for reply in inbound(message, peer, runtime, config) {
                             write_message(writer, &reply).await?;
                         }
                     }
@@ -273,6 +293,7 @@ fn inbound(
     message: ControlMessage,
     peer: &Arc<Peer>,
     runtime: &RuntimeHandle,
+    config: &GatewayConfig,
 ) -> Vec<ControlMessage> {
     if unidles(&message) {
         peer.record_activity(Instant::now());
@@ -316,6 +337,8 @@ fn inbound(
         },
 
         ControlMessage::UserStats(request) => user_stats(&request, peer, runtime),
+
+        ControlMessage::TextMessage(text) => text_message(&text, peer, runtime, config),
 
         // An intent, so it goes to the shard, which alone knows what this
         // connection was offered and what it can see. Nothing is validated here:
@@ -412,6 +435,110 @@ fn user_state(
     // view, and acknowledging them silently would be a lie (R6).
     refused("UserState", peer);
     vec![permission_denied(peer)]
+}
+
+/// Handle a `TextMessage` a client typed.
+///
+/// Everything decided here is a property of the message itself - how fast they
+/// arrive, how long it is, what shape its targets have - and nothing is a
+/// property of the view, which this side does not hold. Whether the connection
+/// may name that target at all is the shard's question, and it is asked there.
+///
+/// The four refusals are not interchangeable:
+///
+/// - A flood is dropped with **no answer**, like the reference server's, because
+///   answering a flood is participating in it.
+/// - An empty message is dropped silently: there is nothing to deliver.
+/// - Too long gets `TextTooLong`, which the client has a message for.
+/// - Anything else gets the generic refusal.
+///
+/// REF: references/mumble/src/murmur/Messages.cpp : `msgTextMessage` runs
+///   `RATELIMIT`, then `isTextAllowed` with `PERM_DENIED_TYPE(TextTooLong)`,
+///   then returns on an empty message, before looking at a single target.
+fn text_message(
+    text: &tcp::TextMessage,
+    peer: &Arc<Peer>,
+    runtime: &RuntimeHandle,
+    config: &GatewayConfig,
+) -> Vec<ControlMessage> {
+    if !peer.allow_text(Instant::now()) {
+        refused("TextMessage over the rate limit", peer);
+        return Vec::new();
+    }
+
+    if text.message.trim().is_empty() {
+        return Vec::new();
+    }
+
+    // Counted in characters where the reference server counts UTF-16 code
+    // units. The two agree on everything below the astral planes, and erring
+    // towards accepting one emoji-heavy message the reference would have cut is
+    // the safer side of a limit that exists to bound a text box.
+    let length = u32::try_from(text.message.chars().count()).unwrap_or(u32::MAX);
+    if config.message_length > 0 && length > config.message_length {
+        refused("TextMessage over the advertised length", peer);
+        return vec![ControlMessage::PermissionDenied(tcp::PermissionDenied {
+            r#type: Some(i32::from(tcp::permission_denied::DenyType::TextTooLong)),
+            ..Default::default()
+        })];
+    }
+
+    // The reference server strips HTML when it does not allow it. Stripping it
+    // correctly is a parser, and a parser fed by clients is the last thing this
+    // crate should grow, so a server that turned HTML off refuses markup instead
+    // of quietly rewriting it (R6).
+    //
+    // REF: references/mumble/src/murmur/Server.cpp : `isTextAllowed` runs
+    //   `HTMLFilter::filter` when `bAllowHTML` is false.
+    if !config.allow_html && text.message.contains('<') {
+        refused(
+            "TextMessage carrying markup on a server that forbids it",
+            peer,
+        );
+        return vec![ControlMessage::PermissionDenied(tcp::PermissionDenied {
+            session: Some(peer.session().0),
+            reason: Some("This server does not accept formatted text".to_owned()),
+            r#type: Some(i32::from(tcp::permission_denied::DenyType::Text)),
+            ..Default::default()
+        })];
+    }
+
+    let Some(to) = single_target(text) else {
+        refused("TextMessage naming no single target", peer);
+        return vec![permission_denied(peer)];
+    };
+
+    let _delivered = runtime.send(
+        peer.shard(),
+        ShardCommand::Said {
+            connection: peer.connection(),
+            to,
+            message: text.message.clone(),
+        },
+    );
+    Vec::new()
+}
+
+/// The one target a `TextMessage` names, or nothing.
+///
+/// The official client fills exactly one of the three lists with exactly one
+/// identifier, so anything else is either a different client with a fan-out this
+/// server has not agreed to, or a probe. Both are refused.
+///
+/// REF: references/mumble/src/mumble/ServerHandler.cpp :
+///   `sendUserTextMessage` adds one session; `sendChannelTextMessage` adds one
+///   `channel_id`, or one `tree_id` for the tree variant.
+fn single_target(text: &tcp::TextMessage) -> Option<TextTarget> {
+    match (
+        text.session.as_slice(),
+        text.channel_id.as_slice(),
+        text.tree_id.as_slice(),
+    ) {
+        ([session], [], []) => Some(TextTarget::Session(voxloom_shard::SessionId(*session))),
+        ([], [channel], []) => Some(TextTarget::Channel(ChannelId(*channel))),
+        ([], [], [tree]) => Some(TextTarget::Tree(ChannelId(*tree))),
+        _ => None,
+    }
 }
 
 /// Handle a client's `UserStats` question.
@@ -672,7 +799,6 @@ fn kind_of(message: &ControlMessage) -> &'static str {
         ControlMessage::ChannelState(_) => "ChannelState",
         ControlMessage::ChannelRemove(_) => "ChannelRemove",
         ControlMessage::UserRemove(_) => "UserRemove",
-        ControlMessage::TextMessage(_) => "TextMessage",
         ControlMessage::Acl(_) => "ACL",
         ControlMessage::VoiceTarget(_) => "VoiceTarget",
         ControlMessage::CryptSetup(_) => "CryptSetup(resync)",

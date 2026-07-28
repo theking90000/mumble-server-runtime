@@ -258,13 +258,14 @@ impl<'a> ShardBuilder<'a> {
         self.view.channels.insert(
             ChannelId::ROOT,
             Channel {
-                key: ChannelKey(0),
+                key: ChannelKey::ROOT,
                 id: ChannelId::ROOT,
                 parent: ChannelId::ROOT,
                 scope: Scope::ROOT,
                 name: name.to_owned(),
                 position: 0,
                 can_enter: true,
+                can_text: true,
                 links: BTreeSet::new(),
             },
         );
@@ -308,6 +309,7 @@ impl<'a> ShardBuilder<'a> {
                 name: name.to_owned(),
                 position: 0,
                 can_enter: true,
+                can_text: true,
                 links: BTreeSet::new(),
             },
         );
@@ -362,6 +364,17 @@ impl<'a> ShardBuilder<'a> {
     pub fn channel_can_enter(&mut self, channel: ChannelRef, yes: bool) {
         if let Some(entry) = self.view.channels.get_mut(&channel.id) {
             entry.can_enter = yes;
+        }
+    }
+
+    /// Whether text may be addressed to this channel.
+    ///
+    /// Declaring it false greys the client's chat box out for that channel
+    /// instead of letting the user type into something that answers
+    /// `PermissionDenied`, and the shard refuses a message aimed there anyway.
+    pub fn channel_can_text(&mut self, channel: ChannelRef, yes: bool) {
+        if let Some(entry) = self.view.channels.get_mut(&channel.id) {
+            entry.can_text = yes;
         }
     }
 
@@ -535,6 +548,7 @@ impl PrivateBuilder<'_> {
                 name: name.to_owned(),
                 position: 0,
                 can_enter: true,
+                can_text: true,
                 links: BTreeSet::new(),
             },
         );

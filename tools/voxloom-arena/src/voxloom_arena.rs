@@ -40,6 +40,17 @@
 //! or the client will discard the audio, and the render refuses to build if that
 //! is not true. This is the one place where the coupling the guide calls "the
 //! only one, and it is not ours" becomes visible in business code.
+//!
+//! # Chat follows the same lines
+//!
+//! Text is routed by the same rules as everything else, and the two shards make
+//! opposite uses of that. The lobby is one group, so it relays whatever was
+//! typed in one line. The arena refuses anything aimed outside the place the
+//! writer is heard in: the runtime would have dropped every recipient who cannot
+//! see them anyway, and a message that evaporates silently is worse than a
+//! refusal that says why. The doors out - `> Enter the Arena` and
+//! `< Back to the Lobby` - are declared read-only, so the client greys their
+//! chat box out rather than offering a box that answers `PermissionDenied`.
 #![forbid(unsafe_code)]
 
 pub mod arena;

@@ -1228,6 +1228,8 @@ contredisaient, c'est la règle qui a gagné.
 | 4 | allocateur d'identifiants **par shard** | un seul allocateur pour tout le runtime, canaux indexés sur `(shard, clé)` | Dès qu'une connexion peut changer de shard, l'allocation par shard casse la règle 3 du §11 vue du client : le shard A retire le canal 5, le shard B en crée un autre qui porte aussi le 5. Les sessions sont pires — voir la ligne suivante. Comme la session est indexée sur l'`Occupant`, une migration garde la sienne **gratuitement**. |
 | 9.6 | « migrer = détacher de A, attacher à B, **rien d'autre** » | le détachement d'une migration ne pousse **rien** ; A transmet la vue tenue par le client, B planifie une seule transition dessus | Le démontage n'est pas seulement du gaspillage, il **déconnecte le client officiel**. `msgUserRemove` ne retire pas la victime du modèle quand c'est soi (`if (pDst != pSelf)`), donc le `ChannelRemove` qui suit ressemble à la suppression d'un canal occupé ; `msgChannelRemove` journalise « Protocol violation » et appelle `disconnect()`. REF `mumble/Messages.cpp`, `mumble/UserModel.cpp::removeChannel`. |
 | 9.2 | table de routage compilée depuis la vue partagée | compilée depuis la vue partagée **plus la présence propre de chaque overlay** | Une connexion sans présence partagée n'est pas absente du runtime : c'est exactement ce qu'est un vanish. L'omettre transformait silencieusement « entend tout, n'est entendu de personne » en « ne participe pas à l'audio », sans que le flavor puisse distinguer les deux. Qui l'entend reste une autre question, et le rendu refuse déjà une relation dont la réponse est non. |
+| 16.9 | `TextMessage` : « résoudre les cibles, puis livrer » | livré à tout le monde **sauf** qui ne voit pas l'émetteur | Murmur estampille `actor` sans condition parce que sa visibilité est globale ; ici elle est par connexion. Un destinataire qui ne tient pas la session de l'émetteur afficherait le message comme venant de « Server » (REF `mumble/Messages.cpp::msgTextMessage`, repli `tr("Server", "message from")`), et le nommer quand même violerait les invariants 14 et 15 du §20 que le testkit vérifie. C'est la règle audio - un récepteur voit son émetteur - appliquée au texte. Un flavor qui veut que tout le monde lise dispose de `Reply::announce`, qui ne porte pas d'acteur. |
+| 16.9 | cibles multiples autorisées dans un même message | **exactement une** cible, sinon refus | Le client officiel n'en envoie jamais plus d'une : `sendUserTextMessage` remplit une session, `sendChannelTextMessage` un `channel_id` **ou** un `tree_id` (REF `mumble/ServerHandler.cpp`). Accepter un mélange reviendrait à inventer un fan-out que personne n'a demandé, sur un message que rien ne borne. Fail closed (R6). |
 | 10.1 | `route(&identity)` | `route(connection, &identity)` | Un `VoiceEvent` ne transporte qu'un `ConnectionId` — délibérément, le runtime n'a pas d'opinion sur ce qu'est un utilisateur. Le routage est donc le seul instant où l'identité et l'identifiant se rencontrent : une application qui veut que son flavor connaisse un nom enregistre la paire là. |
 
 ### 18.1 Ce qui n'est pas fait
@@ -1246,23 +1248,23 @@ contredisaient, c'est la règle qui a gagné.
 - **Resync de nonce OCB2** : un datagramme d'un pair lié qui ne déchiffre plus
   est jeté avec un log. Le `resync` du `Ping` TCP vaut donc 0 en vérité.
 - **Messages de contrôle client encore refusés.** Ce qui est traité aujourd'hui :
-  `Ping`, `UserState` (entrée de canal, self-mute, self-deafen), `PermissionQuery`,
-  `UserStats` et `ContextAction`. Tout le reste reçoit un `PermissionDenied`
-  journalisé. Le backlog, par ordre de valeur décroissante :
+  `Ping`, `UserState` (entrée de canal, self-mute, self-deafen), `TextMessage`,
+  `PermissionQuery`, `UserStats` et `ContextAction`. Tout le reste reçoit un
+  `PermissionDenied` journalisé. Le backlog, par ordre de valeur décroissante :
 
   | message | ce qu'il demande |
   |---|---|
-  | `TextMessage` **entrant** | Résoudre les cibles dans la vue de l'émetteur, un événement pour laisser le flavor filtrer ou rerouter, puis la livraison. Le sens sortant existe déjà (`Reply::say`), et l'envoi non fatal que ce point réclamait est en place : `Shard::answer` et `Shard::tell` journalisent et jettent au lieu de fermer. |
   | `ChannelState` / `ChannelRemove` / `UserRemove` | Créer, renommer, kick. Même forme que `RequestedChannel` (un événement, le flavor tranche), donc bon marché, mais sans utilisateur concret aujourd'hui. |
   | `UserState` visant une autre session | Mute serveur, déplacement d'autrui. Refusé explicitement, pas par omission. |
   | `RequestBlob` | La `ShardView` ne porte ni commentaire, ni texture, ni description : il n'y a rien à répondre tant qu'elle ne les porte pas. |
   | `UserList` / `BanList` / `ACL` / `QueryUsers` | Administration d'utilisateurs enregistrés. Aucun registre n'existe, donc le refus **est** la réponse correcte (spec 16.10 à 16.14). |
 
-  Piège à connaître : `perm::DEFAULT` annonce `TEXT_MESSAGE` au client, alors que
-  `TextMessage` entrant est refusé. La boîte de dialogue existe donc dans
-  l'interface et répond `PermissionDenied`. Retirer le bit serait plus honnête,
-  mais changerait aussi ce que `ServerSync` annonce ; à trancher en même temps que
-  `TextMessage`.
+  Le piège de `perm::TEXT_MESSAGE` est levé : le bit n'est plus une constante mais
+  se déduit du rendu, comme `can_enter`. `ShardBuilder::channel_can_text` déclare
+  un canal en lecture seule, `permissions_of` retire le bit de la réponse à
+  `PermissionQuery`, et le shard refuse quand même le message qui y arrive - une
+  indication d'interface ne décide de rien. `ServerSync` continue d'annoncer
+  `perm::DEFAULT`, qui reste le plafond du serveur.
 
 ### 18.2 La règle des deux portes
 
@@ -1276,7 +1278,17 @@ Un état se redit à chaque tour tant qu'il est vrai, donc il se déclare dans
 des drapeaux, et désormais des actions de contexte, déclarées par connexion dans
 `private()` et diffées comme un overlay. Une parole ne se redit pas : elle est dite
 une fois, à une date, et aucun rendu ultérieur ne peut la réémettre ; elle passe
-donc par `Reply` (`say`, `refuse`), que le shard vide une fois `observe` revenu.
+donc par `Reply` (`say`, `refuse`, `relay`, `announce`), que le shard vide une
+fois `observe` revenu.
+
+C'est cette règle qui a décidé de la forme du `TextMessage` entrant : un message
+reçu devient un `VoiceEvent::Said` dont la cible est déjà résolue dans la vue de
+l'émetteur, et le flavor le livre - ou pas - par `Reply`. Aucune quatrième méthode
+sur `ShardLogic`, aucune livraison implicite : un flavor qui ignore l'événement ne
+livre rien, ce qui se lit dans son `match` au lieu de se deviner. `relay` et
+`announce` demandent une chose que les autres verbes n'ont pas besoin de connaître,
+la vue ; ils enregistrent donc **quoi** livrer et à quelle `Audience`, et c'est le
+shard qui déplie l'audience au moment où il vide la `Reply`.
 
 Deux conséquences à connaître :
 
@@ -1289,7 +1301,7 @@ Deux conséquences à connaître :
   session et un canal qui ne la concernent pas : la cible est choisie par les bits
   déclarés, du plus spécifique au moins, et non par ce que le message porte.
 
-Le troisième verbe, `Reply::switch`, ne rentre dans aucune des deux portes de la
+Le dernier verbe, `Reply::switch`, ne rentre dans aucune des deux portes de la
 même façon : déplacer une connexion est une orchestration entre deux shards que
 seul le runtime connaît. Il est donc enregistré comme un `Effect` et remis à qui a
 câblé le shard (`Shard::route_effects`, appelé par `RuntimeHandle::create_shard`).

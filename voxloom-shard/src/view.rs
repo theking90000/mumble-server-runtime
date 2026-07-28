@@ -28,6 +28,11 @@ pub struct Channel {
     /// UI hint only: whether this connection may enter. Never a substitute for
     /// validating an actual join.
     pub can_enter: bool,
+    /// Whether text may be addressed here. Unlike `can_enter` it has no
+    /// `ChannelState` field of its own: it reaches the client as the
+    /// `TEXT_MESSAGE` bit of a `PermissionQuery` answer, and it is enforced
+    /// again when a message arrives, because a UI hint decides nothing.
+    pub can_text: bool,
     pub links: BTreeSet<ChannelId>,
 }
 
@@ -213,6 +218,7 @@ mod tests {
             name: format!("channel-{id}"),
             position: 0,
             can_enter: true,
+            can_text: true,
             links: BTreeSet::new(),
         }
     }
