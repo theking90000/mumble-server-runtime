@@ -139,20 +139,32 @@ Runtime ownership is limited to Mumble-specific state:
 - client views,
 - audio routing.
 
-The boundary between both systems is a render function supplied by the
-application. Evaluation occurs after a relevant change in authoritative state.
+Two directions cross that boundary.
 
-The render result consists of the desired views and directed audio relations.
-Mumble protocol messages are derived exclusively from that result.
+Downward, state. A render function is supplied by the application and evaluated
+after a relevant change in authoritative state. Its result consists of the
+desired views and directed audio relations. Mumble protocol messages are derived
+exclusively from that result.
+
+Upward, events. Client-initiated actions are reported to the application:
+connection and disconnection, a request to enter a visible channel, a request to
+self-mute or self-deafen, and the invocation of a menu entry defined by the
+application itself.
+
+Such events are requests rather than facts. No voice state is modified by their
+delivery. Authoritative state is updated by the application when a request is
+accepted, and the consequence becomes visible through the next render. A refusal
+consists of rendering nothing new, optionally accompanied by a message returned
+to the connection.
 
 At a high level:
 
 ```text
-authoritative application state
-              ↓
-     rendered voice state
-              ↓
-       Mumble sessions
+                       render
+  authoritative state ───────▶ voice state ───────▶ Mumble sessions
+          ▲                                                │
+          └────────────────────────────────────────────────┘
+                               events
 ```
 
 ## Reading this book
