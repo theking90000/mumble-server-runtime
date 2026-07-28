@@ -2,6 +2,12 @@
 
 [Introduction](introduction.md)
 
+# The model
+
+- [Vocabulary](model/vocabulary.md)
+- [The shared view and scopes](model/scopes.md)
+- [Audio as a relation](model/audio.md)
+
 # Reference
 
 - [API documentation](reference/api.md)
@@ -10,16 +16,10 @@
 Plan du livre. Une entrée est décommentée quand la page est écrite : avec
 `create-missing = false`, une entrée sans fichier fait échouer la construction.
 
-# What Voxloom does
-- [Divergent views](what/divergent-views.md)
-- [What it makes possible](what/possibilities.md)
-- [Boundaries](what/boundaries.md)
+[Boundaries](boundaries.md)
 
 # The model
-- [Vocabulary](model/vocabulary.md)
-- [The shared view and scopes](model/scopes.md)
 - [Overlays](model/overlays.md)
-- [Audio as a relation](model/audio.md)
 - [Deltas and per-connection composition](model/deltas.md)
 - [Seeing the speaker](model/coupling.md)
 - [Cost](model/cost.md)
