@@ -14,8 +14,8 @@ use std::sync::Arc;
 
 use tokio::sync::mpsc;
 use voxloom_shard::{
-    ActionKey, ChannelKey, ConnectionId, DomainId, Narrow, Occupant, On, Reply, Scope, ScopeSet,
-    ShardBuilder, ShardLogic, VoiceEvent,
+    ActionKey, Audience, ChannelKey, ConnectionId, DomainId, Narrow, Occupant, On, Reply, Scope,
+    ScopeSet, ShardBuilder, ShardLogic, VoiceEvent,
 };
 
 use crate::arena::Side;
@@ -163,6 +163,7 @@ impl ShardLogic for Lobby {
         out.channel_position(blue, 2);
         out.channel_position(spectate, 3);
         out.channel_position(enter, 4);
+        out.channel_can_text(enter, false);
 
         for connection in self.waiting.keys().copied() {
             out.private(connection, |private| {
@@ -230,6 +231,14 @@ impl ShardLogic for Lobby {
             } => self
                 .directory
                 .set_self_state(*connection, *self_mute, *self_deaf),
+            // The lobby is one group at one scope, so everybody can see
+            // everybody: there is no audience to second-guess, and carrying the
+            // message out is one line.
+            VoiceEvent::Said {
+                connection,
+                to,
+                text,
+            } => out.relay(*connection, *to, text),
             // The event enum is non-exhaustive on purpose: a runtime that starts
             // reporting something new must not silently change what this flavor
             // does.
@@ -250,6 +259,14 @@ impl Lobby {
                 match self.destinations.arena() {
                     Some(arena) => {
                         out.say(connection, "Entering the arena.");
+                        // Said by the server rather than relayed from the player,
+                        // which is what lets it reach the whole lobby including
+                        // the person leaving: nobody is skipped for not seeing an
+                        // actor there is none of.
+                        out.announce(
+                            Audience::Tree(ChannelKey::ROOT),
+                            &format!("{} has entered the arena.", self.directory.name(connection)),
+                        );
                         out.switch(connection, arena);
                     }
                     // Refusing out loud rather than only in the server's log: the

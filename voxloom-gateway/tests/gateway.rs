@@ -240,6 +240,13 @@ impl ShardLogic for Rooms {
                 }
                 _ => out.refuse(*connection, "not that way"),
             },
+            // Carried out as asked: what the tests are looking at is the
+            // runtime's routing, not a policy this flavor invented.
+            VoiceEvent::Said {
+                connection,
+                to,
+                text,
+            } => out.relay(*connection, *to, text),
             other => eprintln!("test flavor ignores {other:?}"),
         }
     }
@@ -924,6 +931,131 @@ async fn a_client_gets_its_own_statistics_and_only_a_name_for_others() -> Result
     assert_eq!(
         other.onlinesecs, None,
         "no connection time about a third party"
+    );
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Text: over real sockets, resolved in the sender's view
+// ---------------------------------------------------------------------------
+
+/// Prove a connection was *not* addressed, without waiting on a clock.
+///
+/// Ask it a question the shard answers from the render, and settle on that
+/// answer. Its queue is ordered, and the relay - had there been one - was
+/// decided before the question was even sent, so an empty log at this point is
+/// an empty log for good.
+async fn heard_nothing(client: &mut Client, channel: u32) -> Result<()> {
+    client.query_permissions(channel).await?;
+    client
+        .settle(
+            "an answer that must arrive after any relay would have",
+            |model| model.permissions.contains_key(&channel),
+        )
+        .await?;
+    anyhow::ensure!(
+        client.model.said.is_empty(),
+        "nothing should have been delivered here, got {:?}",
+        client.model.said
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_message_typed_into_a_room_reaches_that_room_alone() -> Result<()> {
+    let harness = Harness::start().await?;
+    let mut alice = Client::connect(harness.address, "alice", None).await?;
+    let mut bob = Client::connect(harness.address, "bob", None).await?;
+    let mut carol = Client::connect(harness.address, "carol", Some("right")).await?;
+
+    bob.settle("alice to appear", |model| {
+        model.user_named("alice").is_some()
+    })
+    .await?;
+    let left = bob
+        .model
+        .channel_named("Left")
+        .expect("Left is in its view");
+    let right = carol
+        .model
+        .channel_named("Right")
+        .expect("Right is in her view");
+
+    alice.say_in_channel(left, "on my way").await?;
+    bob.settle("the message", |model| !model.said.is_empty())
+        .await?;
+
+    let heard = &bob.model.said[0];
+    assert_eq!(
+        heard.actor, alice.model.session,
+        "the client needs the actor to print a name instead of \"Server\""
+    );
+    assert_eq!(heard.channel_id, vec![left]);
+    assert!(heard.session.is_empty(), "this is not a private message");
+    assert_eq!(heard.message, "on my way");
+
+    // Carol observes Right alone, so Left and everyone in it are not merely
+    // filtered out of her view: they were never in it.
+    heard_nothing(&mut carol, right).await?;
+    heard_nothing(&mut alice, left).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_private_message_reaches_its_recipient_and_stops_there() -> Result<()> {
+    let harness = Harness::start().await?;
+    let mut alice = Client::connect(harness.address, "alice", None).await?;
+    let mut bob = Client::connect(harness.address, "bob", None).await?;
+    let mut dave = Client::connect(harness.address, "dave", None).await?;
+
+    alice
+        .settle("bob to appear", |model| model.user_named("bob").is_some())
+        .await?;
+    dave.settle("bob to appear", |model| model.user_named("bob").is_some())
+        .await?;
+    let bob_session = alice.model.user_named("bob").expect("bob is in the view");
+    let left = dave
+        .model
+        .channel_named("Left")
+        .expect("Left is in his view");
+
+    alice.say_to_user(bob_session, "just between us").await?;
+    bob.settle("the message", |model| !model.said.is_empty())
+        .await?;
+
+    assert_eq!(
+        bob.model.said[0].session,
+        vec![bob_session],
+        "naming the recipient is what files it as private rather than as a room message"
+    );
+    assert!(bob.model.said[0].channel_id.is_empty());
+    heard_nothing(&mut dave, left).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_message_longer_than_the_server_advertised_is_refused_as_too_long() -> Result<()> {
+    let harness = Harness::start().await?;
+    let mut alice = Client::connect(harness.address, "alice", None).await?;
+    let left = alice
+        .model
+        .channel_named("Left")
+        .expect("Left is in its view");
+
+    let advertised = usize::try_from(GatewayConfig::default().message_length).unwrap_or(usize::MAX);
+    alice
+        .say_in_channel(left, &"a".repeat(advertised + 1))
+        .await?;
+    alice
+        .settle("the refusal", |model| !model.refused.is_empty())
+        .await?;
+
+    assert_eq!(
+        alice.model.refused[0].r#type,
+        Some(i32::from(
+            voxloom_protocol::messages::tcp::permission_denied::DenyType::TextTooLong
+        )),
+        "the client has its own wording for this one, so the type is what carries the meaning"
     );
     Ok(())
 }

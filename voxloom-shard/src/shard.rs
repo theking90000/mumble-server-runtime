@@ -50,14 +50,14 @@ use voxloom_protocol::ControlMessage;
 
 use crate::build::{BuildError, ShardBuilder};
 use crate::compose::{collapse, filter};
-use crate::emit::emit;
+use crate::emit::{TextTarget, emit};
 use crate::ids::{
     ActionKey, ChannelId, ChannelKey, ConnectionId, Occupant, SessionId, ShardId, SharedIds,
 };
 use crate::journal::Journal;
 use crate::plan::{PlanOp, plan, plan_elements};
 use crate::queue::{OutboundQueue, Refused};
-use crate::reply::{Effects, Reply};
+use crate::reply::{Audience, Effects, Reply, Spoken};
 use crate::routing::{AudioRelation, AudioRouting, Silence, compile};
 use crate::scope::ScopeSet;
 use crate::view::{Actions, Channel, On, Overlay, ShardView, User};
@@ -139,6 +139,24 @@ pub enum VoiceEvent {
         connection: ConnectionId,
         action: ActionKey,
         on: ActionTarget,
+    },
+    /// The client typed something and aimed it somewhere.
+    ///
+    /// A request like every other: the target is already resolved against what
+    /// this connection can see, and the channel it names is one the flavor
+    /// rendered as writable, but **nothing has been delivered**. A flavor that
+    /// ignores this event delivers nothing, which is the honest default for a
+    /// runtime whose whole subject is who may know what.
+    ///
+    /// [`crate::reply::Reply::relay`] is the one line that carries it out, and
+    /// the flavor is free to rewrite the audience, the text, or both.
+    ///
+    /// REF: references/mumble/src/murmur/Messages.cpp : `msgTextMessage` resolves
+    ///   the targets against the sender's view, then routes.
+    Said {
+        connection: ConnectionId,
+        to: Audience,
+        text: String,
     },
 }
 
@@ -323,6 +341,17 @@ pub enum ShardCommand {
         action: String,
         session: Option<SessionId>,
         channel: Option<ChannelId>,
+    },
+    /// The client sent a text message. Resolved against this connection's own
+    /// view and reported to the flavor, or refused.
+    ///
+    /// The gateway has already checked the shape, the length and the rate; what
+    /// is left is the only question it cannot answer, which is whether this
+    /// connection may name that target at all.
+    Said {
+        connection: ConnectionId,
+        to: TextTarget,
+        message: String,
     },
 }
 
@@ -624,6 +653,11 @@ impl<L: ShardLogic> Shard<L> {
                 session,
                 channel,
             } => self.invoked(connection, &action, session, channel),
+            ShardCommand::Said {
+                connection,
+                to,
+                message,
+            } => self.said(connection, to, message),
         }
     }
 
@@ -888,6 +922,79 @@ impl<L: ShardLogic> Shard<L> {
         }
     }
 
+    /// Resolve where a client aimed a text message, then report it.
+    ///
+    /// Two different refusals, and the difference is the whole point:
+    ///
+    /// - A target this connection cannot see is **silent** to the client and
+    ///   audible to an operator, like every other unseen target here. An answer
+    ///   that varied with whether the id exists would turn a guessed number into
+    ///   an existence oracle.
+    /// - A target it *can* see but that the flavor rendered read-only is refused
+    ///   **out loud**, with the missing permission. Nothing leaks: the client is
+    ///   already holding that channel, and it asked to do something the answer to
+    ///   `PermissionQuery` had already denied.
+    ///
+    /// A private message is checked against the recipient's channel rather than
+    /// the sender's, which is what the reference server does.
+    ///
+    /// REF: references/mumble/src/murmur/Messages.cpp : `msgTextMessage` checks
+    ///   `ChanACL::TextMessage` on each named channel, and on `u->cChannel` for a
+    ///   directly addressed user.
+    fn said(&mut self, connection: ConnectionId, to: TextTarget, message: String) {
+        let Some(attached) = self.connections.get(&connection) else {
+            return;
+        };
+        let session = attached.session;
+
+        // Resolved into the flavor's vocabulary, and only through what this
+        // connection actually holds. `writable_in` is the channel whose
+        // `can_text` decides: the one named, or the recipient's own for a
+        // private message.
+        let resolved = match to {
+            TextTarget::Session(target) => self
+                .seen_user(attached, target)
+                .map(|user| (Audience::User(user.occupant), user.channel)),
+            TextTarget::Channel(channel) => self
+                .visible_channel(attached, channel)
+                .map(|rendered| (Audience::Channel(rendered.key), channel)),
+            TextTarget::Tree(channel) => self
+                .visible_channel(attached, channel)
+                .map(|rendered| (Audience::Tree(rendered.key), channel)),
+        };
+        let Some((audience, writable_in)) = resolved else {
+            eprintln!(
+                "voxloom-shard: shard {:?}: {connection:?} wrote to {to:?}, which it cannot see",
+                self.id
+            );
+            return;
+        };
+
+        // For a tree that is its root, deliberately: the flavor chooses the
+        // audience it actually delivers to, so refusing further down would be
+        // refusing on behalf of a decision it has not made yet.
+        let writable = self
+            .visible_channel(attached, writable_in)
+            .is_some_and(|rendered| rendered.can_text);
+        if !writable {
+            self.answer(
+                attached,
+                crate::emit::denied_permission(
+                    session,
+                    writable_in,
+                    crate::emit::perm::TEXT_MESSAGE,
+                ),
+            );
+            return;
+        }
+
+        self.tell(&VoiceEvent::Said {
+            connection,
+            to: audience,
+            text: message,
+        });
+    }
+
     /// Answer "what may I do in that channel", from the current render.
     ///
     /// The flavor is not consulted and has nothing to decide: it already said
@@ -982,6 +1089,10 @@ impl<L: ShardLogic> Shard<L> {
             }
         }
 
+        for spoken in reply.drain_spoken() {
+            self.deliver(&spoken);
+        }
+
         for effect in reply.drain_effects() {
             match &self.effects {
                 Some(route) => route(effect),
@@ -991,6 +1102,159 @@ impl<L: ShardLogic> Shard<L> {
                     self.id
                 ),
             }
+        }
+    }
+
+    /// Expand an audience and carry one message to each of its members.
+    ///
+    /// The expansion happens here rather than in the flavor because it is the
+    /// only place that holds the view - and it is the composed view, per
+    /// recipient, so an overlay placement counts as being somewhere just as much
+    /// as a shared one does.
+    ///
+    /// Two members are left out, for reasons that are not politeness:
+    ///
+    /// - The speaker, which the reference server drops too. A client already
+    ///   printed what it typed.
+    /// - Anyone who cannot see the speaker. That is the audio coupling rule -
+    ///   a receiver must see the sender - and it is also forced: a `TextMessage`
+    ///   naming a session the recipient does not hold breaks the view invariants
+    ///   the conformance model checks. A flavor that wants everyone to read
+    ///   something whoever said it uses [`crate::reply::Reply::announce`].
+    ///
+    /// REF: references/mumble/src/murmur/Messages.cpp : `msgTextMessage` ends on
+    ///   `users.remove(uSource)` before forwarding.
+    fn deliver(&self, spoken: &Spoken) {
+        let speaker = spoken
+            .from
+            .and_then(|connection| self.connections.get(&connection))
+            .map(|attached| attached.session);
+        if spoken.from.is_some() && speaker.is_none() {
+            eprintln!(
+                "voxloom-shard: shard {:?}: dropping a relay from {:?}, which is not attached here",
+                self.id, spoken.from
+            );
+            return;
+        }
+
+        // Resolved once rather than per recipient: a key stands for the same id
+        // whoever is looking, and the alternative is a scan of the render for
+        // every connection in the shard.
+        let Some(target) = self.resolve(spoken.to) else {
+            eprintln!(
+                "voxloom-shard: shard {:?}: dropping a message for {:?}, which names nothing this \
+                 shard has rendered",
+                self.id, spoken.to
+            );
+            return;
+        };
+
+        for attached in self.connections.values() {
+            if Some(attached.id) == spoken.from {
+                continue;
+            }
+            if !self.addressed(attached, target) {
+                continue;
+            }
+            if let Some(session) = speaker
+                && self.seen_user(attached, session).is_none()
+            {
+                eprintln!(
+                    "voxloom-shard: shard {:?}: {:?} is in the audience but cannot see session \
+                     {session:?}, so it is skipped rather than told the message came from nobody",
+                    self.id, attached.id
+                );
+                continue;
+            }
+            // Same bargain as an answer: a message the client can live without
+            // is worth less than the transitions queued ahead of it.
+            if let Err(refused) = attached.queue.try_send_all(vec![crate::emit::relayed(
+                speaker,
+                target,
+                &spoken.text,
+            )]) {
+                eprintln!(
+                    "voxloom-shard: shard {:?}: dropping a relay to {:?}: {refused}",
+                    self.id, attached.id
+                );
+            }
+        }
+    }
+
+    /// Turn what a flavor named into what a client holds.
+    ///
+    /// The same identifier for every recipient, which is why this happens once
+    /// per message: the wire ids are the shard's, not the observer's. What
+    /// differs per observer is only whether they are *in* the audience, and that
+    /// is [`Shard::addressed`].
+    fn resolve(&self, audience: Audience) -> Option<TextTarget> {
+        match audience {
+            Audience::User(occupant) => self
+                .ids
+                .allocated_session(occupant)
+                .map(TextTarget::Session),
+            Audience::Channel(key) => self.channel_of(key).map(TextTarget::Channel),
+            Audience::Tree(key) => self.channel_of(key).map(TextTarget::Tree),
+        }
+    }
+
+    /// Whether `attached` is one of the recipients `target` stands for.
+    ///
+    /// Read through [`Shard::seen_user`], so a connection placed by an overlay is
+    /// where its own client believes it is, which is the only answer that makes
+    /// sense to the person reading the message.
+    fn addressed(&self, attached: &AttachedConnection, target: TextTarget) -> bool {
+        match target {
+            TextTarget::Session(session) => session == attached.session,
+            TextTarget::Channel(channel) => self
+                .seen_user(attached, attached.session)
+                .is_some_and(|user| user.channel == channel),
+            TextTarget::Tree(root) => self
+                .seen_user(attached, attached.session)
+                .is_some_and(|user| self.descends_from(attached, user.channel, root)),
+        }
+    }
+
+    /// The id a flavor's channel key currently stands for.
+    ///
+    /// The render is consulted first because the root does not go through the
+    /// allocator at all - it *is* [`ChannelId::ROOT`] in every shard - and asking
+    /// the allocator for it would answer "no such channel" about the one channel
+    /// everybody can see. The allocator answers for the rest, including a channel
+    /// that only lives in somebody's overlay.
+    fn channel_of(&self, key: ChannelKey) -> Option<ChannelId> {
+        self.view
+            .channels
+            .values()
+            .find(|channel| channel.key == key)
+            .map(|channel| channel.id)
+            .or_else(|| self.ids.allocated_channel(self.id, key))
+    }
+
+    /// Whether `channel` is `root` or sits below it, walking the view this
+    /// connection composes.
+    ///
+    /// Bounded by the tree it walks rather than by a counter: the root is its own
+    /// parent, so the walk always ends there, and a channel whose parent has
+    /// dropped out of view ends it early.
+    fn descends_from(
+        &self,
+        attached: &AttachedConnection,
+        channel: ChannelId,
+        root: ChannelId,
+    ) -> bool {
+        let mut current = channel;
+        loop {
+            if current == root {
+                return true;
+            }
+            let Some(rendered) = self.visible_channel(attached, current) else {
+                return false;
+            };
+            if rendered.parent == current {
+                return false;
+            }
+            current = rendered.parent;
         }
     }
 

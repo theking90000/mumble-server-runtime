@@ -17,9 +17,9 @@ use std::sync::atomic::AtomicU64;
 
 use voxloom_protocol::ControlMessage;
 use voxloom_shard::{
-    ActionKey, ActionTarget, ChannelKey, ConnectionId, DomainId, Effect, Narrow, Occupant, On,
-    OutboundQueue, Reply, ScopeSet, SessionId, Shard, ShardBuilder, ShardCommand, ShardId,
-    ShardLogic, ShardView, VoiceEvent,
+    ActionKey, ActionTarget, ChannelId, ChannelKey, ConnectionId, DomainId, Effect, Narrow,
+    Occupant, On, OutboundQueue, Reply, ScopeSet, SessionId, Shard, ShardBuilder, ShardCommand,
+    ShardId, ShardLogic, ShardView, TextTarget, VoiceEvent,
 };
 
 #[path = "support/model.rs"]
@@ -36,9 +36,14 @@ struct World {
     realms: BTreeMap<ConnectionId, u32>,
     /// Connections rendered privately to themselves instead of shared.
     vanished: Vec<ConnectionId>,
+    /// Connections placed one level below their realm rather than in it.
+    squads: BTreeSet<ConnectionId>,
     label: u32,
     events: Vec<VoiceEvent>,
 }
+
+/// A channel at the root scope that nobody may write to.
+const SILENT: ChannelKey = ChannelKey(300);
 
 struct Realms {
     world: World,
@@ -56,6 +61,10 @@ impl ShardLogic for Realms {
         let root = out.root("Lobby");
         let label = self.world.label;
 
+        // A door everyone sees and nobody may write into.
+        let silent = out.channel(root, SILENT, "Silent", Narrow::Same);
+        out.channel_can_text(silent, false);
+
         let mut realm_channels = BTreeMap::new();
         for realm in 0..2u32 {
             let channel = out.channel(
@@ -65,6 +74,12 @@ impl ShardLogic for Realms {
                 Narrow::Into(realm),
             );
             realm_channels.insert(realm, channel);
+            let squad = out.channel(
+                channel,
+                ChannelKey(u64::from(200 + realm)),
+                &format!("Squad {realm}"),
+                Narrow::Same,
+            );
 
             let members: Vec<ConnectionId> = self
                 .world
@@ -77,8 +92,13 @@ impl ShardLogic for Realms {
                 .collect();
 
             for member in &members {
+                let placement = if self.world.squads.contains(member) {
+                    squad
+                } else {
+                    channel
+                };
                 out.user(
-                    channel,
+                    placement,
                     Occupant::Connection(*member),
                     &format!("player-{}", member.0),
                     Narrow::Same,
@@ -114,8 +134,19 @@ impl ShardLogic for Realms {
             .map_or(ScopeSet::NONE, |realm| Realms::realm_scope(*realm))
     }
 
-    fn observe(&mut self, event: &VoiceEvent, _out: &mut Reply) {
+    fn observe(&mut self, event: &VoiceEvent, out: &mut Reply) {
         self.world.events.push(event.clone());
+        // The most permissive flavor there is: it carries out whatever the
+        // client asked for, so what the tests below observe is the runtime's own
+        // policy rather than this world's.
+        if let VoiceEvent::Said {
+            connection,
+            to,
+            text,
+        } = event
+        {
+            out.relay(*connection, *to, text);
+        }
     }
 }
 
@@ -146,12 +177,16 @@ struct Harness {
 
 impl Harness {
     fn new(realms: &[(u64, u32)], capacity: usize) -> Harness {
+        Harness::with_world(realms, capacity, World::default())
+    }
+
+    fn with_world(realms: &[(u64, u32)], capacity: usize, rest: World) -> Harness {
         let world = World {
             realms: realms
                 .iter()
                 .map(|(connection, realm)| (ConnectionId(*connection), *realm))
                 .collect(),
-            ..World::default()
+            ..rest
         };
         let mut shard = Shard::new(ShardId(1), Realms { world });
         let mut clients = BTreeMap::new();
@@ -183,6 +218,52 @@ impl Harness {
 
     fn model(&self, connection: u64) -> &ClientModel {
         &self.clients[&ConnectionId(connection)].model
+    }
+
+    fn session(&self, connection: u64) -> u32 {
+        self.shard
+            .connection(ConnectionId(connection))
+            .expect("attached")
+            .session()
+            .0
+    }
+
+    /// The wire id of a channel, as that connection knows it.
+    fn channel(&self, connection: u64, name: &str) -> ChannelId {
+        ChannelId(
+            self.model(connection)
+                .channel_id_named(name)
+                .unwrap_or_else(|| panic!("connection {connection} must hold {name:?}")),
+        )
+    }
+
+    /// Drive one inbound text message and collect what each connection got.
+    ///
+    /// Everything still passes through the strict model on its way out, so a
+    /// message naming something a client does not hold fails here rather than in
+    /// an assertion somebody has to think of.
+    fn said(
+        &mut self,
+        from: u64,
+        to: TextTarget,
+        text: &str,
+    ) -> BTreeMap<ConnectionId, Vec<ControlMessage>> {
+        self.shard.handle(ShardCommand::Said {
+            connection: ConnectionId(from),
+            to,
+            message: text.to_owned(),
+        });
+
+        let mut delivered: BTreeMap<ConnectionId, Vec<ControlMessage>> = BTreeMap::new();
+        for (connection, client) in &mut self.clients {
+            while let Ok(message) = client.receiver.try_recv() {
+                if let Err(violation) = client.model.apply(&message) {
+                    panic!("connection {connection:?}: {violation}");
+                }
+                delivered.entry(*connection).or_default().push(message);
+            }
+        }
+        delivered
     }
 }
 
@@ -1320,6 +1401,162 @@ fn a_query_is_answered_only_about_what_the_asker_can_see() {
         }
         other => panic!("expected exactly the two answerable questions, got {other:?}"),
     }
+}
+
+// ---------------------------------------------------------------------------
+// Text: the sender's view decides the target, the recipient's decides the words
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_message_to_a_channel_stops_at_the_scope_boundary() {
+    let mut harness = Harness::new(&[(1, 0), (2, 0), (3, 1)], 1024);
+    harness.step("initial");
+
+    let realm_zero = harness.channel(1, "Realm 0 0");
+    let delivered = harness.said(1, TextTarget::Channel(realm_zero), "hold the left flank");
+
+    match delivered.get(&ConnectionId(2)).map(Vec::as_slice) {
+        Some([ControlMessage::TextMessage(text)]) => {
+            assert_eq!(
+                text.actor,
+                Some(harness.session(1)),
+                "a relayed message names who said it, or the client says the server did"
+            );
+            assert_eq!(text.channel_id, vec![realm_zero.0]);
+            assert!(text.session.is_empty(), "this is not a private message");
+            assert_eq!(text.message, "hold the left flank");
+        }
+        other => panic!("the realm must be told, got {other:?}"),
+    }
+    assert_eq!(
+        delivered.get(&ConnectionId(1)),
+        None,
+        "a client already printed what it typed"
+    );
+    assert_eq!(
+        delivered.get(&ConnectionId(3)),
+        None,
+        "the other realm is not comparable, so nothing of this reaches it"
+    );
+}
+
+#[test]
+fn a_message_to_a_channel_the_sender_cannot_see_is_answered_with_nothing() {
+    let mut harness = Harness::new(&[(1, 0), (3, 1)], 1024);
+    harness.step("initial");
+
+    // Named through the only client that holds it, which is precisely the client
+    // the sender is not.
+    let realm_one = harness.channel(3, "Realm 1 0");
+    let delivered = harness.said(1, TextTarget::Channel(realm_one), "are you there");
+
+    assert!(
+        delivered.is_empty(),
+        "an answer that varied with whether the channel exists would be an existence oracle, got \
+         {delivered:?}"
+    );
+}
+
+#[test]
+fn a_read_only_channel_refuses_out_loud_and_names_the_missing_right() {
+    let mut harness = Harness::new(&[(1, 0), (2, 0)], 1024);
+    harness.step("initial");
+
+    let silent = harness.channel(1, "Silent");
+    let delivered = harness.said(1, TextTarget::Channel(silent), "anybody home");
+
+    match delivered.get(&ConnectionId(1)).map(Vec::as_slice) {
+        Some([ControlMessage::PermissionDenied(denied)]) => {
+            assert_eq!(denied.session, Some(harness.session(1)));
+            assert_eq!(denied.channel_id, Some(silent.0));
+            assert_eq!(denied.permission, Some(voxloom_shard::perm::TEXT_MESSAGE));
+        }
+        // Loud, unlike an unseen target: the client is holding this channel and
+        // was already told the bit was missing, so there is nothing to leak.
+        other => panic!("the writer must learn why, got {other:?}"),
+    }
+    assert_eq!(
+        delivered.get(&ConnectionId(2)),
+        None,
+        "a refused message is not delivered"
+    );
+}
+
+#[test]
+fn a_tree_message_reaches_the_channels_below_its_root() {
+    let mut harness = Harness::with_world(
+        &[(1, 0), (2, 0), (3, 1)],
+        1024,
+        World {
+            squads: BTreeSet::from([ConnectionId(2)]),
+            ..World::default()
+        },
+    );
+    harness.step("initial");
+
+    let realm_zero = harness.channel(1, "Realm 0 0");
+    let delivered = harness.said(1, TextTarget::Tree(realm_zero), "everyone in realm zero");
+
+    match delivered.get(&ConnectionId(2)).map(Vec::as_slice) {
+        Some([ControlMessage::TextMessage(text)]) => {
+            assert_eq!(
+                text.tree_id,
+                vec![realm_zero.0],
+                "the client labels a tree message differently, so the list it arrives in matters"
+            );
+            assert!(text.channel_id.is_empty());
+        }
+        other => panic!("a squad one level down is still in the tree, got {other:?}"),
+    }
+    assert_eq!(delivered.get(&ConnectionId(3)), None);
+}
+
+#[test]
+fn a_private_message_reaches_exactly_one_connection() {
+    let mut harness = Harness::new(&[(1, 0), (2, 0), (4, 0)], 1024);
+    harness.step("initial");
+
+    let target = SessionId(harness.session(2));
+    let delivered = harness.said(1, TextTarget::Session(target), "psst");
+
+    match delivered.get(&ConnectionId(2)).map(Vec::as_slice) {
+        Some([ControlMessage::TextMessage(text)]) => {
+            assert_eq!(text.actor, Some(harness.session(1)));
+            assert_eq!(
+                text.session,
+                vec![target.0],
+                "naming the recipient is what makes the client file it as private"
+            );
+        }
+        other => panic!("the recipient must be told, got {other:?}"),
+    }
+    assert_eq!(
+        delivered.get(&ConnectionId(4)),
+        None,
+        "a third party in the same channel is not a recipient"
+    );
+}
+
+#[test]
+fn a_speaker_the_audience_cannot_see_is_not_relayed_to_it() {
+    let mut harness = Harness::with_world(
+        &[(1, 0), (2, 0)],
+        1024,
+        World {
+            vanished: vec![ConnectionId(1)],
+            ..World::default()
+        },
+    );
+    harness.step("initial");
+
+    let realm_zero = harness.channel(1, "Realm 0 0");
+    let delivered = harness.said(1, TextTarget::Channel(realm_zero), "I am not here");
+
+    assert!(
+        delivered.is_empty(),
+        "connection 2 holds no session for a vanished speaker, so naming one would be the leak the \
+         model exists to catch, got {delivered:?}"
+    );
 }
 
 // ---------------------------------------------------------------------------

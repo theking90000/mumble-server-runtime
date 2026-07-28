@@ -46,21 +46,25 @@ pub mod perm {
 
 /// What a connection may do in a channel it can see, derived from the render.
 ///
-/// There is no permission model to consult: the flavor renders a tree, and the
-/// only thing it says about a channel's accessibility is `can_enter`. Deriving
-/// the answer from that is what keeps the reply honest for the generation it was
-/// asked about, rather than replaying a cache nothing invalidates (spec 16.16).
+/// There is no permission model to consult: the flavor renders a tree, and what
+/// it says about a channel's accessibility is `can_enter` and `can_text`.
+/// Deriving the answer from those is what keeps the reply honest for the
+/// generation it was asked about, rather than replaying a cache nothing
+/// invalidates (spec 16.16).
 ///
 /// `TRAVERSE` is unconditional here because the question is only ever asked
 /// about a channel the connection already observes: it has traversed it by
 /// definition.
 #[must_use]
 pub fn permissions_of(channel: &Channel) -> u32 {
-    if channel.can_enter {
-        perm::DEFAULT
-    } else {
-        perm::DEFAULT & !perm::ENTER
+    let mut permissions = perm::DEFAULT;
+    if !channel.can_enter {
+        permissions &= !perm::ENTER;
     }
+    if !channel.can_text {
+        permissions &= !perm::TEXT_MESSAGE;
+    }
+    permissions
 }
 
 /// The reply to a client's `PermissionQuery` about one visible channel.
@@ -129,6 +133,78 @@ pub fn spoken(to: SessionId, word: &Word) -> ControlMessage {
             ..Default::default()
         }),
     }
+}
+
+/// Where a text message is aimed, in the wire's vocabulary.
+///
+/// Exactly one target, because that is all the official client ever sends: the
+/// chat bar names one channel, the tree menu names one root, and a private
+/// message names one session. Accepting a mix would mean inventing a fan-out
+/// nobody asked for, so it is refused where the wire is parsed (R6).
+///
+/// REF: references/mumble/src/mumble/ServerHandler.cpp :
+///   `sendUserTextMessage` adds one session, `sendChannelTextMessage` adds one
+///   `channel_id` **or** one `tree_id`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TextTarget {
+    Session(SessionId),
+    Channel(ChannelId),
+    Tree(ChannelId),
+}
+
+/// Carry one connection's words to one recipient.
+///
+/// Which of the three lists is filled is not decoration: it is what the client
+/// prints in front of the line, and whether it files the message as private. The
+/// identifier put there is the one the **recipient** holds, never the one the
+/// sender named, because the two need not be the same thing here.
+///
+/// `actor` is `None` for the server's own voice, which is what makes the client
+/// attribute it to the server rather than to a user it would have to know.
+///
+/// REF: references/mumble/src/mumble/Messages.cpp : `msgTextMessage` labels the
+///   entry Tree, Channel or Private from whichever list is non-empty, and falls
+///   back to `tr("Server", "message from")` when there is no actor.
+/// REF: references/mumble/src/murmur/Messages.cpp : `msgTextMessage` stamps the
+///   actor itself and forwards one identical message to each recipient.
+#[must_use]
+pub fn relayed(actor: Option<SessionId>, to: TextTarget, text: &str) -> ControlMessage {
+    let mut message = tcp::TextMessage {
+        actor: actor.map(|session| session.0),
+        message: text.to_owned(),
+        ..Default::default()
+    };
+    match to {
+        TextTarget::Session(session) => message.session = vec![session.0],
+        TextTarget::Channel(channel) => message.channel_id = vec![channel.0],
+        TextTarget::Tree(channel) => message.tree_id = vec![channel.0],
+    }
+    ControlMessage::TextMessage(message)
+}
+
+/// Refuse something a connection asked to do in a channel it can see.
+///
+/// Distinct from the flavor's own [`Word::Refuse`]: this one names the
+/// permission and the channel, so the client can say which right was missing
+/// instead of printing a sentence. Only ever sent about a channel the connection
+/// already holds, since naming any other would answer a question it did not get
+/// to ask.
+///
+/// REF: references/mumble/src/murmur/Messages.cpp : the `PERM_DENIED` macro sets
+///   `permission`, `channel_id`, `session` and `DenyType::Permission`.
+#[must_use]
+pub fn denied_permission(
+    session: SessionId,
+    channel: ChannelId,
+    permission: u32,
+) -> ControlMessage {
+    ControlMessage::PermissionDenied(tcp::PermissionDenied {
+        permission: Some(permission),
+        channel_id: Some(channel.0),
+        session: Some(session.0),
+        r#type: Some(i32::from(tcp::permission_denied::DenyType::Permission)),
+        ..Default::default()
+    })
 }
 
 /// The wire name of an action key.
@@ -386,6 +462,7 @@ mod tests {
             name: format!("channel-{id}"),
             position: 0,
             can_enter: true,
+            can_text: true,
             links: BTreeSet::new(),
         }
     }
@@ -427,6 +504,24 @@ mod tests {
             closed & perm::TRAVERSE,
             perm::TRAVERSE,
             "a channel it can see is a channel it has traversed"
+        );
+    }
+
+    #[test]
+    fn a_read_only_channel_is_advertised_without_the_text_bit() {
+        let mut quiet = channel(1, 0);
+        quiet.can_text = false;
+
+        let permissions = permissions_of(&quiet);
+        assert_eq!(
+            permissions & perm::TEXT_MESSAGE,
+            0,
+            "the client must grey its chat box out rather than be refused later"
+        );
+        assert_eq!(
+            permissions & perm::SPEAK,
+            perm::SPEAK,
+            "being unable to write is not being unable to talk"
         );
     }
 

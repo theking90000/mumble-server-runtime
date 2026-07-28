@@ -27,7 +27,7 @@ use tokio::sync::watch;
 use voxloom_crypto::CryptState;
 use voxloom_shard::{AudioRouting, ConnectionId, OutboundQueue, SessionId, ShardId};
 
-use crate::limits::VoiceBudget;
+use crate::limits::{TextBudget, VoiceBudget};
 
 /// Which shard a connection currently belongs to, and where its routes come
 /// from.
@@ -57,6 +57,9 @@ pub struct Peer {
     /// UDP. It decides how *it* is reached, never how anyone else is.
     udp_mode: AtomicBool,
     budget: Mutex<VoiceBudget>,
+    /// What this connection may still type. Its own bucket rather than a share
+    /// of the voice one: a talkative user is not a flooding one.
+    text: Mutex<TextBudget>,
     /// How far through its shard's journal the connection has been advanced.
     /// Written by the shard, read here (guide 9.5).
     cursor: Arc<AtomicU64>,
@@ -130,6 +133,7 @@ impl Peer {
             address: Mutex::new(None),
             udp_mode: AtomicBool::new(true),
             budget: Mutex::new(VoiceBudget::new(now)),
+            text: Mutex::new(TextBudget::new(now)),
             // Created here rather than handed in: the shard writes it and the
             // voice plane reads it, and neither of them exists yet.
             cursor: Arc::new(AtomicU64::new(0)),
@@ -245,6 +249,12 @@ impl Peer {
     #[must_use]
     pub fn allow_voice(&self, now: Instant, bytes: usize) -> bool {
         lock(&self.budget).allow(now, bytes)
+    }
+
+    /// Whether this peer may send one more text message right now.
+    #[must_use]
+    pub fn allow_text(&self, now: Instant) -> bool {
+        lock(&self.text).allow(now)
     }
 
     /// Record that this peer's audio is arriving over UDP again, or that it has

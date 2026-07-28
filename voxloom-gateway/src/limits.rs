@@ -1,10 +1,14 @@
 //! Data-plane limits (spec 15.7).
 //!
-//! Phase 4 implements the two that protect the voice path itself: a hard cap on
-//! datagram size, and a per-connection packet budget. The full rate-limit matrix
-//! of 22.5 (authentication, text, blobs, context actions) is Phase 9; putting a
-//! budget on audio now is not an optimisation, it is what keeps one connection
-//! from turning into N encryptions per packet for every other connection.
+//! Two protect the voice path itself: a hard cap on datagram size, and a
+//! per-connection packet budget. That budget is not an optimisation, it is what
+//! keeps one connection from turning into N encryptions per packet for every
+//! other connection.
+//!
+//! One protects the control path: a leaky bucket in front of `TextMessage`,
+//! which is the only thing a client can type as fast as it likes. The rest of
+//! the rate-limit matrix of 22.5 - authentication, blobs, context actions - is
+//! still Phase 9.
 
 use std::time::{Duration, Instant};
 
@@ -196,9 +200,87 @@ pub fn is_acceptable_size(len: usize) -> bool {
     (MIN_UDP_PACKET_SIZE..=MAX_UDP_PACKET_SIZE).contains(&len)
 }
 
+/// Sustained text messages per second allowed from one connection, and how many
+/// may arrive back to back.
+///
+/// REF: references/mumble/src/murmur/Meta.cpp : `iMessageLimit = 1`,
+///   `iMessageBurst = 5`.
+const MESSAGES_PER_SECOND: u32 = 1;
+const MESSAGE_BURST: u32 = 5;
+
+/// One connection's allowance for the things it types.
+///
+/// The same leaky bucket the reference server puts in front of `TextMessage`,
+/// and it is worth having here rather than in the shard: a flood refused at the
+/// socket never crosses a mailbox nor wakes a shard task.
+///
+/// The clock is passed in for the same reason [`VoiceBudget`] does it: a test
+/// that has to sleep to observe a rate limit is a test that will be flaky.
+///
+/// REF: references/mumble/src/murmur/Messages.cpp : the `RATELIMIT` macro
+///   returns from `msgTextMessage` **without** answering the client.
+#[derive(Debug)]
+pub struct TextBudget {
+    tokens: u32,
+    last_refill: Instant,
+}
+
+impl TextBudget {
+    #[must_use]
+    pub fn new(now: Instant) -> TextBudget {
+        TextBudget {
+            tokens: MESSAGE_BURST,
+            last_refill: now,
+        }
+    }
+
+    /// Take one message's worth of budget. `false` means drop it.
+    pub fn allow(&mut self, now: Instant) -> bool {
+        let elapsed = now.saturating_duration_since(self.last_refill);
+        // Whole tokens only; the remainder stays on the clock so a stream of
+        // short gaps still accrues budget instead of losing it.
+        let earned = elapsed
+            .as_millis()
+            .saturating_mul(u128::from(MESSAGES_PER_SECOND))
+            / 1000;
+        if let Ok(earned) = u32::try_from(earned)
+            && earned > 0
+        {
+            self.tokens = self.tokens.saturating_add(earned).min(MESSAGE_BURST);
+            self.last_refill = now;
+        }
+
+        if self.tokens == 0 {
+            return false;
+        }
+        self.tokens -= 1;
+        true
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_typist_gets_a_burst_then_one_message_a_second() {
+        let start = Instant::now();
+        let mut budget = TextBudget::new(start);
+
+        for message in 0..MESSAGE_BURST {
+            assert!(budget.allow(start), "message {message} is within the burst");
+        }
+        assert!(!budget.allow(start), "the burst is spent");
+
+        assert!(
+            budget.allow(start + Duration::from_millis(1000)),
+            "a second of silence buys one message"
+        );
+        assert!(
+            !budget.allow(start + Duration::from_millis(1000)),
+            "and only one"
+        );
+    }
 
     #[test]
     fn a_burst_is_allowed_then_the_sustained_rate_applies() {
