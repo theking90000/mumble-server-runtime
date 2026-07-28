@@ -21,16 +21,11 @@ rustls = { version = "0.23", default-features = false, features = ["ring", "std"
 anyhow = "1"
 
 [dev-dependencies]
-# The tests point the simulated client (the judge) at a running server to prove
-# the P3 handshake replays without any §20 violation.
-voxloom-server = { path = "../voxloom-server" }
-voxloom-render = { path = "../voxloom-render" }
-voxloom-audio = { path = "../voxloom-audio" }
-voxloom-flavor = { path = "../voxloom-flavor" }
-voxloom-flavor-reference = { path = "../voxloom-flavor-reference" }
-voxloom-control = { path = "../voxloom-control" }
-voxloom-reconcile = { path = "../voxloom-reconcile" }
-voxloom-session = { path = "../voxloom-session" }
+# The judge is pointed at the public shard runtime. These stay dev-only: the
+# verifier library itself speaks only the protocol and never imports the
+# implementation it judges.
+voxloom-gateway = { path = "../voxloom-gateway" }
+voxloom-shard = { path = "../voxloom-shard" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "time", "sync"] }
 
 # This crate is a verifier harness whose contract is to PANIC on protocol

@@ -1347,16 +1347,10 @@ dependencies = [
  "rustls",
  "tokio",
  "tokio-rustls",
- "voxloom-audio",
- "voxloom-control",
  "voxloom-crypto",
- "voxloom-flavor",
- "voxloom-flavor-reference",
+ "voxloom-gateway",
  "voxloom-protocol",
- "voxloom-reconcile",
- "voxloom-render",
- "voxloom-server",
- "voxloom-session",
+ "voxloom-shard",
 ]
 
 [[package]]
