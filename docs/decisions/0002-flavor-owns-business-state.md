@@ -45,6 +45,10 @@ trait VoiceFlavor: Send + Sync + 'static {
 }
 ```
 
+Dans l'implémentation à shards, cette frontière est portée directement par
+`voxloom_shard::ShardLogic` et `ShardBuilder` ; elle n'exige plus un crate
+`voxloom-flavor` séparé ni un rendu complet par connexion.
+
 Le snapshot est immuable pendant un rendu et opaque pour Voxloom. Le flavor
 publie une nouvelle révision quand son état change. Voxloom rend les connexions
 concernées, valide les sorties, puis publie vues et audio dans l'ordre de
@@ -83,13 +87,13 @@ plugin dynamique ni registre global de callbacks n'est requis.
 
 - Le crate `voxloom-state` prévu pour l'état canonique métier est retiré de la
   roadmap du cœur.
-- `voxloom-control` coordonne les publications vocales ; il ne sérialise pas les
+- `voxloom-shard` coordonne les publications vocales ; il ne sérialise pas les
   commandes métier.
 - Les concepts joueur, UUID, partie, realm, équipe, rôle, dimension, position,
   radio et proximité appartiennent aux flavors.
-- Le scénario Aurora/Borealis devient un flavor de référence hors du cœur.
-- P8 fournit le premier flavor de production Minecraft, sans ajouter de
-  dépendance Minecraft aux crates centrales.
+- Le flavor de démonstration reste hors du cœur, dans `tools/voxloom-arena`.
+- Un flavor de production peut être ajouté sans ajouter sa dépendance métier aux
+  crates centrales.
 - Les opérations `MergeRealms`, `SplitRealm` et les acteurs par partie sont des
   choix du flavor, pas des primitives Voxloom.
 - Les tests de confidentialité du cœur portent sur les sorties de deux

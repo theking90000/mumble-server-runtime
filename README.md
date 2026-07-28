@@ -1,54 +1,36 @@
 # Voxloom
 
-Runtime vocal déclaratif compatible Mumble : un serveur qui parle le protocole
-Mumble au fil, mais dont les snapshots métier fournis par ses flavors, les vues
-par connexion et le routage audio sont indépendants du protocole. Voxloom ne
-possède pas l'état métier. Voir `docs/` pour la spécification et la roadmap.
+Runtime vocal déclaratif compatible Mumble. Une application décrit un monde
+métier sous forme de portées, vues et relations audio ; Voxloom le publie à des
+clients Mumble sans posséder cet état métier.
 
-**Statut : phases P0 à P4 closes** (infrastructure de vérité, codec pur, proxy
-oracle, serveur minimal, routage audio) ; deux vrais clients Mumble se
-connectent, se voient et s'entendent, en UDP comme en repli tunnel TCP. Le cœur
-pur de P5 (moteur de vues) est fait. P6 est close : les vues divergentes,
-transitions à chaud, préférences locales et routes audio ont été validées en CI
-et sur des clients officiels macOS et Windows. P7 est en cours : T1 fournit le
-contrat statique de flavor et ses sorties sémantiques ; T2 rend un snapshot
-opaque pour toutes les connexions ; T3 valide intégralement la génération avant
-tout effet. Prochaine tranche : publication atomique T4.
-L'avancement détaillé fait foi dans `docs/STATUS.md` ; les règles de travail sont
-dans `AGENT.md`.
+Le runtime courant est organisé autour de deux crates :
 
-## Structure
+- `voxloom-shard` rend et réconcilie une vue partagée, compose les vues privées
+  et publie une table de routage sans effectuer d'IO ;
+- `voxloom-gateway` gère TLS, TCP, UDP, le handshake, les connexions et les
+  migrations entre shards.
 
-```
-AGENT.md                     contrat de travail (règles R1–R6, gates, phases)
-Cargo.toml                   workspace virtuel (membres ajoutés au fil des phases)
-ci/                          gates R2/R4 exécutables en local et en CI
-docs/                        spécification, roadmap, décisions (ADR), STATUS
-references/                  sources protocolaires vendored (Mumble, pinné)
-fixtures/corpus/             captures binaires réelles annotées (zone vérificateur)
-conformance/                 tests de conformité (zone vérificateur, R2)
-fuzz/                        cibles cargo-fuzz (workspace détaché, nightly)
-tools/                       binaires d'outillage (proxys, décodeur de corpus)
-voxloom-protocol/            framing, protobuf, enveloppe UDP        (pur)
-voxloom-crypto/              OCB2-AES128, CryptState                 (pur)
-voxloom-render/              vue normalisée, normalize, validate     (pur)
-voxloom-reconcile/           diff, planificateur, ViewIdMapping      (pur)
-voxloom-audio/               routage audio : compile, may_receive    (pur)
-voxloom-session/             vue engagée d'une connexion, plan → wire (pur)
-voxloom-flavor/              contrat statique et sorties sémantiques (pur)
-voxloom-control/             rendu et validation des snapshots flavor (pur)
-voxloom-server/              serveur minimal + routage voix
-voxloom-testkit/             client simulé et juge des invariants (R2)
-```
+`tools/voxloom-arena` fournit un flavor de démonstration exécutable.
+`voxloom-testkit` reste le juge indépendant : son client simulé applique le
+protocole et refuse toute violation de son modèle strict.
+
+La référence d'architecture est
+[`docs/design/guide-implementation.md`](docs/design/guide-implementation.md).
+L'état détaillé est dans [`docs/STATUS.md`](docs/STATUS.md) et les règles de
+travail dans [`AGENT.md`](AGENT.md). L'ancien pipeline exploratoire P4–P7 reste
+consultable au tag `legacy-p7-final`.
 
 ## Développement
 
 ```bash
-ci/gates.sh                  # interdictions structurelles R4
-ci/dep-direction.sh          # direction des dépendances entre crates
-ci/verifier-boundary.sh      # séparation implémenteur/vérificateur R2
-ci/cargo-gate.sh cargo test --workspace   # tests
-ci/bench-audio.sh            # coût par destinataire du routeur (P4)
+ci/gates.sh
+ci/dep-direction.sh
+ci/verifier-boundary.sh
+cargo fmt --all --check
+cargo clippy --workspace --all-targets --all-features
+cargo test --workspace --all-features
+ci/bench-shard.sh
 ```
 
-Toolchain pinnée dans `rust-toolchain.toml` (Rust 1.93, édition 2024).
+La toolchain est fixée dans `rust-toolchain.toml` (Rust 1.93, édition 2024).

@@ -9,10 +9,10 @@
 > `voxloom-shard`, la porte d'entrée dans `voxloom-gateway` (plan de contrôle
 > TLS, `ConnectionRouter`, registre multi-shards, migration, plan vocal UDP), et
 > un flavor de démonstration dans `tools/voxloom-arena` — un seul exécutable.
-> Le pipeline P5–P7 existant n'a pas été retiré : les deux modèles coexistent le
-> temps de la bascule, et `voxloom-server` reste sur l'ancien.
+> Le testkit juge ce runtime sur ses API publiques et l'ancien pipeline P5–P7 a
+> été retiré ; son dernier état reste au tag `legacy-p7-final`.
 > Écarts assumés et points ouverts : §18.
-> Révision 3 (2026-07-27) — voir §16.
+> Révision 4 (2026-07-28) — voir §16.
 
 ---
 
@@ -1182,6 +1182,7 @@ C'est la moitié du système, testable sans rien lancer.
 
 | rév. | changement |
 |---|---|
+| **r4** | **Bascule achevée** : le testkit juge `voxloom-gateway` et `voxloom-shard`, l'ancien pipeline P5–P7 est retiré et `legacy-p7-final` devient son archive. Un `ChannelId` accepté comme retiré par un client est désormais mort globalement (§18), y compris lors d'un simple changement de portée. |
 | **r3** | **Trois mécanismes explicitement séparés** (§1) : vue partagée + portées / overlay privé / relation audio, avec la règle « portée = groupe, overlay = exception individuelle ». La portée d'un utilisateur **étend** celle de son canal au lieu de l'égaler (§2.4) : un canal peut contenir plusieurs ensembles filtrés, jusqu'à une portée par joueur — le théorème de clôture est reprouvé. L'audio quitte les portées et devient une **relation orientée** (`audio_domain` / `audio_listen` / `audio_edge`), donc asymétrique par nature ; `Observation` se réduit à `see`. **Overlay réintégré** comme placement par observateur (vanish, annonce audio), avec l'invariant **partagé xor privé** et sa composition détaillée : `splice` dans les phases (§6.2) et `collapse` généralisé (§6.3). L'état engagé devient un **triplet** `(cursor, see, overlay_sent)` avançant atomiquement (§6.5). Routage recompilé **conditionnellement** et `Delivery` pointant vers le transport vivant (§8.3). Loi de coût explicitée (§13) : aucun terme en nombre de rôles. Oracle à **quatre** classes de changement + trois tests de mutation (§12). |
 | **r2** | La visibilité passe d'une étiquette posée à côté des éléments à une **portée** (position dans un arbre) ; la clôture devient un théorème au lieu d'une validation ; `render` construit au lieu de décrire. |
 | **r1** | Première rédaction : journal + curseur, filtrage, chemin UDP, ordre de construction. |
@@ -1226,19 +1227,22 @@ contredisaient, c'est la règle qui a gagné.
 | 9.4 | `replan` affecte `conn.see` avant d'envoyer | les trois composantes n'avancent qu'au succès | C'est la règle 6 du §11, que le pseudo-code du §9.4 contredisait. Sinon une connexion congestionnée garderait la nouvelle observation avec l'ancienne vue, et le filtre du tour suivant utiliserait une portée dont le client n'a jamais entendu parler. |
 | 3.5 / 8.3 | « vérifier que `r` voit `s` » sur les arêtes | vérification **par portée distincte**, jamais par paire | Matérialiser les paires d'un domaine est quadratique et tournait à *chaque* rendu. À 500 connexions, ces deux passages en `BTreeSet` coûtaient plus que tout le reste du tour (21,6 ms contre 0,74 ms une fois corrigés). `resolve()` reste la définition, et un test y épingle `compile`. |
 | 4 | allocateur d'identifiants **par shard** | un seul allocateur pour tout le runtime, canaux indexés sur `(shard, clé)` | Dès qu'une connexion peut changer de shard, l'allocation par shard casse la règle 3 du §11 vue du client : le shard A retire le canal 5, le shard B en crée un autre qui porte aussi le 5. Les sessions sont pires — voir la ligne suivante. Comme la session est indexée sur l'`Occupant`, une migration garde la sienne **gratuitement**. |
+| 4 / 11.3 | une clé de canal garde son identifiant | un `ChannelId` est retiré dès qu'un client accepte son `ChannelRemove` | Le client mémorise les identifiants retirés, même quand le canal existe encore dans la portée d'un autre client. L'identifiant est donc retiré globalement et le prochain rendu le fait tourner pour tous ; le compteur monotone garantit qu'il ne revient jamais. |
 | 9.6 | « migrer = détacher de A, attacher à B, **rien d'autre** » | le détachement d'une migration ne pousse **rien** ; A transmet la vue tenue par le client, B planifie une seule transition dessus | Le démontage n'est pas seulement du gaspillage, il **déconnecte le client officiel**. `msgUserRemove` ne retire pas la victime du modèle quand c'est soi (`if (pDst != pSelf)`), donc le `ChannelRemove` qui suit ressemble à la suppression d'un canal occupé ; `msgChannelRemove` journalise « Protocol violation » et appelle `disconnect()`. REF `mumble/Messages.cpp`, `mumble/UserModel.cpp::removeChannel`. |
 | 9.2 | table de routage compilée depuis la vue partagée | compilée depuis la vue partagée **plus la présence propre de chaque overlay** | Une connexion sans présence partagée n'est pas absente du runtime : c'est exactement ce qu'est un vanish. L'omettre transformait silencieusement « entend tout, n'est entendu de personne » en « ne participe pas à l'audio », sans que le flavor puisse distinguer les deux. Qui l'entend reste une autre question, et le rendu refuse déjà une relation dont la réponse est non. |
 | 16.9 | `TextMessage` : « résoudre les cibles, puis livrer » | livré à tout le monde **sauf** qui ne voit pas l'émetteur | Murmur estampille `actor` sans condition parce que sa visibilité est globale ; ici elle est par connexion. Un destinataire qui ne tient pas la session de l'émetteur afficherait le message comme venant de « Server » (REF `mumble/Messages.cpp::msgTextMessage`, repli `tr("Server", "message from")`), et le nommer quand même violerait les invariants 14 et 15 du §20 que le testkit vérifie. C'est la règle audio - un récepteur voit son émetteur - appliquée au texte. Un flavor qui veut que tout le monde lise dispose de `Reply::announce`, qui ne porte pas d'acteur. |
 | 16.9 | cibles multiples autorisées dans un même message | **exactement une** cible, sinon refus | Le client officiel n'en envoie jamais plus d'une : `sendUserTextMessage` remplit une session, `sendChannelTextMessage` un `channel_id` **ou** un `tree_id` (REF `mumble/ServerHandler.cpp`). Accepter un mélange reviendrait à inventer un fan-out que personne n'a demandé, sur un message que rien ne borne. Fail closed (R6). |
 | 10.1 | `route(&identity)` | `route(connection, &identity)` | Un `VoiceEvent` ne transporte qu'un `ConnectionId` — délibérément, le runtime n'a pas d'opinion sur ce qu'est un utilisateur. Le routage est donc le seul instant où l'identité et l'identifiant se rencontrent : une application qui veut que son flavor connaisse un nom enregistre la paire là. |
 
-### 18.1 Ce qui n'est pas fait
+### 18.1 Points ouverts
 
-- **`voxloom-server` n'est pas rebranché.** Le modèle par connexion (P5–P7) reste
-  celui qui tourne. Le rebrancher retirerait le coordinateur de publication et les
-  jetons de commit, et casserait les tests de conformité du testkit qui jugent ce
-  pipeline — or R2 interdit de toucher `voxloom-testkit/` dans le même diff qu'un
-  `voxloom-*/src`. C'est une bascule en deux commits séparés, pas un détail.
+- **Coût du retrait global des `ChannelId`** : la conformité impose qu'un ID
+  retiré d'une vue ne revienne jamais. Avec des IDs partagés par shard, le
+  retrait accepté par un client fait tourner le canal pour les autres et peut
+  transformer un changement de portée en delta O(N). Des alias d'ID par
+  connexion supprimeraient ce churn, mais réintroduiraient un état par
+  connexion dans le planificateur ; ce choix doit être mesuré et spécifié avant
+  d'être implémenté.
 - **Utilisateurs synthétiques** : `Occupant::Synthetic` leur donne une session
   stable, mais aucune politique n'est inventée pour la façon dont l'audio les
   référence (§17.5 reste ouvert).
@@ -1319,26 +1323,24 @@ Deux points sur ce câblage :
 
 Aucun flavor n'a donc plus besoin de tenir un `RuntimeHandle` pour migrer : ni le
 lobby, ni l'arène, ni le flavor de test du gateway n'en gardent un.
-- **Le proptest ne consomme pas `SimulatedMumbleClient`** (R2, même raison). Le
-  modèle strict de `voxloom-shard/tests/support/model.rs` applique les vrais
-  messages de contrôle et juge chaque état intermédiaire ; le brancher sur le
-  vérificateur officiel reste à faire.
 
 ### 18.3 Mesure
 
-`ci/bench-shard.sh` fait tourner les deux modèles sur le **même** changement
-métier (un membre change de realm), aux mêmes tailles. Apple Silicon, profil
-release, médiane sur 20 tours :
+`ci/bench-shard.sh` mesure le runtime courant sur un membre qui change de realm.
+Le tableau ci-dessous conserve aussi la dernière baseline P7, issue du tag
+`legacy-p7-final`, pour documenter la décision. Apple Silicon, profil release,
+médiane sur 20 tours :
 
-| connexions | tour de shard | par connexion | publication P7 | par connexion |
-|---|---|---|---|---|
-| 2 | 3,42 µs | 1,71 µs | 25,96 µs | 12,98 µs |
-| 10 | 8,88 µs | 887 ns | 156,67 µs | 15,67 µs |
-| 50 | 149,42 µs | 2,99 µs | 1,47 ms | 29,48 µs |
-| 200 | 418,75 µs | 2,09 µs | 21,39 ms | 106,97 µs |
-| 500 | **736,58 µs** | **1,47 µs** | **205,25 ms** | 410,50 µs |
+| connexions | tour de shard | par connexion | delta ops | publication P7 | par connexion |
+|---|---|---|---|---|---|
+| 2 | 4,50 µs | 2,25 µs | 3 | 25,96 µs | 12,98 µs |
+| 10 | 28,42 µs | 2,84 µs | 7 | 156,67 µs | 15,67 µs |
+| 50 | 290,88 µs | 5,82 µs | 28 | 1,47 ms | 29,48 µs |
+| 200 | 1,02 ms | 5,11 µs | 103 | 21,39 ms | 106,97 µs |
+| 500 | **5,19 ms** | **10,38 µs** | 253 | **205,25 ms** | 410,50 µs |
 
-Ce qu'il faut lire n'est pas le facteur 279 à 500 connexions, c'est la colonne
-« par connexion » : elle **descend** dans le modèle à shards (1,71 → 1,47 µs) et
-**monte** d'un facteur 32 dans l'ancien. Le delta partagé fait 2 opérations quelle
-que soit la taille — c'est toute la thèse, et c'est ce que le binaire imprime.
+Le runtime à shards reste environ 39 fois plus rapide à 500 connexions sur ce
+scénario. En revanche, la colonne `delta ops` expose honnêtement le coût du
+retrait global des IDs : elle croît avec le nombre d'occupants du canal
+réidentifié. Ce scénario n'établit donc plus une loi strictement linéaire ; le
+point ouvert du §18.1 est une dette de performance, pas une dette de conformité.

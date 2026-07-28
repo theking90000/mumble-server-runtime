@@ -1,8 +1,14 @@
 # Voxloom : roadmap d'implémentation orientée agents
 
-**Statut :** roadmap v0.1, complément de la spécification technique v0.1
+**Statut :** roadmap P0–P7 archivée, complément historique de la spécification technique v0.1
 **Public :** agents IA d'implémentation, avec points de contrôle humains explicites
 **Principe directeur :** un agent ne peut pas juger la conformité protocolaire. Seul un oracle le peut. Toute la roadmap est ordonnée pour construire les oracles avant le code qu'ils jugent.
+
+> Cette roadmap documente la construction de l'ancien pipeline par connexion.
+> Ses checklists restent des preuves, mais ses crates et done-commands ne
+> décrivent plus le workspace actif. Le runtime courant et ses validations sont
+> dans `docs/design/guide-implementation.md` et `docs/STATUS.md`. L'archive de
+> code correspondante est le tag `legacy-p7-final`.
 
 ---
 

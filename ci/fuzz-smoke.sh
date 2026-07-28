@@ -15,7 +15,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
 SECONDS_PER_TARGET="${1:-30}"
-TARGETS=(framing control udp ocb2_decrypt control_roundtrip udp_roundtrip audio_route)
+TARGETS=(framing control udp ocb2_decrypt control_roundtrip udp_roundtrip)
 
 if ! rustup run nightly rustc --version >/dev/null 2>&1; then
   echo "fuzz-smoke.sh : nightly toolchain absent — gate ignoré (rustup toolchain install nightly)."
