@@ -24,7 +24,7 @@ members = [
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.93"
-license = "AGPL-3.0-or-later"
+license = "Apache-2.0"
 repository = "https://github.com/theking90000/mumble-server-runtime"
 authors = ["Mumble Server Runtime contributors"]
 

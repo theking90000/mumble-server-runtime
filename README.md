@@ -157,6 +157,14 @@ cargo run --release -p bench-shard   # cost of one shard turn
 The live tests open loopback sockets. The toolchain is pinned in
 `rust-toolchain.toml` (Rust 1.93, edition 2024).
 
+## License
+
+Mumble Server Runtime is licensed under the
+[Apache License, Version 2.0](LICENSE).
+
+The protocol references and test vectors under `references/vendored/` retain
+their upstream licenses and provenance.
+
 ## AI-assisted development
 
 Mumble Server Runtime was designed by a human and implemented almost entirely by AI coding
