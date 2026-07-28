@@ -1,21 +1,10 @@
 # Summary
 
 [Introduction](introduction.md)
-
-# Reference
-
-- [API documentation](reference/api.md)
-
-<!--
-Plan du livre. Une entrée est décommentée quand la page est écrite : avec
-`create-missing = false`, une entrée sans fichier fait échouer la construction.
-
-# What Voxloom does
-- [Divergent views](what/divergent-views.md)
-- [What it makes possible](what/possibilities.md)
-- [Boundaries](what/boundaries.md)
+[Boundaries](boundaries.md)
 
 # The model
+
 - [Vocabulary](model/vocabulary.md)
 - [The shared view and scopes](model/scopes.md)
 - [Overlays](model/overlays.md)
@@ -24,6 +13,14 @@ Plan du livre. Une entrée est décommentée quand la page est écrite : avec
 - [Seeing the speaker](model/coupling.md)
 - [Cost](model/cost.md)
 - [Refusals](model/refusals.md)
+
+# Reference
+
+- [API documentation](reference/api.md)
+
+<!--
+Plan du livre. Une entrée est décommentée quand la page est écrite : avec
+`create-missing = false`, une entrée sans fichier fait échouer la construction.
 
 # Mumble compatibility
 - [Supported surface](mumble/surface.md)
@@ -41,9 +38,6 @@ Plan du livre. Une entrée est décommentée quand la page est écrite : avec
 - [Migration between shards](build/migration.md)
 - [Configuration and limits](build/configuration.md)
 - [Load testing](build/load-testing.md)
-
-# Reference
-- [Glossary](reference/glossary.md)
 
 # Development
 - [Building and testing](dev/building.md)
