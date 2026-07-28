@@ -1,0 +1,30 @@
+# Livre mdBook — documentation publiée de Voxloom.
+#
+# `src` pointe sur docs/book/ : seuls les fichiers listés dans SUMMARY.md sont
+# rendus, donc les artefacts de process qui vivent ailleurs sous docs/ (roadmap,
+# STATUS, checklists, spécification, décisions) ne sont pas publiés.
+#
+#   mdbook serve --open     # aperçu local
+#   mdbook build            # sortie dans target/book/
+
+[book]
+title = "Voxloom"
+description = "Mumble-compatible voice runtime with per-connection views."
+authors = ["Voxloom contributors"]
+language = "en"
+src = "docs/book"
+
+[build]
+# Sous target/ pour être couvert par le .gitignore existant.
+build-dir = "target/book"
+create-missing = false
+
+[output.html]
+default-theme = "rust"
+preferred-dark-theme = "ayu"
+git-repository-url = "https://github.com/theking90000/voxloom"
+edit-url-template = "https://github.com/theking90000/voxloom/edit/main/{path}"
+
+[output.html.fold]
+enable = true
+level = 1
