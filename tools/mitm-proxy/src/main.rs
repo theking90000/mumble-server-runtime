@@ -1,16 +1,16 @@
 //! CLI wiring for the Mumble Server Runtime MITM proxy (Phase 2). All logic lives in the lib
-//! (`voxloom_mitm_proxy`); this binary only parses arguments, sets up TLS, and
+//! (`mumble_server_runtime_mitm_proxy`); this binary only parses arguments, sets up TLS, and
 //! runs the control-plane relay until a fatal error or Ctrl-C.
 
 use std::net::SocketAddr;
 
 use anyhow::{Context, Result};
 use clap::Parser;
-use voxloom_mitm_proxy::{Registry, serve, serve_udp, tls};
+use mumble_server_runtime_mitm_proxy::{Registry, serve, serve_udp, tls};
 
 #[derive(Parser)]
 #[command(
-    name = "voxloom-mitm-proxy",
+    name = "mumble-server-runtime-mitm-proxy",
     version,
     about = "Mumble MITM oracle: re-encrypts the voice plane through an independent OCB2 domain per side"
 )]

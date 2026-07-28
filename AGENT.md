@@ -3,7 +3,7 @@
 Ce dépôt implémente **Mumble Server Runtime**, un runtime vocal déclaratif compatible Mumble.
 Ce fichier est le contrat de travail. Le guide d'implémentation
 (`docs/design/guide-implementation.md`) fait autorité sur l'architecture courante ;
-la spécification (`docs/voxloom-specification-technique-v0.1.md`) reste l'autorité
+la spécification (`docs/mumble-server-runtime-specification-technique-v0.1.md`) reste l'autorité
 protocolaire. Un détail protocolaire non tranché **s'arrête et se signale**, il ne
 s'invente pas.
 
@@ -23,11 +23,11 @@ fichier source Mumble correspondant. Un détail absent de ces sources → tu t'a
 et tu le signales. Tu n'inventes pas un détail « plausible ».
 
 **R2 — Séparation implémenteur / vérificateur.**
-`voxloom-testkit/`, `fixtures/`, `conformance/` ne sont modifiables que par des
+`mumble-server-runtime-testkit/`, `fixtures/`, `conformance/` ne sont modifiables que par des
 tâches de **vérification**, jamais par une tâche d'implémentation. Si tes tests
 échouent, tu corriges l'implémentation, pas le test. Toute modification d'un test
 de conformité passe par une **revue humaine**. Enforcement : `ci/verifier-boundary.sh`
-refuse un diff qui touche à la fois `voxloom-*/src` et une zone vérificateur.
+refuse un diff qui touche à la fois `mumble-server-runtime-*/src` et une zone vérificateur.
 
 **R3 — Critère de « done » machine-vérifiable.**
 Chaque tâche se termine par une commande exacte qui doit passer (`cargo test -p …`,
@@ -60,7 +60,7 @@ par-crate) et `ci/dep-direction.sh` (via `cargo metadata`) :
 | Zone                                 | Interdit                                                                     |
 | ------------------------------------ | ---------------------------------------------------------------------------- |
 | `mumble-server-runtime-shard/src`                  | sockets (`std::net`, `tokio::net`, `TcpListener`, `TcpStream`, `UdpSocket`)  |
-| crates centraux                      | importer le flavor de démonstration `voxloom-arena`                          |
+| crates centraux                      | importer le flavor de démonstration `mumble-server-runtime-arena`                          |
 | `mumble-server-runtime-protocol`, `mumble-server-runtime-crypto` | `tokio`, IO (`std::net`, `std::fs`) — crates purs                            |
 | tout le workspace                    | `.unwrap()` hors tests, `static mut`, `unsafe` sans commentaire `// SAFETY:` |
 
@@ -80,7 +80,7 @@ Arêtes interdites dans le graphe cargo (`ci/dep-direction.sh`) :
 ```
 mumble-server-runtime-protocol -/-> tokio                mumble-server-runtime-crypto -/-> tokio
 mumble-server-runtime-shard    -/-> mumble-server-runtime-gateway      mumble-server-runtime-shard  -/-> mumble-server-runtime-crypto
-crates centraux  -/-> voxloom-arena        crates centraux -/-> voxloom-testkit
+crates centraux  -/-> mumble-server-runtime-arena        crates centraux -/-> mumble-server-runtime-testkit
 ```
 
 ## Carte des crates courants
@@ -88,10 +88,10 @@ crates centraux  -/-> voxloom-arena        crates centraux -/-> voxloom-testkit
 `mumble-server-runtime-protocol` (framing/protobuf/UDP) · `mumble-server-runtime-crypto`
 (OCB2/nonces/rejeu) · `mumble-server-runtime-shard` (portées, rendu, diff/plan, journal,
 composition, routage, file bornée) · `mumble-server-runtime-gateway` (TLS/TCP/UDP, handshake,
-registre multi-shards, migration) · `voxloom-testkit` (client simulé et modèle
+registre multi-shards, migration) · `mumble-server-runtime-testkit` (client simulé et modèle
 strict indépendant).
 
-`tools/voxloom-arena` est le flavor de démonstration et le binaire de composition.
+`tools/mumble-server-runtime-arena` est le flavor de démonstration et le binaire de composition.
 Les anciens crates par connexion P4–P7 ont été retirés ; leur dernier état reste
 consultable au tag `legacy-p7-final`.
 

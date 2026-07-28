@@ -23,9 +23,9 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::time::{Duration, Instant};
 
-use tokio::sync::watch;
 use mumble_server_runtime_crypto::CryptState;
 use mumble_server_runtime_shard::{AudioRouting, ConnectionId, OutboundQueue, SessionId, ShardId};
+use tokio::sync::watch;
 
 use crate::limits::{TextBudget, VoiceBudget};
 

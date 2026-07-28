@@ -185,7 +185,11 @@ mod tests {
             .and_then(target);
         assert_eq!(first, Some(1));
 
-        assert!(scenario.next(&model_in("Mumble Server Runtime Arena", &lobby)).is_none());
+        assert!(
+            scenario
+                .next(&model_in("Mumble Server Runtime Arena", &lobby))
+                .is_none()
+        );
         let enter = scenario
             .next(&model_in("Red Team", &lobby))
             .and_then(target);

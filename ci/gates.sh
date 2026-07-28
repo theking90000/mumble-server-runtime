@@ -61,7 +61,7 @@ forbid "shard/no-net" \
 for central in mumble-server-runtime-protocol mumble-server-runtime-crypto mumble-server-runtime-shard mumble-server-runtime-gateway; do
   mapfile -t central_files < <(crate_src_files "$central")
   forbid "$central/no-demo-flavor" \
-         '([Aa]urora|[Bb]orealis|voxloom[_-]arena)' "${central_files[@]}"
+         '([Aa]urora|[Bb]orealis|mumble-server-runtime[_-]arena)' "${central_files[@]}"
 done
 
 # --- mumble-server-runtime-protocol / mumble-server-runtime-crypto : crates purs, sans runtime ni IO ---

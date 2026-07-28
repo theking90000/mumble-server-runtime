@@ -216,7 +216,7 @@ mod tests {
     #[test]
     fn decodes_a_normal_protobuf_message() {
         let version = tcp::Version {
-            release: Some("voxloom".to_string()),
+            release: Some("mumble-server-runtime".to_string()),
             ..Default::default()
         };
         let decoded = decode_control(0, &version.encode_to_vec()).expect("decode Version");
@@ -286,7 +286,7 @@ mod tests {
     #[test]
     fn encode_frame_then_parse_roundtrips() {
         let message = ControlMessage::Version(tcp::Version {
-            release: Some("voxloom".to_string()),
+            release: Some("mumble-server-runtime".to_string()),
             ..Default::default()
         });
         let mut framed = Vec::new();

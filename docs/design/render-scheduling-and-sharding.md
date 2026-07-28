@@ -724,7 +724,7 @@ _moins_ que son dû est toujours sûr) ; l'activation est **gated** sur le curse
 C'est l'asymétrie déjà établie par le design actuel, exprimée par une comparaison
 de `u64` au lieu d'un protocole de commit.
 
-`voxloom-audio::compile` est quadratique par construction (« toute paire est une
+`mumble-server-runtime-audio::compile` est quadratique par construction (« toute paire est une
 route », 13,5 µs à 128 participants) : acceptable par shard. La proximité
 demandera un index spatial pour retomber en O(n) par tick — boucle séparée, elle
 ne touche pas les vues.
@@ -875,7 +875,7 @@ poignées de livraison.
 
 ```rust
 struct ShardRouting {
-    /// Le snapshot pur de `voxloom-audio` : qui peut entendre qui.
+    /// Le snapshot pur de `mumble-server-runtime-audio` : qui peut entendre qui.
     /// Le crate reste pur : il ne connaît ni file, ni socket (gates R4).
     audio: AudioRoutingSnapshot,
     /// Parallèle au même index de session : où livrer.
@@ -971,7 +971,7 @@ shard.
 
 ## 13. Ce qui survit, ce qui change
 
-**Intact.** `mumble-server-runtime-protocol`, `mumble-server-runtime-crypto`, `voxloom-audio` (le hot path pur
+**Intact.** `mumble-server-runtime-protocol`, `mumble-server-runtime-crypto`, `mumble-server-runtime-audio` (le hot path pur
 est bon, et §11.2 le préserve mot pour mot), le catalogue d'invariants §20, le
 juge du testkit, les oracles corpus/proxy, la séparation R2, les gates R4 — et
 surtout **la prémisse déclarative** : `render → diff → plan ordonné` ne change
@@ -1011,55 +1011,55 @@ dépendance qu'on veut rendre impossible à écrire.
 PURS (ni tokio, ni socket, gates R4)
   mumble-server-runtime-protocol    codec wire                          inchangé
   mumble-server-runtime-crypto      OCB2                                inchangé
-  voxloom-render      types de vue, normalize, validate   quasi inchangé
-  voxloom-reconcile   diff, plan, ordre de sûreté         quasi inchangé ★
-  voxloom-audio       snapshot de routage, politique      inchangé ★
-  voxloom-session     emit (PlanOp → wire), inbound       amputé de view.rs
-  voxloom-project     masque, filtrage, réécriture,       NOUVEAU ★
+  mumble-server-runtime-render      types de vue, normalize, validate   quasi inchangé
+  mumble-server-runtime-reconcile   diff, plan, ordre de sûreté         quasi inchangé ★
+  mumble-server-runtime-audio       snapshot de routage, politique      inchangé ★
+  mumble-server-runtime-session     emit (PlanOp → wire), inbound       amputé de view.rs
+  mumble-server-runtime-project     masque, filtrage, réécriture,       NOUVEAU ★
                       composition en quatre termes
-  voxloom-journal     versions, anneau de deltas,         NOUVEAU
+  mumble-server-runtime-journal     versions, anneau de deltas,         NOUVEAU
                       curseurs, repli snapshot
-  voxloom-flavor      ShardLogic, ConnectionRouter,       réécrit
+  mumble-server-runtime-flavor      ShardLogic, ConnectionRouter,       réécrit
                       Params, VoiceEvent
 
 IMPUR
-  voxloom-runtime     ordonnanceur de shards (une task par shard), mailboxes,
+  mumble-server-runtime-runtime     ordonnanceur de shards (une task par shard), mailboxes,
                       migration, plan UDP, tasks de connexion, files bornées,
-                      allocateur d'IDs                    ex-voxloom-server
+                      allocateur d'IDs                    ex-mumble-server-runtime-server
 
 COMPOSITION
-  tools/voxloom-*     binaire = runtime + flavor concret + routeur
+  tools/mumble-server-runtime-*     binaire = runtime + flavor concret + routeur
 
 VÉRIFICATEUR (R2)
-  voxloom-testkit     SimulatedMumbleClient + nouvel oracle
+  mumble-server-runtime-testkit     SimulatedMumbleClient + nouvel oracle
 ```
 
 ★ = les trois cœurs qui portent la valeur du système.
 
 **Arêtes interdites nouvelles**, à ajouter aux gates :
 
-- `voxloom-project` ↛ `mumble-server-runtime-protocol` — on filtre des vues, on encode après.
-- `voxloom-journal` ↛ tout le reste — c'est une structure de données générique
+- `mumble-server-runtime-project` ↛ `mumble-server-runtime-protocol` — on filtre des vues, on encode après.
+- `mumble-server-runtime-journal` ↛ tout le reste — c'est une structure de données générique
   sur sa charge utile ; qu'elle ne connaisse **aucun** vocabulaire de vue est
   précisément ce qui la rend proptestable isolément.
-- `voxloom-flavor` ↛ `mumble-server-runtime-protocol` (déjà en place), et ↛ `voxloom-journal`
+- `mumble-server-runtime-flavor` ↛ `mumble-server-runtime-protocol` (déjà en place), et ↛ `mumble-server-runtime-journal`
   (un flavor n'a pas à connaître le versionnement).
 
 ### 13.3 Ce qui disparaît, en lignes
 
 | fichier                                  | lignes | sort                                                        |
 | ---------------------------------------- | ------ | ----------------------------------------------------------- |
-| `voxloom-control/src/publication.rs`     | 1080   | supprimé (coordinateur, jetons, epochs)                     |
-| `voxloom-control/src/validation.rs`      | 609    | ~supprimé (la confidentialité devient la clôture du masque) |
-| `voxloom-control/src/voxloom_control.rs` | 227    | supprimé                                                    |
-| `voxloom-session/src/view.rs`            | 579    | supprimé (remplacé par un `u64`)                            |
-| `voxloom-control/src/voice_events.rs`    | 466    | **survit**, déménage                                        |
-| `voxloom-session/src/emit.rs`            | 866    | **survit**                                                  |
-| `voxloom-session/src/inbound.rs`         | 551    | **survit**, résout contre le masque                         |
-| `voxloom-server/src/outbound.rs`         | 483    | **survit** (la file bornée + `try_reserve` est bonne)       |
+| `mumble-server-runtime-control/src/publication.rs`     | 1080   | supprimé (coordinateur, jetons, epochs)                     |
+| `mumble-server-runtime-control/src/validation.rs`      | 609    | ~supprimé (la confidentialité devient la clôture du masque) |
+| `mumble-server-runtime-control/src/mumble_server_runtime_control.rs` | 227    | supprimé                                                    |
+| `mumble-server-runtime-session/src/view.rs`            | 579    | supprimé (remplacé par un `u64`)                            |
+| `mumble-server-runtime-control/src/voice_events.rs`    | 466    | **survit**, déménage                                        |
+| `mumble-server-runtime-session/src/emit.rs`            | 866    | **survit**                                                  |
+| `mumble-server-runtime-session/src/inbound.rs`         | 551    | **survit**, résout contre le masque                         |
+| `mumble-server-runtime-server/src/outbound.rs`         | 483    | **survit** (la file bornée + `try_reserve` est bonne)       |
 
 Environ **2 500 lignes supprimées**, contre ~700–900 à écrire (`project` +
-`journal`). Le crate `voxloom-control` disparaît entièrement.
+`journal`). Le crate `mumble-server-runtime-control` disparaît entièrement.
 
 ### 13.4 Un oracle par composant
 
@@ -1076,16 +1076,16 @@ valeurs, et chaque valeur devient testable seule.
 | la confidentialité, validée sur **chaque sortie**                                                 | la clôture du masque, validée **une fois** | surface de vérification divisée par le nombre d'éléments                                                          |
 
 Et les couches basses gardent leurs oracles existants sans y toucher :
-`voxloom-reconcile` son proptest 4000 graines, `voxloom-audio` ses propriétés et
+`mumble-server-runtime-reconcile` son proptest 4000 graines, `mumble-server-runtime-audio` ses propriétés et
 son bench, `mumble-server-runtime-protocol`/`mumble-server-runtime-crypto` le corpus et les vecteurs.
 L'oracle composé du runtime (§7.1) ne fait que les empiler.
 
 ### 13.5 Ce qu'on ne découpe **pas**
 
-- `voxloom-render` et `voxloom-reconcile` restent séparés parce qu'ils le sont
+- `mumble-server-runtime-render` et `mumble-server-runtime-reconcile` restent séparés parce qu'ils le sont
   déjà et que ça marche, mais aucune arête interdite ne le justifie : les fusionner
   serait légitime, les re-découper autrement ne l'est pas.
-- `emit` et `inbound` restent dans `voxloom-session` : un seul crate qui connaît
+- `emit` et `inbound` restent dans `mumble-server-runtime-session` : un seul crate qui connaît
   les deux vocabulaires (vue et wire), c'est le point du crate.
 - Pas de crate « sharding » séparé : le shard **est** l'unité d'ordonnancement du
   runtime, donc il vit avec les tasks. Un crate pur ne pourrait pas le contenir.
@@ -1283,6 +1283,6 @@ ne la réclame (§27.4 de la spec : pas d'optimisation sans mesure).
 | 2026-07-27 | **r1.** Première rédaction : diagnostic, modèle à quatre concepts, contrat de flavor, pipeline en quatre termes, ordonnancement, règles de correction, journal vs cache, audio, sharding et migration, complexité, questions ouvertes.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | 2026-07-27 | **r6.** Ajout de **§4.9 — où vivent les `Arc` et les `Mutex`**, et correction d'une formulation trop absolue de r5 : la borne est `Send + 'static` et Mumble Server Runtime ne _demande_ pas `Sync`, ce qui n'interdit pas à un flavor concret de l'être. Trois emplacements, trois propriétaires : le partage métier vit **dans le `ShardLogic` concret** (canal pour un flux d'événements, `Arc<Mutex>` pour du « dernière valeur gagnante », avec le mode de panne du second explicité) ; **`ShardHandle` ne porte aucun état** (un `Arc<Notify>` et un `mpsc::Sender<RuntimeCommand>` — signal et message, jamais pointeur) ; le runtime a des `Arc` mais tous _read-mostly_ (`ArcSwap`) ou par-connexion non contendus. L'énoncé défendable devient : **aucun verrou global, aucun verrou tenu à travers un `.await`, aucun verrou contendu sur le chemin de contrôle**.                                                                                                                                                      |
 | 2026-07-27 | **r5.** §4 refondu. `ShardLogic` réduit à **trois méthodes** — `render`, `params`, `observe` : `tick()` et `on_message()`/`type Message` sont retirés, parce que Mumble Server Runtime ne sait ni pourquoi un flavor voudrait un rythme, ni ce qu'un message métier signifie. **Le flavor possède sa propre boîte aux lettres** et la draine dans `render` (§4.2), ce qui règle « alors `ShardLogic` serait partagé ? » sans le rendre `Sync`. **`wake()` est explicité comme la seule interface métier → runtime** (§4.3) : le rythme appartient au flavor, la protection (`MIN_INTERVAL`) au runtime, et **le runtime n'a plus aucun tick**. `ShardControl` supprimé au profit d'une **poignée unique `ShardHandle`** remise à la construction, utilisable dedans comme dehors (§4.4). Ajout de §4.5 (shard piloté par RPC, preuve que trois méthodes suffisent) et §4.6 (**vue opérationnelle** : démarrage, arrivée d'une connexion, régime établi, métriques à exposer). Renumérotation : `Params` → §4.7, `Snapshot` → §4.8. |
-| 2026-07-27 | **r4.** §13 étoffé : critère d'existence d'un crate (« une arête à interdire »), **carte des crates proposée** (deux nouveaux purs : `voxloom-project` pour le masque/filtrage, `voxloom-journal` pour versions et curseurs ; `voxloom-control` disparaît ; `voxloom-server` devient `voxloom-runtime`), décompte des suppressions (~2 500 lignes contre ~800 à écrire), **un oracle par composant** (§13.4) et ce qu'on refuse de découper (§13.5). Ajout de §13.6 : où le risque se déplace, honnêtement.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| 2026-07-27 | **r4.** §13 étoffé : critère d'existence d'un crate (« une arête à interdire »), **carte des crates proposée** (deux nouveaux purs : `mumble-server-runtime-project` pour le masque/filtrage, `mumble-server-runtime-journal` pour versions et curseurs ; `mumble-server-runtime-control` disparaît ; `mumble-server-runtime-server` devient `mumble-server-runtime-runtime`), décompte des suppressions (~2 500 lignes contre ~800 à écrire), **un oracle par composant** (§13.4) et ce qu'on refuse de découper (§13.5). Ajout de §13.6 : où le risque se déplace, honnêtement.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | 2026-07-27 | **r3.** Ajout de l'**annexe A** (exploratoire, hors périmètre) : scaling horizontal avec shard = machine et étage de proxies façon BungeeCord. Vérifie que les cinq règles de §10.5 suffisent. Résultats notables : le proxy est la promotion de la task de connexion, donc le socket ne change jamais de propriétaire à aucune échelle ; la voix va proxy→proxy pour un coût **O(M) proxies** et non O(R) destinataires ; `Params` en tant que _donnée_ est ce qui rend le modèle distribuable ; les session ids s'allouent depuis le **proxy** et les channel ids depuis le **shard** (révision de §10.4) ; le proxy orchestre la migration puisque la garantie FIFO d'une file unique ne tient plus entre machines. Coûts non gratuits recensés (certificat partagé, stickiness UDP, transport interne).                                                                                                                                                                                                                        |
 | 2026-07-27 | **r2.** Renommage World → **Shard**. Le Shard devient un objet runtime de première classe avec un cycle de vie impératif (`create`/`destroy`/`move`/`wake`), et non une énumération dérivée du flavor (§3.2). **Une task par shard** (§3.3), avec parallélisme et isolation de panne. Contrat de flavor éclaté en `ConnectionRouter` (où va une connexion ; **le jeton P8 y atterrit**) et `ShardLogic` (`Send`, délibérément **pas `Sync`**) (§4). **`Snapshot` supprimé** avec justification (§4.5). Possession clarifiée : le shard possède l'_état de contrôle_, la task de connexion possède le _socket_ (§10.1), ce qui rend la migration intra-processus triviale. Protocole de migration détaillé avec la garantie d'ordre FIFO et le traitement des commandes en vol (§10.3). **Nouveau §11 : le plan UDP** — table `ArcSwap<Bindings>`, `ShardRouting` auto-suffisant, hot path sans task de shard, pré-filtrage IP en chemin froid, non-perturbation par la migration, pistes multi-processus. Q9 et Q10 ajoutées.      |

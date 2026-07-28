@@ -22,7 +22,7 @@ Toute affirmation sur le wire format doit être traçable vers une source vendor
 
 ### R2. Séparation implémenteur / vérificateur
 
-Les répertoires `voxloom-testkit/`, `fixtures/`, et `conformance/` sont modifiables uniquement par des tâches de type "vérification", jamais par une tâche d'implémentation. Un agent d'implémentation dont les tests échouent corrige l'implémentation, pas le test. Toute modification d'un test de conformité passe par une revue humaine. Enforcement : CI refuse un diff qui touche à la fois `voxloom-*/src` et `conformance/`.
+Les répertoires `mumble-server-runtime-testkit/`, `fixtures/`, et `conformance/` sont modifiables uniquement par des tâches de type "vérification", jamais par une tâche d'implémentation. Un agent d'implémentation dont les tests échouent corrige l'implémentation, pas le test. Toute modification d'un test de conformité passe par une revue humaine. Enforcement : CI refuse un diff qui touche à la fois `mumble-server-runtime-*/src` et `conformance/`.
 
 ### R3. Critère de done machine-vérifiable
 
@@ -33,12 +33,12 @@ Chaque tâche se termine par une commande exacte qui doit passer (`cargo test -p
 Gates grep/clippy actifs avant la première ligne de logique :
 
 ```text
-voxloom-audio/src :
+mumble-server-runtime-audio/src :
   interdits : Mutex, RwLock, .await dans le chemin par-paquet,
-              Box<dyn Fn, appels vers voxloom-render ou un flavor
-voxloom-render/src :
+              Box<dyn Fn, appels vers mumble-server-runtime-render ou un flavor
+mumble-server-runtime-render/src :
   interdit d'importer mumble-server-runtime-protocol (le renderer ignore le wire format)
-voxloom-flavor/src :
+mumble-server-runtime-flavor/src :
   interdits : types protocolaires Mumble et concepts d'un flavor concret
 mumble-server-runtime-protocol, mumble-server-runtime-crypto :
   interdits : tokio, IO ; crates purs, sans dépendance runtime
@@ -171,21 +171,21 @@ connexions vocales, les vues engagées, les routes audio et les générations
 publiées.
 
 **Objectif :** introduire le contrat `VoiceFlavor`, le coordinateur de
-publication `voxloom-control` et un binaire de composition. Un flavor fournit
+publication `mumble-server-runtime-control` et un binaire de composition. Un flavor fournit
 un snapshot métier immuable et des sorties déclaratives. Mumble Server Runtime traite le
 snapshot comme opaque, valide les sorties et publie les transitions de vue et
 le snapshot audio dans l'ordre de sécurité.
 
 ### T1. Contrat minimal de flavor
 
-Créer `voxloom-flavor` avec les types génériques `VoiceFlavor`,
+Créer `mumble-server-runtime-flavor` avec les types génériques `VoiceFlavor`,
 `ConnectionId`, `FlavorRevision`, `RenderOutput` et `FlavorError`. Les vues
 utilisent des clés sémantiques et les routes utilisent des `ConnectionId` :
 aucun ID numérique local à une vue ne traverse la frontière. L'API est statique,
 sans ABI dynamique, callback dans le hot path ni concepts joueur, realm, équipe,
 position ou radio.
 
-**Done :** `cargo test -p voxloom-flavor`.
+**Done :** `cargo test -p mumble-server-runtime-flavor`.
 
 ### T2. Publication d'un snapshot opaque
 
@@ -194,7 +194,7 @@ Le snapshot et sa révision restent figés pendant toute la génération. Mumble
 lit le snapshot qu'en appelant le flavor et ne conserve aucun état métier
 dérivé comme source de vérité.
 
-**Done :** `cargo test -p voxloom-control snapshot_publication`.
+**Done :** `cargo test -p mumble-server-runtime-control snapshot_publication`.
 
 ### T3. Validation des sorties du flavor
 
@@ -202,7 +202,7 @@ Valider séparément la vue désirée, les routes audio et le registre
 d'interactions avant tout effet. Une erreur de flavor ou une sortie invalide
 annule toute la génération et conserve la génération engagée.
 
-**Done :** `cargo test -p voxloom-control flavor_output_validation`.
+**Done :** `cargo test -p mumble-server-runtime-control flavor_output_validation`.
 
 ### T4. Publication atomique avec ordre de sécurité
 
@@ -211,7 +211,7 @@ et le snapshot audio. Une révocation audio devient effective avant le retrait
 visuel ; une nouvelle route n'est activée qu'après le commit de la vue du
 destinataire.
 
-**Done :** `cargo test -p voxloom-control publication_order`.
+**Done :** `cargo test -p mumble-server-runtime-control publication_order`.
 
 ### T5. Événements vocaux vers l'intégration
 
@@ -220,7 +220,7 @@ Convertir les actions Mumble déjà résolues dans la vue courante en
 ensuite publier un nouveau snapshot, mais Mumble Server Runtime n'applique jamais de commande
 métier.
 
-**Done :** `cargo test -p voxloom-control voice_events`.
+**Done :** `cargo test -p mumble-server-runtime-control voice_events`.
 
 ### T6. Flavor de référence Aurora/Borealis
 
@@ -228,7 +228,7 @@ Extraire le modèle déterministe utilisé en P6 dans un crate de flavor de
 référence. Il possède ses realms et ses mutations, puis rend les mêmes vues et
 routes à travers l'API publique. Aucun crate central ne dépend de ce crate.
 
-**Done :** `cargo test -p voxloom-flavor-reference`.
+**Done :** `cargo test -p mumble-server-runtime-flavor-reference`.
 
 ### T7. Vérificateur de confidentialité
 
@@ -238,12 +238,12 @@ qu'aucune sortie ne référence une entité absente de la vue du destinataire, s
 tous les canaux de la section 26.7. Ajouter le scénario de révocation sous
 charge audio qui échoue si un paquet traverse entre deux générations.
 
-**Done :** `cargo test -p voxloom-testkit --test flavor_privacy`.
+**Done :** `cargo test -p mumble-server-runtime-testkit --test flavor_privacy`.
 
 ### T8. Binaire de composition et checkpoint
 
 Ajouter un binaire qui compile explicitement le flavor de référence avec le
-runtime. Rejouer Aurora/Borealis sans branche métier dans `voxloom-server`,
+runtime. Rejouer Aurora/Borealis sans branche métier dans `mumble-server-runtime-server`,
 mesurer le coût d'une publication complète, puis valider sur deux clients
 officiels qu'un changement de snapshot conserve les propriétés observées en P6.
 Une fois l'extraction faite, étendre les gates pour empêcher le retour de

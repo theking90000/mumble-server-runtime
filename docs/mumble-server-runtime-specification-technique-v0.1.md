@@ -429,61 +429,61 @@ mumble-server-runtime-crypto
     rejeu
     resynchronisation
 
-voxloom-transport
+mumble-server-runtime-transport
     TLS
     sockets TCP/UDP
     files de sortie
     association UDP
 
-voxloom-session
+mumble-server-runtime-session
     connexions
     sessions
     cycle de vie
     état client
 
-voxloom-auth
+mumble-server-runtime-auth
     preuves vocales
     certificats
     contexte d'authentification générique
     résultat opaque pour le flavor
 
-voxloom-flavor
+mumble-server-runtime-flavor
     contrat de flavor compilé
     snapshots métier opaques
     sorties de rendu
     événements vocaux
 
-voxloom-render
+mumble-server-runtime-render
     composants
     VDOM normalisé
     rendu
     cache
     dépendances
 
-voxloom-reconcile
+mumble-server-runtime-reconcile
     diff
     validation
     planification des transitions
 
-voxloom-audio
+mumble-server-runtime-audio
     compilation du graphe
     routage
     positional audio
     voice targets
 
-voxloom-control
+mumble-server-runtime-control
     générations publiées
     coordination vue/audio
     invalidation des connexions
     livraison des événements
 
-voxloom-observe
+mumble-server-runtime-observe
     métriques
     traces
     inspecteur de vues
     explication des décisions
 
-voxloom-testkit
+mumble-server-runtime-testkit
     client simulé
     tests de propriété
     fuzzing

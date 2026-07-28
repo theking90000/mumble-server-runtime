@@ -22,7 +22,7 @@ use crate::capture::{CaptureWriter, Dir, LiveStats, Record, Transport, now_micro
 
 #[derive(Parser)]
 #[command(
-    name = "voxloom-recording-proxy",
+    name = "mumble-server-runtime-recording-proxy",
     version,
     about = "Mumble control/voice recording proxy for the Phase 0 corpus"
 )]

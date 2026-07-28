@@ -14,9 +14,9 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use mumble_server_runtime_protocol::ControlMessage;
 use thiserror::Error;
 use tokio::sync::mpsc;
-use mumble_server_runtime_protocol::ControlMessage;
 
 /// How many messages one connection's queue holds.
 pub const CAPACITY: usize = 1024;

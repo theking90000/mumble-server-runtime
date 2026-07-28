@@ -51,7 +51,9 @@ struct Realms {
 
 impl Realms {
     fn realm_scope(realm: u32) -> ScopeSet {
-        let scope = mumble_server_runtime_shard::Scope::ROOT.child(realm).expect("depth 1");
+        let scope = mumble_server_runtime_shard::Scope::ROOT
+            .child(realm)
+            .expect("depth 1");
         ScopeSet::new(&[scope]).expect("one scope")
     }
 }
@@ -1432,7 +1434,10 @@ fn a_query_is_answered_only_about_what_the_asker_can_see() {
             ControlMessage::UserStats(stats),
         ] => {
             assert_eq!(permissions.channel_id, Some(mine.0));
-            assert_eq!(permissions.permissions, Some(mumble_server_runtime_shard::perm::DEFAULT));
+            assert_eq!(
+                permissions.permissions,
+                Some(mumble_server_runtime_shard::perm::DEFAULT)
+            );
             assert_eq!(stats.session, Some(neighbour.0));
         }
         other => panic!("expected exactly the two answerable questions, got {other:?}"),
@@ -1505,7 +1510,10 @@ fn a_read_only_channel_refuses_out_loud_and_names_the_missing_right() {
         Some([ControlMessage::PermissionDenied(denied)]) => {
             assert_eq!(denied.session, Some(harness.session(1)));
             assert_eq!(denied.channel_id, Some(silent.0));
-            assert_eq!(denied.permission, Some(mumble_server_runtime_shard::perm::TEXT_MESSAGE));
+            assert_eq!(
+                denied.permission,
+                Some(mumble_server_runtime_shard::perm::TEXT_MESSAGE)
+            );
         }
         // Loud, unlike an unseen target: the client is holding this channel and
         // was already told the bit was missing, so there is nothing to leak.

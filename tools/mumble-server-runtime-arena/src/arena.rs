@@ -342,7 +342,7 @@ impl ShardLogic for Arena {
                 to,
                 text,
             } => self.said(*connection, *to, text, out),
-            other => eprintln!("voxloom-arena: the arena ignores {other:?}"),
+            other => eprintln!("mumble-server-runtime-arena: the arena ignores {other:?}"),
         }
     }
 }

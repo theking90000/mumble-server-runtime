@@ -442,6 +442,26 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1d87ecb2933e8aeadb3e3a02b828fed80a7528047e68b4f424523a0981a3a084"
 
 [[package]]
+name = "mumble-server-runtime-arena"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "mumble-server-runtime-gateway",
+ "mumble-server-runtime-protocol",
+ "mumble-server-runtime-shard",
+ "tokio",
+]
+
+[[package]]
+name = "mumble-server-runtime-corpus-decode"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "mumble-server-runtime-crypto",
+ "mumble-server-runtime-protocol",
+]
+
+[[package]]
 name = "mumble-server-runtime-crypto"
 version = "0.1.0"
 dependencies = [
@@ -465,6 +485,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "mumble-server-runtime-mitm-proxy"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "mumble-server-runtime-corpus-decode",
+ "mumble-server-runtime-crypto",
+ "mumble-server-runtime-protocol",
+ "rcgen",
+ "ring",
+ "rustls",
+ "thiserror 1.0.69",
+ "tokio",
+ "tokio-rustls",
+]
+
+[[package]]
 name = "mumble-server-runtime-protocol"
 version = "0.1.0"
 dependencies = [
@@ -475,12 +512,39 @@ dependencies = [
 ]
 
 [[package]]
+name = "mumble-server-runtime-recording-proxy"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "rcgen",
+ "rustls",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-rustls",
+]
+
+[[package]]
 name = "mumble-server-runtime-shard"
 version = "0.1.0"
 dependencies = [
  "mumble-server-runtime-protocol",
  "thiserror 2.0.19",
  "tokio",
+]
+
+[[package]]
+name = "mumble-server-runtime-stress"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "mumble-server-runtime-crypto",
+ "mumble-server-runtime-protocol",
+ "rustls",
+ "tokio",
+ "tokio-rustls",
 ]
 
 [[package]]
@@ -1010,70 +1074,6 @@ name = "version_check"
 version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
-
-[[package]]
-name = "voxloom-arena"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "mumble-server-runtime-gateway",
- "mumble-server-runtime-protocol",
- "mumble-server-runtime-shard",
- "tokio",
-]
-
-[[package]]
-name = "voxloom-corpus-decode"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "mumble-server-runtime-crypto",
- "mumble-server-runtime-protocol",
-]
-
-[[package]]
-name = "voxloom-mitm-proxy"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "clap",
- "mumble-server-runtime-crypto",
- "mumble-server-runtime-protocol",
- "rcgen",
- "ring",
- "rustls",
- "thiserror 1.0.69",
- "tokio",
- "tokio-rustls",
- "voxloom-corpus-decode",
-]
-
-[[package]]
-name = "voxloom-recording-proxy"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "clap",
- "rcgen",
- "rustls",
- "serde",
- "serde_json",
- "tokio",
- "tokio-rustls",
-]
-
-[[package]]
-name = "voxloom-stress"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "clap",
- "mumble-server-runtime-crypto",
- "mumble-server-runtime-protocol",
- "rustls",
- "tokio",
- "tokio-rustls",
-]
 
 [[package]]
 name = "voxloom-testkit"

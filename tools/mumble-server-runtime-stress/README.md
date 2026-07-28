@@ -1,22 +1,22 @@
-# voxloom-stress audio
+# mumble-server-runtime-stress audio
 
 Voice is opt-in. Prepare a ten-second, mono Opus clip made of 10 ms CBR packets:
 
 ```sh
-tools/voxloom-stress/prepare-opus.sh \
+tools/mumble-server-runtime-stress/prepare-opus.sh \
   'https://www.youtube.com/watch?v=cE0wfjsybIQ' \
   74 \
   10 \
-  tools/voxloom-stress/audio/crab-rave-74s.opuspack
+  tools/mumble-server-runtime-stress/audio/crab-rave-74s.opuspack
 ```
 
 Then run the load generator:
 
 ```sh
-cargo run --release -p voxloom-stress -- \
+cargo run --release -p mumble-server-runtime-stress -- \
   --clients 200 \
   --duration 30s \
-  --voice-file tools/voxloom-stress/audio/crab-rave-74s.opuspack \
+  --voice-file tools/mumble-server-runtime-stress/audio/crab-rave-74s.opuspack \
   --talk-percent 5 \
   --talk-spurt 2s
 ```

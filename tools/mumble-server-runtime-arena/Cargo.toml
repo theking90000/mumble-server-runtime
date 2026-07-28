@@ -1,5 +1,5 @@
 [package]
-name = "voxloom-arena"
+name = "mumble-server-runtime-arena"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -9,12 +9,12 @@ authors.workspace = true
 description = "Composition binary and demo flavor for the shard runtime : a lobby and an arena on two shards, teams as scopes, a vanished admin as an overlay, spectators as one-way listeners, and migration between the two. The only place that names both the runtime and a concrete business."
 
 [[bin]]
-name = "voxloom-arena"
+name = "mumble-server-runtime-arena"
 path = "src/main.rs"
 
 [lib]
-name = "voxloom_arena"
-path = "src/voxloom_arena.rs"
+name = "mumble_server_runtime_arena"
+path = "src/mumble_server_runtime_arena.rs"
 
 [dependencies]
 mumble-server-runtime-shard = { path = "../../mumble-server-runtime-shard" }

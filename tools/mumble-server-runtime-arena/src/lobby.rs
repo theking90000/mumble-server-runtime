@@ -12,11 +12,11 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use tokio::sync::mpsc;
 use mumble_server_runtime_shard::{
     ActionKey, Audience, ChannelKey, ConnectionId, DomainId, Narrow, Occupant, On, Reply, Scope,
     ScopeSet, ShardBuilder, ShardLogic, VoiceEvent,
 };
+use tokio::sync::mpsc;
 
 use crate::arena::Side;
 use crate::directory::{Destinations, Directory};
@@ -242,7 +242,7 @@ impl ShardLogic for Lobby {
             // The event enum is non-exhaustive on purpose: a runtime that starts
             // reporting something new must not silently change what this flavor
             // does.
-            other => eprintln!("voxloom-arena: the lobby ignores {other:?}"),
+            other => eprintln!("mumble-server-runtime-arena: the lobby ignores {other:?}"),
         }
     }
 }

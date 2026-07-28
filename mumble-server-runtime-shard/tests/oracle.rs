@@ -415,7 +415,11 @@ fn a_scope_change_does_not_flicker_the_shared_ancestors() {
 
 /// Build the two-team situation the mutation tests all reason about: a player
 /// moves from team 0 to team 1, seen by a teammate left behind in team 0.
-fn scope_change_case() -> (Vec<mumble_server_runtime_shard::PlannedOp>, ScopeSet, ScopeSet) {
+fn scope_change_case() -> (
+    Vec<mumble_server_runtime_shard::PlannedOp>,
+    ScopeSet,
+    ScopeSet,
+) {
     let mut harness = Harness::new(4, 4096);
     harness.step("initial");
     let before = harness.shard.view().clone();
@@ -498,7 +502,10 @@ fn mutation_appending_the_overlay_instead_of_splicing_deletes_an_occupied_channe
             flags: mumble_server_runtime_shard::UserFlags::default(),
         },
     );
-    let private = plan_elements(&overlay_before, &mumble_server_runtime_shard::Overlay::default());
+    let private = plan_elements(
+        &overlay_before,
+        &mumble_server_runtime_shard::Overlay::default(),
+    );
     let shared = vec![PlanOp::RemoveChannel(doomed)];
 
     // The real composition withdraws the occupant first.
@@ -523,8 +530,10 @@ fn mutation_dropping_collapse_leaves_a_contradictory_pair() {
     let (ops, _stayed, _arrived) = scope_change_case();
     // The spectator case: an observation that sees both the old and the new
     // scope receives both halves of the move.
-    let spectator =
-        ScopeSet::new(&[mumble_server_runtime_shard::Scope::ROOT.child(1).expect("depth 1")]).expect("one scope");
+    let spectator = ScopeSet::new(&[mumble_server_runtime_shard::Scope::ROOT
+        .child(1)
+        .expect("depth 1")])
+    .expect("one scope");
 
     let both = filter(&ops, spectator);
     let adds = both.iter().filter(|op| op.added().is_some()).count();

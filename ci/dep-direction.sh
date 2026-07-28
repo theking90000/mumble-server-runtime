@@ -35,14 +35,14 @@ FORBIDDEN=(
   "mumble-server-runtime-crypto|mumble-server-runtime-gateway"
   "mumble-server-runtime-shard|mumble-server-runtime-crypto"
   "mumble-server-runtime-shard|mumble-server-runtime-gateway"
-  "mumble-server-runtime-protocol|voxloom-arena"
-  "mumble-server-runtime-crypto|voxloom-arena"
-  "mumble-server-runtime-shard|voxloom-arena"
-  "mumble-server-runtime-gateway|voxloom-arena"
-  "mumble-server-runtime-protocol|voxloom-testkit"
-  "mumble-server-runtime-crypto|voxloom-testkit"
-  "mumble-server-runtime-shard|voxloom-testkit"
-  "mumble-server-runtime-gateway|voxloom-testkit"
+  "mumble-server-runtime-protocol|mumble-server-runtime-arena"
+  "mumble-server-runtime-crypto|mumble-server-runtime-arena"
+  "mumble-server-runtime-shard|mumble-server-runtime-arena"
+  "mumble-server-runtime-gateway|mumble-server-runtime-arena"
+  "mumble-server-runtime-protocol|mumble-server-runtime-testkit"
+  "mumble-server-runtime-crypto|mumble-server-runtime-testkit"
+  "mumble-server-runtime-shard|mumble-server-runtime-testkit"
+  "mumble-server-runtime-gateway|mumble-server-runtime-testkit"
 )
 
 violations=0

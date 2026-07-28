@@ -13,8 +13,8 @@ members = [
     "mumble-server-runtime-shard",
     "mumble-server-runtime-gateway",
     # Composition et charge de demonstration.
-    "tools/voxloom-arena",
-    "tools/voxloom-stress",
+    "tools/mumble-server-runtime-arena",
+    "tools/mumble-server-runtime-stress",
     "tools/bench-shard",
     # Verificateur indépendant : client Mumble simule et modele strict.
     "voxloom-testkit",

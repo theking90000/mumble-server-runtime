@@ -16,17 +16,17 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
+use mumble_server_runtime_protocol::messages::tcp;
+use mumble_server_runtime_protocol::{
+    ControlMessage, UdpMessage, decode_frame, decode_udp, encode_frame, parse_frame,
+};
+use mumble_server_runtime_shard::{ChannelId, OutboundQueue, ShardCommand, TextTarget};
 use ring::rand::SystemRandom;
 use tokio::io::{AsyncReadExt, AsyncWriteExt, ReadHalf, WriteHalf};
 use tokio::net::{TcpStream, UdpSocket};
 use tokio::sync::mpsc;
 use tokio_rustls::TlsAcceptor;
 use tokio_rustls::server::TlsStream;
-use mumble_server_runtime_protocol::messages::tcp;
-use mumble_server_runtime_protocol::{
-    ControlMessage, UdpMessage, decode_frame, decode_udp, encode_frame, parse_frame,
-};
-use mumble_server_runtime_shard::{ChannelId, OutboundQueue, ShardCommand, TextTarget};
 
 use crate::config::GatewayConfig;
 use crate::handshake;
@@ -122,7 +122,10 @@ pub async fn serve<R: ConnectionRouter>(
     // the connection in the peer table.
     let placeholder = ShardPlane {
         shard,
-        routing: tokio::sync::watch::channel(Arc::new(mumble_server_runtime_shard::AudioRouting::default())).1,
+        routing: tokio::sync::watch::channel(Arc::new(
+            mumble_server_runtime_shard::AudioRouting::default(),
+        ))
+        .1,
     };
     let peer = Arc::new(Peer::new(
         connection,
@@ -534,7 +537,9 @@ fn single_target(text: &tcp::TextMessage) -> Option<TextTarget> {
         text.channel_id.as_slice(),
         text.tree_id.as_slice(),
     ) {
-        ([session], [], []) => Some(TextTarget::Session(mumble_server_runtime_shard::SessionId(*session))),
+        ([session], [], []) => Some(TextTarget::Session(mumble_server_runtime_shard::SessionId(
+            *session,
+        ))),
         ([], [channel], []) => Some(TextTarget::Channel(ChannelId(*channel))),
         ([], [], [tree]) => Some(TextTarget::Tree(ChannelId(*tree))),
         _ => None,

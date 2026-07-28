@@ -1,5 +1,5 @@
 [package]
-name = "voxloom-mitm-proxy"
+name = "mumble-server-runtime-mitm-proxy"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -11,11 +11,11 @@ description = "Proxy MITM oracle (Phase 2) : termine la TLS des deux côtés, d�
 # lib + bin : la logique (state machine crypto, relais framé, TLS) vit dans la
 # lib pour être testable en intégration ; le bin n'est qu'un câblage CLI.
 [lib]
-name = "voxloom_mitm_proxy"
-path = "src/voxloom_mitm_proxy.rs"
+name = "mumble_server_runtime_mitm_proxy"
+path = "src/mumble_server_runtime_mitm_proxy.rs"
 
 [[bin]]
-name = "voxloom-mitm-proxy"
+name = "mumble-server-runtime-mitm-proxy"
 path = "src/main.rs"
 
 [dependencies]
@@ -38,7 +38,7 @@ clap = { version = "4", features = ["derive"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-util", "time"] }
 # The T3 done-command replays the real captured corpus through the UDP
 # re-encryptor; this reuses the Phase 1 corpus reader/decoder (verification tool).
-voxloom-corpus-decode = { path = "../corpus-decode" }
+mumble-server-runtime-corpus-decode = { path = "../corpus-decode" }
 
 [lints]
 workspace = true

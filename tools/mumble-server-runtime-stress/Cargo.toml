@@ -1,5 +1,5 @@
 [package]
-name = "voxloom-stress"
+name = "mumble-server-runtime-stress"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -9,7 +9,7 @@ authors.workspace = true
 description = "Small stateful Mumble TCP and UDP load generator with reusable scenarios"
 
 [[bin]]
-name = "voxloom-stress"
+name = "mumble-server-runtime-stress"
 path = "src/main.rs"
 
 [dependencies]

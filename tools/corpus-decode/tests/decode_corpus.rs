@@ -6,7 +6,7 @@
 
 use std::path::PathBuf;
 
-use voxloom_corpus_decode::{Decoded, UdpMessage, decode_session, read_records};
+use mumble_server_runtime_corpus_decode::{Decoded, UdpMessage, decode_session, read_records};
 
 /// Scenarios captured against the local Mumble 1.5.857 server: their voice plane
 /// is protobuf UDP, so they exercise `decode_udp`'s protobuf path on real traffic.

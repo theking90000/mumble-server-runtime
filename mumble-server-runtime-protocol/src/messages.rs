@@ -31,7 +31,7 @@ mod tests {
         let original = tcp::Version {
             version_v1: Some(0x0001_0500),
             version_v2: Some(0x0000_0001_0005_0000),
-            release: Some("voxloom-test".to_string()),
+            release: Some("mumble-server-runtime-test".to_string()),
             os: Some("linux".to_string()),
             os_version: Some("6.1".to_string()),
         };

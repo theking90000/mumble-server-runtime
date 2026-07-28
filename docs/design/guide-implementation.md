@@ -8,7 +8,7 @@
 > **Statut : étapes 1 à 10 implémentées.** Le cœur pur et la task de shard dans
 > `mumble-server-runtime-shard`, la porte d'entrée dans `mumble-server-runtime-gateway` (plan de contrôle
 > TLS, `ConnectionRouter`, registre multi-shards, migration, plan vocal UDP), et
-> un flavor de démonstration dans `tools/voxloom-arena` — un seul exécutable.
+> un flavor de démonstration dans `tools/mumble-server-runtime-arena` — un seul exécutable.
 > Le testkit juge ce runtime sur ses API publiques et l'ancien pipeline P5–P7 a
 > été retiré ; son dernier état reste au tag `legacy-p7-final`.
 > Écarts assumés et points ouverts : §18.
@@ -1171,7 +1171,7 @@ C'est la moitié du système, testable sans rien lancer.
 - **La réponse au `Ping` TCP doit reporter les compteurs OCB2**
   (`good`/`late`/`lost`/`resync`) : un `good` à zéro fait basculer le vrai client
   en tunnel TCP définitif au bout de 20 s, en silence.
-- **Séparation vérificateur (R2)** : jamais `voxloom-testkit/` dans le même commit
+- **Séparation vérificateur (R2)** : jamais `mumble-server-runtime-testkit/` dans le même commit
   qu'un crate de production.
 - **CI sous `RUSTFLAGS="-D warnings"`** : les modules de test ont besoin de
   `#![allow(clippy::expect_used)]`.

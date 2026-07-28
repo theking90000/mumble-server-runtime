@@ -19,10 +19,10 @@ mumble-server-runtime-gateway -> mumble-server-runtime-shard -> mumble-server-ru
   la table de routage audio ;
 - `mumble-server-runtime-gateway` possède TLS/TCP/UDP, le handshake Mumble, le registre de
   connexions, les shards et les migrations ;
-- `tools/voxloom-arena` est le flavor de démonstration et le binaire de
+- `tools/mumble-server-runtime-arena` est le flavor de démonstration et le binaire de
   composition ;
-- `tools/voxloom-stress` exerce le gateway avec des clients Mumble headless ;
-- `voxloom-testkit` est le verificateur indépendant : modèle client strict,
+- `tools/mumble-server-runtime-stress` exerce le gateway avec des clients Mumble headless ;
+- `mumble-server-runtime-testkit` est le verificateur indépendant : modèle client strict,
   scénarios gateway live et oracle de publications shard.
 
 Le benchmark actif est `ci/bench-shard.sh`.
@@ -31,15 +31,15 @@ Le benchmark actif est `ci/bench-shard.sh`.
 
 Le pipeline exploratoire par connexion P4–P7 a été supprimé du workspace :
 
-- `voxloom-render`
-- `voxloom-reconcile`
-- `voxloom-audio`
-- `voxloom-session`
-- `voxloom-flavor`
-- `voxloom-control`
-- `voxloom-flavor-reference`
-- `voxloom-server`
-- `tools/voxloom-aurora`
+- `mumble-server-runtime-render`
+- `mumble-server-runtime-reconcile`
+- `mumble-server-runtime-audio`
+- `mumble-server-runtime-session`
+- `mumble-server-runtime-flavor`
+- `mumble-server-runtime-control`
+- `mumble-server-runtime-flavor-reference`
+- `mumble-server-runtime-server`
+- `tools/mumble-server-runtime-aurora`
 - `tools/bench-publication`
 
 Son dernier état complet reste consultable au tag `legacy-p7-final`. Les

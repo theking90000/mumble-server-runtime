@@ -10,9 +10,9 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
 
-use voxloom_arena::arena::{Arena, Role, Side};
-use voxloom_arena::directory::{Destinations, Directory, Member};
-use voxloom_arena::lobby::{Choices, Intent, Lobby, LobbyUpdate};
+use mumble_server_runtime_arena::arena::{Arena, Role, Side};
+use mumble_server_runtime_arena::directory::{Destinations, Directory, Member};
+use mumble_server_runtime_arena::lobby::{Choices, Intent, Lobby, LobbyUpdate};
 use mumble_server_runtime_gateway::Runtime;
 use mumble_server_runtime_shard::{
     ChannelId, ChannelKey, ConnectionId, Handover, OutboundQueue, Reply, ScopeSet, SessionId,

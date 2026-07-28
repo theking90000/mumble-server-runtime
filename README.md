@@ -71,7 +71,7 @@ group, proximity voice derived from distance rather than from channel membership
 ## Try it
 
 ```sh
-cargo run -p voxloom-arena -- 127.0.0.1:64738
+cargo run -p mumble-server-runtime-arena -- 127.0.0.1:64738
 ```
 
 Then point a Mumble client at `127.0.0.1`, port `64738`. Use the IP address, not
@@ -91,8 +91,8 @@ field to join as invisible staff.
 To load-test it, raise the admission ceiling and point the stress tool at it:
 
 ```sh
-cargo run -p voxloom-arena -- 127.0.0.1:64738 500
-cargo run --release -p voxloom-stress -- --clients 200 --duration 30s
+cargo run -p mumble-server-runtime-arena -- 127.0.0.1:64738 500
+cargo run --release -p mumble-server-runtime-stress -- --clients 200 --duration 30s
 ```
 
 ## Status
@@ -131,8 +131,8 @@ Two crates carry the runtime:
   migration between shards.
 
 `mumble-server-runtime-protocol` and `mumble-server-runtime-crypto` are the pure foundations: framing,
-protobuf, UDP envelopes, OCB2. `tools/voxloom-arena` is the demo above.
-`voxloom-testkit` is the independent judge, a simulated Mumble client that
+protobuf, UDP envelopes, OCB2. `tools/mumble-server-runtime-arena` is the demo above.
+`mumble-server-runtime-testkit` is the independent judge, a simulated Mumble client that
 applies the protocol and refuses any violation of its strict model.
 
 The architecture reference is

@@ -43,10 +43,10 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
+use mumble_server_runtime_protocol::ControlMessage;
 use tokio::sync::mpsc::error::TryRecvError;
 use tokio::sync::{Notify, mpsc, oneshot, watch};
 use tokio::time::Instant;
-use mumble_server_runtime_protocol::ControlMessage;
 
 use crate::build::{BuildError, ShardBuilder};
 use crate::compose::{collapse, filter};

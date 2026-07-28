@@ -22,8 +22,8 @@ create-missing = false
 [output.html]
 default-theme = "rust"
 preferred-dark-theme = "navy"
-git-repository-url = "https://github.com/theking90000/voxloom"
-edit-url-template = "https://github.com/theking90000/voxloom/edit/main/{path}"
+git-repository-url = "https://github.com/theking90000/mumble-server-runtime"
+edit-url-template = "https://github.com/theking90000/mumble-server-runtime/edit/main/{path}"
 
 [output.html.fold]
 enable = true

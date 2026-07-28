@@ -187,7 +187,10 @@ impl ClientModel {
         Ok(())
     }
 
-    fn apply_channel(&mut self, state: &mumble_server_runtime_protocol::messages::tcp::ChannelState) {
+    fn apply_channel(
+        &mut self,
+        state: &mumble_server_runtime_protocol::messages::tcp::ChannelState,
+    ) {
         let Some(id) = state.channel_id else { return };
 
         if let std::collections::btree_map::Entry::Vacant(slot) = self.channels.entry(id) {

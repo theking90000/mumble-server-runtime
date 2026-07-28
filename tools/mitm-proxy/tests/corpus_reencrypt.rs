@@ -12,16 +12,16 @@
 //! and a mirror of the fresh domain decrypts what the proxy emits. The two must
 //! decode to the same message for every accepted packet.
 //!
-//! This reuses the Phase 1 corpus reader (`voxloom-corpus-decode`) and reads
+//! This reuses the Phase 1 corpus reader (`mumble-server-runtime-corpus-decode`) and reads
 //! fixtures without modifying them (R2/L2: verifier data is read, never touched).
 
 #![allow(clippy::expect_used)]
 
 use std::path::PathBuf;
 
-use voxloom_corpus_decode::{Dir, Record, Transport, read_records};
+use mumble_server_runtime_corpus_decode::{Dir, Record, Transport, read_records};
 use mumble_server_runtime_crypto::CryptState;
-use voxloom_mitm_proxy::{
+use mumble_server_runtime_mitm_proxy::{
     CryptChannels, DropReason, UdpOutcome, reencrypt_from_client, reencrypt_from_server,
 };
 use mumble_server_runtime_protocol::{ControlMessage, decode_frame, decode_udp, parse_frame};

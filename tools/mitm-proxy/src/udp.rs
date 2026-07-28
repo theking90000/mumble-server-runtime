@@ -159,15 +159,19 @@ mod tests {
     }
 
     fn sample_audio() -> Vec<u8> {
-        encode_udp(&UdpMessage::Audio(mumble_server_runtime_protocol::messages::udp::Audio {
-            header: Some(mumble_server_runtime_protocol::messages::udp::audio::Header::Target(0)),
-            sender_session: 3,
-            frame_number: 42,
-            opus_data: vec![0x11, 0x22, 0x33],
-            positional_data: vec![],
-            volume_adjustment: 0.0,
-            is_terminator: false,
-        }))
+        encode_udp(&UdpMessage::Audio(
+            mumble_server_runtime_protocol::messages::udp::Audio {
+                header: Some(
+                    mumble_server_runtime_protocol::messages::udp::audio::Header::Target(0),
+                ),
+                sender_session: 3,
+                frame_number: 42,
+                opus_data: vec![0x11, 0x22, 0x33],
+                positional_data: vec![],
+                volume_adjustment: 0.0,
+                is_terminator: false,
+            },
+        ))
     }
 
     #[test]

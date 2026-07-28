@@ -15,12 +15,12 @@
 
 use std::sync::{Arc, Mutex as StdMutex};
 
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::sync::Mutex as TokioMutex;
 use mumble_server_runtime_crypto::CryptState;
-use voxloom_mitm_proxy::{Origin, ProxySecrets, Session, pump_control};
+use mumble_server_runtime_mitm_proxy::{Origin, ProxySecrets, Session, pump_control};
 use mumble_server_runtime_protocol::messages::tcp;
 use mumble_server_runtime_protocol::{ControlMessage, decode_frame, encode_frame, parse_frame};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::sync::Mutex as TokioMutex;
 
 // Distinct byte patterns so a swapped field is caught, never masked by symmetry.
 const SERVER_KEY: [u8; 16] = [0x51; 16];

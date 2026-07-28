@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 
-use voxloom_corpus_decode::{
+use mumble_server_runtime_corpus_decode::{
     Decoded, Event, Transcript, Transport, control_type_name, decode_session, read_records,
 };
 

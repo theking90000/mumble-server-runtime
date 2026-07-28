@@ -6,7 +6,7 @@
 //! layout.
 //!
 //! ```text
-//!   cargo run -p voxloom-arena
+//!   cargo run -p mumble-server-runtime-arena
 //!   then connect a Mumble client to 127.0.0.1:64738
 //!   (127.0.0.1, not localhost: that resolves to IPv6 first, which is not bound)
 //! ```
@@ -21,10 +21,10 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
-use voxloom_arena::arena::Arena;
-use voxloom_arena::directory::{Destinations, Directory};
-use voxloom_arena::lobby::{Choices, Lobby, LobbyUpdate};
-use voxloom_arena::router::ArenaRouter;
+use mumble_server_runtime_arena::arena::Arena;
+use mumble_server_runtime_arena::directory::{Destinations, Directory};
+use mumble_server_runtime_arena::lobby::{Choices, Lobby, LobbyUpdate};
+use mumble_server_runtime_arena::router::ArenaRouter;
 use mumble_server_runtime_gateway::tls::Identity;
 use mumble_server_runtime_gateway::{Gateway, GatewayConfig};
 
@@ -114,7 +114,10 @@ async fn main() -> Result<()> {
     destinations.set_lobby(lobby.shard());
     destinations.set_arena(arena.shard());
 
-    println!("voxloom-arena listening on {}", gateway.address());
+    println!(
+        "mumble-server-runtime-arena listening on {}",
+        gateway.address()
+    );
     println!(
         "  lobby shard {:?}, arena shard {:?}",
         lobby.shard(),

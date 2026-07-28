@@ -1,5 +1,5 @@
 [package]
-name = "voxloom-recording-proxy"
+name = "mumble-server-runtime-recording-proxy"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -9,7 +9,7 @@ authors.workspace = true
 description = "Proxy TCP/UDP d'enregistrement de corpus Mumble (Phase 0) : termine la TLS de contrôle et journalise, relaie l'UDP en aveugle."
 
 [[bin]]
-name = "voxloom-recording-proxy"
+name = "mumble-server-runtime-recording-proxy"
 path = "src/main.rs"
 
 [dependencies]

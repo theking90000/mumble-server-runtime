@@ -1,4 +1,4 @@
-# voxloom-recording-proxy
+# mumble-server-runtime-recording-proxy
 
 Proxy TCP/UDP d'enregistrement du corpus (livrable Phase 0 #3). Il capture des
 sessions **client Mumble officiel ↔ Murmur** dans des fichiers `.voxcap`.
@@ -19,7 +19,7 @@ est l'affaire de la Phase 1.
 2. Lancer le proxy (écoute le client sur 64738, relaie vers Murmur sur 64739) :
 
    ```bash
-   cargo run -p voxloom-recording-proxy -- record \
+   cargo run -p mumble-server-runtime-recording-proxy -- record \
      --listen 0.0.0.0:64738 \
      --upstream 127.0.0.1:64739 \
      --scenario 01-handshake \
@@ -36,7 +36,7 @@ direction/transport) et `meta.json` (scénario, adresses, totaux) dans `--out`.
 ## Inspecter une capture
 
 ```bash
-cargo run -p voxloom-recording-proxy -- dump fixtures/corpus/01-handshake/session.voxcap --hex
+cargo run -p mumble-server-runtime-recording-proxy -- dump fixtures/corpus/01-handshake/session.voxcap --hex
 ```
 
 ## Notes

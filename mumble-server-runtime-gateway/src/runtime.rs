@@ -13,12 +13,12 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
-use tokio::sync::{mpsc, oneshot};
-use tokio::task::{JoinHandle, JoinSet};
 use mumble_server_runtime_shard::{
     ConnectionId, Handover, Occupant, SessionId, Shard, ShardCommand, ShardHandle, ShardId,
     ShardLogic, SharedIds,
 };
+use tokio::sync::{mpsc, oneshot};
+use tokio::task::{JoinHandle, JoinSet};
 
 use crate::peer::{Peer, Peers, ShardPlane};
 
@@ -223,7 +223,9 @@ impl RuntimeHandle {
                 }
                 // The vocabulary is non-exhaustive: a shard that starts asking
                 // for something new must not have it silently ignored.
-                other => eprintln!("mumble-server-runtime-gateway: no runtime support for {other:?}"),
+                other => {
+                    eprintln!("mumble-server-runtime-gateway: no runtime support for {other:?}")
+                }
             }
         })
     }
@@ -251,7 +253,9 @@ impl RuntimeHandle {
             .commands
             .try_send(RuntimeCommand::Move { connection, to });
         if let Err(error) = refused {
-            eprintln!("mumble-server-runtime-gateway: cannot move {connection:?} to {to:?}: {error}");
+            eprintln!(
+                "mumble-server-runtime-gateway: cannot move {connection:?} to {to:?}: {error}"
+            );
         }
     }
 
@@ -297,7 +301,9 @@ impl RuntimeHandle {
         // no longer exists, so it is reported rather than swallowed. The next
         // render still cannot reach it: its queue is closed.
         if let Err(error) = handle.send(ShardCommand::detach(connection, reason)) {
-            eprintln!("mumble-server-runtime-gateway: shard {shard:?} did not take a detach: {error}");
+            eprintln!(
+                "mumble-server-runtime-gateway: shard {shard:?} did not take a detach: {error}"
+            );
         }
     }
 
@@ -409,7 +415,9 @@ async fn migrate(inner: Arc<RuntimeInner>, connection: ConnectionId, to: ShardId
         (source, destination)
     };
     let Some((destination, plane)) = destination else {
-        eprintln!("mumble-server-runtime-gateway: {connection:?} cannot move to {to:?}: no such shard");
+        eprintln!(
+            "mumble-server-runtime-gateway: {connection:?} cannot move to {to:?}: no such shard"
+        );
         return;
     };
 

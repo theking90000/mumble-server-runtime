@@ -318,6 +318,32 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1d87ecb2933e8aeadb3e3a02b828fed80a7528047e68b4f424523a0981a3a084"
 
 [[package]]
+name = "mumble-server-runtime-crypto"
+version = "0.1.0"
+dependencies = [
+ "aes",
+]
+
+[[package]]
+name = "mumble-server-runtime-fuzz"
+version = "0.0.0"
+dependencies = [
+ "libfuzzer-sys",
+ "mumble-server-runtime-crypto",
+ "mumble-server-runtime-protocol",
+]
+
+[[package]]
+name = "mumble-server-runtime-protocol"
+version = "0.1.0"
+dependencies = [
+ "prost",
+ "prost-build",
+ "protox",
+ "thiserror 2.0.19",
+]
+
+[[package]]
 name = "once_cell"
 version = "1.21.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -605,32 +631,6 @@ name = "version_check"
 version = "0.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
-
-[[package]]
-name = "mumble-server-runtime-crypto"
-version = "0.1.0"
-dependencies = [
- "aes",
-]
-
-[[package]]
-name = "voxloom-fuzz"
-version = "0.0.0"
-dependencies = [
- "libfuzzer-sys",
- "mumble-server-runtime-crypto",
- "mumble-server-runtime-protocol",
-]
-
-[[package]]
-name = "mumble-server-runtime-protocol"
-version = "0.1.0"
-dependencies = [
- "prost",
- "prost-build",
- "protox",
- "thiserror 2.0.19",
-]
 
 [[package]]
 name = "windows-link"
