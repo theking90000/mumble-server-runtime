@@ -46,3 +46,9 @@ jobs:
         run: ci/cargo-gate.sh cargo clippy --workspace --all-targets --all-features
       - name: test
         run: ci/cargo-gate.sh cargo test --workspace --all-features
+      # Les doc comments sont la doc d'API publiée : un lien intra-doc cassé est
+      # une erreur, pas un avertissement.
+      - name: rustdoc
+        env:
+          RUSTDOCFLAGS: "-D warnings"
+        run: ci/cargo-gate.sh cargo doc --workspace --no-deps --all-features
