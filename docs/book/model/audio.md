@@ -66,7 +66,7 @@ condition is checked on the render's output, and a render violating it is refuse
 whole.
 
 A corollary worth stating: there is no separate right to speak. Speaking
-somewhere implies being visible there.
+somewhere implies being visible there. See [Seeing the speaker](coupling.md).
 
 ## The compiled table
 

@@ -49,7 +49,7 @@ connection without duplicating it. See [The shared view and scopes](scopes.md).
 ## Overlay
 
 The elements visible to exactly one connection. Reserved for individual
-exceptions, where a scope describes a group.
+exceptions, where a scope describes a group. See [Overlays](overlays.md).
 
 ## View
 
@@ -73,7 +73,8 @@ state, never once per connection.
 ## Delta
 
 The operations separating two consecutive shared views: channels created, updated
-or removed, participants added, moved, updated or removed.
+or removed, participants added, moved, updated or removed. See
+[Deltas and per-connection composition](deltas.md).
 
 ## Journal
 

@@ -86,8 +86,9 @@ soon as the observation bound is lifted.
 
 ## Choosing a scope
 
-A scope describes a group. An individual exception belongs in an overlay instead.
-A scope with one observer is an overlay in disguise.
+A scope describes a group. An individual exception belongs in an
+[overlay](overlays.md) instead. A scope with one observer is an overlay in
+disguise.
 
 A role is a group by nature even while it holds a single member: player, host,
 spectator, staff. A vanished administrator is not a role but one person's
