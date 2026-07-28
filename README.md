@@ -8,8 +8,8 @@ configure: the channels, who sees whom and who hears whom are all computed from
 your application's state, live.
 
 > **Preliminary.** The runtime works and ships with a runnable demo, but this
-> README is ahead of its documentation. There is no published API reference yet,
-> no integration guide, and no ready-made plugin for any game. See
+> README is ahead of its documentation. The published API is still work-in-progress,
+> there is no integration guide, and no ready-made plugin for any game. See
 > [Status](#status) for what is real and what is not.
 
 ## The idea
@@ -22,7 +22,7 @@ Voxloom inverts that. You write a render function. It describes what the voice
 session should look like _right now_, given your state. Voxloom works out the
 difference from what each connected client currently holds, and sends only that.
 
-Move a player to a cave, end a round, promote someone to spectator: change your
+Move a player to a game, end a round, promote someone to spectator: change your
 state, and the voice session follows on the next render. There is no second model
 to keep in sync, because there is no second model.
 
@@ -92,22 +92,29 @@ cargo run --release -p voxloom-stress -- --clients 200 --duration 30s
 
 ## Status
 
-**Works today.** Unmodified Mumble clients connect, see divergent trees, and hear
-each other over UDP or through the TCP tunnel when UDP is blocked. Migration
-between shards keeps the connection. Text, context menu actions, self-mute and
-self-deafen are routed through your application.
+**Works today**
 
-All of that is covered by tests that open real TLS and UDP sockets, plus an
-independent simulated client that applies the protocol and refuses any violation
-of its model. Official Mumble clients have been used throughout development, but
-the signed human checklists in this repository predate the current runtime, so
-treat them as history rather than as proof about the code you would run.
+- Unmodified Mumble clients connect and are sent divergent channel trees.
+- Audio over UDP, falling back to the TCP tunnel on its own when UDP is blocked.
+- Migration between shards without dropping the connection.
+- Text, context menu actions, self-mute and self-deafen routed through your
+  application.
 
-**Not there yet.** No published API documentation, though `cargo doc` works. No
-integration guide. No plugin or bridge for any game, Minecraft included: today
-you write Rust against the runtime directly. No distributed topology. Opus only,
-and voice payloads are forwarded without ever being decoded, so no server-side
-mixing.
+**How that is checked**
+
+- Tests that open real TLS and UDP sockets, not mocks.
+- An independent simulated client that applies the protocol and refuses any
+  violation of its model.
+- Official Mumble clients, used throughout development.
+
+**Not there yet**
+
+- API documentation still in progress, though `cargo doc` already builds it.
+- No integration guide.
+- No plugin or bridge for any game, Minecraft included. Today you write Rust
+  against the runtime directly.
+- No distributed topology: every shard lives in one runtime.
+- Opus only, forwarded without ever being decoded, so no server-side mixing.
 
 ## How it fits together
 
@@ -131,28 +138,16 @@ the `legacy-p7-final` tag.
 
 ## Development
 
-<<<<<<< Updated upstream
-
-```bash
-ci/gates.sh                  # interdictions structurelles R4
-ci/dep-direction.sh          # direction des dépendances entre crates
-ci/verifier-boundary.sh      # séparation implémenteur/vérificateur R2
-ci/cargo-gate.sh cargo test --workspace   # tests
-ci/bench-audio.sh            # coût par destinataire du routeur (P4)
-```
-
-# Toolchain pinnée dans `rust-toolchain.toml` (Rust 1.93, édition 2024).
-
 ```sh
-ci/gates.sh
-ci/dep-direction.sh
-ci/verifier-boundary.sh
+ci/gates.sh                 # structural prohibitions
+ci/dep-direction.sh         # dependency direction between crates
+ci/verifier-boundary.sh     # implementer and verifier stay separate
 cargo fmt --all --check
-cargo clippy --workspace --all-targets --all-features
-cargo test --workspace --all-features
-ci/bench-shard.sh
+RUSTFLAGS="-D warnings" cargo clippy --workspace --all-targets --all-features
+RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --all-features
+RUSTFLAGS="-D warnings" cargo test --workspace --all-features
+cargo run --release -p bench-shard   # cost of one shard turn
 ```
 
-The toolchain is pinned in `rust-toolchain.toml` (Rust 1.93, edition 2024).
-
-> > > > > > > Stashed changes
+The live tests open loopback sockets. The toolchain is pinned in
+`rust-toolchain.toml` (Rust 1.93, edition 2024).
