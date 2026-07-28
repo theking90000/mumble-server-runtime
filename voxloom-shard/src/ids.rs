@@ -15,7 +15,7 @@
 //!
 //! REF: docs/design/guide-implementation.md 4
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use thiserror::Error;
@@ -120,13 +120,13 @@ pub enum Exhausted {
     Sessions,
 }
 
-/// Maps stable identities onto wire identifiers, forever.
+/// Maps stable identities onto wire identifiers until a channel is withdrawn.
 ///
-/// Entries are never removed. An element that disappears and comes back gets the
-/// **same** id, which is not reuse: it is the same thing returning, and the
-/// client's local preferences for it are still correct. Withdrawing the entry is
-/// what would be unsafe, since the next allocation could hand its number to
-/// something else.
+/// Session entries live forever because an official client keeps its own user
+/// across migrations. Channel entries do not: once any client has accepted a
+/// `ChannelRemove`, that wire identifier is dead even if the same semantic
+/// channel later returns. Retiring a mapping never recycles its number because
+/// the allocation cursor only moves forward.
 ///
 /// # Why one allocator serves the whole runtime
 ///
@@ -220,6 +220,24 @@ impl IdAllocator {
     pub fn allocated_channel(&self, shard: ShardId, key: ChannelKey) -> Option<ChannelId> {
         self.channels.get(&(shard, key)).copied()
     }
+
+    /// Retire every channel identity from `shard` that the accepted render no
+    /// longer contains.
+    ///
+    /// Removing the mapping does not recycle its numeric id: `next_channel`
+    /// only moves forward. If the same semantic key returns later, it therefore
+    /// receives a fresh id, as required after the client has observed a
+    /// `ChannelRemove`.
+    pub fn retain_channels(&mut self, shard: ShardId, retained: &BTreeSet<ChannelKey>) {
+        self.channels
+            .retain(|(owner, key), _| *owner != shard || retained.contains(key));
+    }
+
+    /// Retire channel ids one client has accepted as removed.
+    pub fn retire_channel_ids(&mut self, shard: ShardId, retired: &BTreeSet<ChannelId>) {
+        self.channels
+            .retain(|(owner, _), id| *owner != shard || !retired.contains(id));
+    }
 }
 
 /// One allocator, shared by every shard of a runtime.
@@ -269,6 +287,16 @@ impl SharedIds {
         self.guard().allocated_channel(shard, key)
     }
 
+    /// Retire the channel identities absent from one shard's accepted render.
+    pub fn retain_channels(&self, shard: ShardId, retained: &BTreeSet<ChannelKey>) {
+        self.guard().retain_channels(shard, retained);
+    }
+
+    /// Retire channel ids one client has accepted as removed.
+    pub fn retire_channel_ids(&self, shard: ShardId, retired: &BTreeSet<ChannelId>) {
+        self.guard().retire_channel_ids(shard, retired);
+    }
+
     /// A poisoned allocator means a panic unwound while an id was being handed
     /// out. The maps are still structurally sound - nothing here can leave one
     /// half-updated - and refusing every later allocation would take the whole
@@ -294,6 +322,47 @@ mod tests {
 
         assert_eq!(first, again);
         assert_ne!(first, other);
+    }
+
+    #[test]
+    fn a_channel_that_returns_after_removal_gets_a_fresh_id() {
+        let mut ids = IdAllocator::new();
+        let shard = ShardId(1);
+        let key = ChannelKey(7);
+        let before = ids.channel(shard, key).expect("allocatable");
+
+        ids.retain_channels(shard, &BTreeSet::new());
+        let after = ids.channel(shard, key).expect("allocatable");
+
+        assert_ne!(before, after, "a retired wire id is dead forever");
+    }
+
+    #[test]
+    fn retaining_one_shard_does_not_retire_another_shards_channels() {
+        let mut ids = IdAllocator::new();
+        let key = ChannelKey(7);
+        let here = ids.channel(ShardId(1), key).expect("allocatable");
+        let there = ids.channel(ShardId(2), key).expect("allocatable");
+
+        ids.retain_channels(ShardId(1), &BTreeSet::new());
+
+        assert_ne!(ids.channel(ShardId(1), key).expect("allocatable"), here);
+        assert_eq!(ids.channel(ShardId(2), key), Ok(there));
+    }
+
+    #[test]
+    fn retiring_a_wire_id_rekeys_only_its_channel() {
+        let mut ids = IdAllocator::new();
+        let shard = ShardId(1);
+        let retired_key = ChannelKey(7);
+        let kept_key = ChannelKey(8);
+        let retired = ids.channel(shard, retired_key).expect("allocatable");
+        let kept = ids.channel(shard, kept_key).expect("allocatable");
+
+        ids.retire_channel_ids(shard, &BTreeSet::from([retired]));
+
+        assert_ne!(ids.channel(shard, retired_key), Ok(retired));
+        assert_eq!(ids.channel(shard, kept_key), Ok(kept));
     }
 
     #[test]

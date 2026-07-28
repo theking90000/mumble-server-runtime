@@ -548,6 +548,42 @@ fn changing_realm_converges_without_flickering_the_common_ancestors() {
 }
 
 #[test]
+fn returning_to_a_scope_uses_fresh_channel_ids() {
+    let mut harness = Harness::new(&[(1, 0), (2, 1)], 1024);
+    harness.step("initial");
+    let realm_zero_before = harness
+        .model(1)
+        .channel_id_named("Realm 0 0")
+        .expect("initial realm");
+
+    harness
+        .shard
+        .logic_mut()
+        .world
+        .realms
+        .insert(ConnectionId(1), 1);
+    harness.step("leave realm zero");
+    assert!(harness.model(1).channel_id_named("Realm 0 0").is_none());
+
+    harness
+        .shard
+        .logic_mut()
+        .world
+        .realms
+        .insert(ConnectionId(1), 0);
+    harness.step("return to realm zero");
+    let realm_zero_after = harness
+        .model(1)
+        .channel_id_named("Realm 0 0")
+        .expect("returned realm");
+
+    assert_ne!(
+        realm_zero_after, realm_zero_before,
+        "a ChannelId is dead after this client accepts ChannelRemove"
+    );
+}
+
+#[test]
 fn a_vanished_connection_can_still_be_routed() {
     // It is absent from the shared view, which is what a vanish is - but it is
     // not absent from the runtime. Compiling the routing table from the shared
