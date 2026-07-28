@@ -12,6 +12,11 @@ your application's state, live.
 > there is no integration guide, and no ready-made plugin for any game. See
 > [Status](#status) for what is real and what is not.
 
+> **AI-assisted development.** Most of Voxloom's implementation was delegated
+> to AI coding agents. See the [AI development notice](#ai-assisted-development)
+> at the end of this README for details about the process, safeguards and
+> limitations.
+
 ## The idea
 
 A conventional Mumble server has one channel tree shared by everyone, defined in
@@ -151,3 +156,27 @@ cargo run --release -p bench-shard   # cost of one shard turn
 
 The live tests open loopback sockets. The toolchain is pinned in
 `rust-toolchain.toml` (Rust 1.93, edition 2024).
+
+## AI-assisted development
+
+Voxloom was designed by a human and implemented almost entirely by AI coding
+agents. The author invested substantial time in product definition, software
+architecture, specifications, failure analysis, review criteria and verification,
+while delegating most of the implementation work to agents.
+
+This may still be called "vibe coding", depending on how one defines the term.
+AI coding agents are becoming increasingly mature and capable, and Voxloom was
+also an opportunity to explore what AI-assisted software development can look
+like on a substantial systems project.
+
+That exploration was not unconstrained. The agents worked within detailed written
+specifications, explicit architectural boundaries, fail-closed safeguards,
+vendored protocol references, structural CI gates and an extensive test suite,
+including tests against real protocol and networking behavior. The author remained
+responsible for the design, specifications, architectural decisions and acceptance
+criteria, while delegating most of the implementation work to agents.
+
+These boundaries and safeguards increase confidence in the implementation, but
+they do not guarantee its correctness. Voxloom may still contain bugs, security
+issues, protocol incompatibilities or other unexpected behavior. The project is
+provided "as is", without warranties or guarantees of any kind.
