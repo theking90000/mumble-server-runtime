@@ -19,6 +19,7 @@
 - [Running the arena](build/arena.md)
 - [Anatomy of an application](build/anatomy.md)
 - [The render function](build/render.md)
+- [Scope or overlay](build/scope-or-overlay.md)
 
 # Reference
 
@@ -35,7 +36,6 @@ Plan du livre. Une entrée est décommentée quand la page est écrite : avec
 - [Establishing compatibility](mumble/oracles.md)
 
 # Building an application (suite)
-- [Scope or overlay](build/scope-or-overlay.md)
 - [Declaring audio](build/audio.md)
 - [Client interactions](build/interactions.md)
 - [Migration between shards](build/migration.md)
