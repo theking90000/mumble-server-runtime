@@ -417,13 +417,13 @@ Identifiant numérique ou protocolaire attribué à un élément pour une connex
 ### 7.1 Crates ou modules proposés
 
 ```text
-voxloom-protocol
+mumble-server-runtime-protocol
     framing TCP
     messages Protobuf
     formats UDP
     compatibilité de versions
 
-voxloom-crypto
+mumble-server-runtime-crypto
     état OCB2
     nonces
     rejeu

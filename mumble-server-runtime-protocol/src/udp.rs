@@ -17,7 +17,7 @@
 //! rather than guessed (fail closed, R6). This decodes the envelope only: the
 //! `opus_data` payload stays as raw bytes — no Opus decoding happens here.
 //!
-//! Input is assumed already decrypted; OCB2 lives in `voxloom-crypto`.
+//! Input is assumed already decrypted; OCB2 lives in `mumble-server-runtime-crypto`.
 
 use prost::Message;
 use thiserror::Error;
@@ -94,7 +94,7 @@ pub fn decode_udp(packet: &[u8]) -> Result<UdpMessage, UdpDecodeError> {
 /// Encode a UDP voice-plane message to a decrypted packet (`[type][protobuf]`) —
 /// the inverse of [`decode_udp`], so `decode_udp(&encode_udp(m)) == Ok(m)`.
 ///
-/// The result is plaintext; OCB2 encryption is the caller's job (`voxloom-crypto`).
+/// The result is plaintext; OCB2 encryption is the caller's job (`mumble-server-runtime-crypto`).
 pub fn encode_udp(message: &UdpMessage) -> Vec<u8> {
     let (message_type, body) = match message {
         UdpMessage::Audio(audio) => (UdpMessageType::Audio, audio.encode_to_vec()),

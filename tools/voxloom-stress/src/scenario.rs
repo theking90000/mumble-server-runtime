@@ -1,5 +1,5 @@
-use voxloom_protocol::ControlMessage;
-use voxloom_protocol::messages::tcp;
+use mumble_server_runtime_protocol::ControlMessage;
+use mumble_server_runtime_protocol::messages::tcp;
 
 use crate::client::Model;
 use crate::config::ScenarioKind;

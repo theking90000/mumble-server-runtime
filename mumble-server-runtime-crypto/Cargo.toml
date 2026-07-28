@@ -1,5 +1,5 @@
 [package]
-name = "voxloom-crypto"
+name = "mumble-server-runtime-crypto"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -9,8 +9,8 @@ authors.workspace = true
 description = "OCB2-AES128 pour Mumble : chiffrement voix, nonces, anti-rejeu. Pur, sans IO ni runtime (R4)."
 
 [lib]
-name = "voxloom_crypto"
-path = "src/voxloom_crypto.rs"
+name = "mumble_server_runtime_crypto"
+path = "src/mumble_server_runtime_crypto.rs"
 
 [dependencies]
 aes = "0.8"

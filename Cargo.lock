@@ -95,8 +95,8 @@ name = "bench-shard"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "mumble-server-runtime-protocol",
  "tokio",
- "voxloom-protocol",
  "voxloom-shard",
 ]
 
@@ -440,6 +440,23 @@ name = "multimap"
 version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1d87ecb2933e8aeadb3e3a02b828fed80a7528047e68b4f424523a0981a3a084"
+
+[[package]]
+name = "mumble-server-runtime-crypto"
+version = "0.1.0"
+dependencies = [
+ "aes",
+]
+
+[[package]]
+name = "mumble-server-runtime-protocol"
+version = "0.1.0"
+dependencies = [
+ "prost",
+ "prost-build",
+ "protox",
+ "thiserror 2.0.19",
+]
 
 [[package]]
 name = "num-conv"
@@ -974,9 +991,9 @@ name = "voxloom-arena"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "mumble-server-runtime-protocol",
  "tokio",
  "voxloom-gateway",
- "voxloom-protocol",
  "voxloom-shard",
 ]
 
@@ -985,15 +1002,8 @@ name = "voxloom-corpus-decode"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "voxloom-crypto",
- "voxloom-protocol",
-]
-
-[[package]]
-name = "voxloom-crypto"
-version = "0.1.0"
-dependencies = [
- "aes",
+ "mumble-server-runtime-crypto",
+ "mumble-server-runtime-protocol",
 ]
 
 [[package]]
@@ -1001,14 +1011,14 @@ name = "voxloom-gateway"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "mumble-server-runtime-crypto",
+ "mumble-server-runtime-protocol",
  "rcgen",
  "ring",
  "rustls",
  "thiserror 2.0.19",
  "tokio",
  "tokio-rustls",
- "voxloom-crypto",
- "voxloom-protocol",
  "voxloom-shard",
 ]
 
@@ -1018,6 +1028,8 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "mumble-server-runtime-crypto",
+ "mumble-server-runtime-protocol",
  "rcgen",
  "ring",
  "rustls",
@@ -1025,18 +1037,6 @@ dependencies = [
  "tokio",
  "tokio-rustls",
  "voxloom-corpus-decode",
- "voxloom-crypto",
- "voxloom-protocol",
-]
-
-[[package]]
-name = "voxloom-protocol"
-version = "0.1.0"
-dependencies = [
- "prost",
- "prost-build",
- "protox",
- "thiserror 2.0.19",
 ]
 
 [[package]]
@@ -1057,9 +1057,9 @@ dependencies = [
 name = "voxloom-shard"
 version = "0.1.0"
 dependencies = [
+ "mumble-server-runtime-protocol",
  "thiserror 2.0.19",
  "tokio",
- "voxloom-protocol",
 ]
 
 [[package]]
@@ -1068,11 +1068,11 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "mumble-server-runtime-crypto",
+ "mumble-server-runtime-protocol",
  "rustls",
  "tokio",
  "tokio-rustls",
- "voxloom-crypto",
- "voxloom-protocol",
 ]
 
 [[package]]
@@ -1080,12 +1080,12 @@ name = "voxloom-testkit"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "mumble-server-runtime-crypto",
+ "mumble-server-runtime-protocol",
  "rustls",
  "tokio",
  "tokio-rustls",
- "voxloom-crypto",
  "voxloom-gateway",
- "voxloom-protocol",
  "voxloom-shard",
 ]
 

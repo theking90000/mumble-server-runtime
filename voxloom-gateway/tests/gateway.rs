@@ -390,7 +390,7 @@ async fn two_clients_hear_each_other_over_udp() -> Result<()> {
     assert!(
         matches!(
             heard.header,
-            Some(voxloom_protocol::messages::udp::audio::Header::Context(0))
+            Some(mumble_server_runtime_protocol::messages::udp::audio::Header::Context(0))
         ),
         "the server-to-client direction carries a context, not a target"
     );
@@ -867,7 +867,7 @@ async fn a_client_gets_its_own_statistics_and_only_a_name_for_others() -> Result
     // What the client reports about its own side, in the keepalive it sends
     // anyway. The server cannot measure any of it.
     alice
-        .ping_reporting(voxloom_protocol::messages::tcp::Ping {
+        .ping_reporting(mumble_server_runtime_protocol::messages::tcp::Ping {
             timestamp: Some(1),
             good: Some(40),
             late: Some(2),
@@ -1053,7 +1053,7 @@ async fn a_message_longer_than_the_server_advertised_is_refused_as_too_long() ->
     assert_eq!(
         alice.model.refused[0].r#type,
         Some(i32::from(
-            voxloom_protocol::messages::tcp::permission_denied::DenyType::TextTooLong
+            mumble_server_runtime_protocol::messages::tcp::permission_denied::DenyType::TextTooLong
         )),
         "the client has its own wording for this one, so the type is what carries the meaning"
     );

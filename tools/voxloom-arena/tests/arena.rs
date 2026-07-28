@@ -101,7 +101,7 @@ fn attach<L: ShardLogic>(
     connection: ConnectionId,
 ) -> (
     Arc<OutboundQueue>,
-    tokio::sync::mpsc::Receiver<voxloom_protocol::ControlMessage>,
+    tokio::sync::mpsc::Receiver<mumble_server_runtime_protocol::ControlMessage>,
 ) {
     let (queue, receiver) = OutboundQueue::new();
     let queue = Arc::new(queue);
@@ -454,7 +454,7 @@ async fn a_migration_keeps_the_session_and_never_removes_the_client_from_itself(
         assert!(
             matches!(
                 message,
-                voxloom_protocol::ControlMessage::ContextActionModify(_)
+                mumble_server_runtime_protocol::ControlMessage::ContextActionModify(_)
             ),
             "a migration must push no view teardown, got {message:?}"
         );
@@ -493,14 +493,14 @@ async fn a_migration_keeps_the_session_and_never_removes_the_client_from_itself(
     assert!(
         !transition.iter().any(|message| matches!(
             message,
-            voxloom_protocol::ControlMessage::UserRemove(removal) if removal.session == in_lobby.0
+            mumble_server_runtime_protocol::ControlMessage::UserRemove(removal) if removal.session == in_lobby.0
         )),
         "the migration removed the client from itself: {transition:?}"
     );
     assert!(
         transition.iter().any(|message| matches!(
             message,
-            voxloom_protocol::ControlMessage::ChannelState(state)
+            mumble_server_runtime_protocol::ControlMessage::ChannelState(state)
                 if state.name.as_deref() == Some("Red Base")
         )),
         "the destination has to describe its own tree: {transition:?}"

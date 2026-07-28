@@ -13,7 +13,7 @@
 //!   1`). Real traffic never produces that; the corpus round-trip test covers the
 //!   real, non-degenerate messages.
 use libfuzzer_sys::fuzz_target;
-use voxloom_protocol::{decode_udp, encode_udp};
+use mumble_server_runtime_protocol::{decode_udp, encode_udp};
 
 fuzz_target!(|data: &[u8]| {
     if let Ok(message) = decode_udp(data) {

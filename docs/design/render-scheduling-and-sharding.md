@@ -971,7 +971,7 @@ shard.
 
 ## 13. Ce qui survit, ce qui change
 
-**Intact.** `voxloom-protocol`, `voxloom-crypto`, `voxloom-audio` (le hot path pur
+**Intact.** `mumble-server-runtime-protocol`, `mumble-server-runtime-crypto`, `voxloom-audio` (le hot path pur
 est bon, et §11.2 le préserve mot pour mot), le catalogue d'invariants §20, le
 juge du testkit, les oracles corpus/proxy, la séparation R2, les gates R4 — et
 surtout **la prémisse déclarative** : `render → diff → plan ordonné` ne change
@@ -1009,8 +1009,8 @@ dépendance qu'on veut rendre impossible à écrire.
 
 ```
 PURS (ni tokio, ni socket, gates R4)
-  voxloom-protocol    codec wire                          inchangé
-  voxloom-crypto      OCB2                                inchangé
+  mumble-server-runtime-protocol    codec wire                          inchangé
+  mumble-server-runtime-crypto      OCB2                                inchangé
   voxloom-render      types de vue, normalize, validate   quasi inchangé
   voxloom-reconcile   diff, plan, ordre de sûreté         quasi inchangé ★
   voxloom-audio       snapshot de routage, politique      inchangé ★
@@ -1038,11 +1038,11 @@ VÉRIFICATEUR (R2)
 
 **Arêtes interdites nouvelles**, à ajouter aux gates :
 
-- `voxloom-project` ↛ `voxloom-protocol` — on filtre des vues, on encode après.
+- `voxloom-project` ↛ `mumble-server-runtime-protocol` — on filtre des vues, on encode après.
 - `voxloom-journal` ↛ tout le reste — c'est une structure de données générique
   sur sa charge utile ; qu'elle ne connaisse **aucun** vocabulaire de vue est
   précisément ce qui la rend proptestable isolément.
-- `voxloom-flavor` ↛ `voxloom-protocol` (déjà en place), et ↛ `voxloom-journal`
+- `voxloom-flavor` ↛ `mumble-server-runtime-protocol` (déjà en place), et ↛ `voxloom-journal`
   (un flavor n'a pas à connaître le versionnement).
 
 ### 13.3 Ce qui disparaît, en lignes
@@ -1077,7 +1077,7 @@ valeurs, et chaque valeur devient testable seule.
 
 Et les couches basses gardent leurs oracles existants sans y toucher :
 `voxloom-reconcile` son proptest 4000 graines, `voxloom-audio` ses propriétés et
-son bench, `voxloom-protocol`/`voxloom-crypto` le corpus et les vecteurs.
+son bench, `mumble-server-runtime-protocol`/`mumble-server-runtime-crypto` le corpus et les vecteurs.
 L'oracle composé du runtime (§7.1) ne fait que les empiler.
 
 ### 13.5 Ce qu'on ne découpe **pas**

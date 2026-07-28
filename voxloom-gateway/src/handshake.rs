@@ -15,8 +15,8 @@
 //!   Authenticate; it is therefore [`server_version`] and not part of this
 //!   sequence.
 
-use voxloom_protocol::ControlMessage;
-use voxloom_protocol::messages::tcp;
+use mumble_server_runtime_protocol::ControlMessage;
+use mumble_server_runtime_protocol::messages::tcp;
 use voxloom_shard::SessionId;
 
 use crate::config::GatewayConfig;

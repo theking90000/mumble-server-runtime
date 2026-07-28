@@ -22,8 +22,8 @@ use tokio::net::{TcpStream, UdpSocket};
 use tokio::sync::mpsc;
 use tokio_rustls::TlsAcceptor;
 use tokio_rustls::server::TlsStream;
-use voxloom_protocol::messages::tcp;
-use voxloom_protocol::{
+use mumble_server_runtime_protocol::messages::tcp;
+use mumble_server_runtime_protocol::{
     ControlMessage, UdpMessage, decode_frame, decode_udp, encode_frame, parse_frame,
 };
 use voxloom_shard::{ChannelId, OutboundQueue, ShardCommand, TextTarget};

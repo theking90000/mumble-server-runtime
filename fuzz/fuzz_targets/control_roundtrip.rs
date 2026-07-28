@@ -8,7 +8,7 @@
 //! (e.g. `Ping.tcp_ping_var`) can hold NaN, and `NaN != NaN` would make message
 //! equality spuriously fail even though encode/decode are proper inverses.
 use libfuzzer_sys::fuzz_target;
-use voxloom_protocol::{decode_control, encode_control};
+use mumble_server_runtime_protocol::{decode_control, encode_control};
 
 fuzz_target!(|data: &[u8]| {
     if data.len() < 2 {

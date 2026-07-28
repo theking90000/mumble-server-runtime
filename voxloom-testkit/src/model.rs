@@ -12,8 +12,8 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use voxloom_protocol::messages::{tcp, udp};
-use voxloom_protocol::{ControlMessage, UdpMessage, decode_udp};
+use mumble_server_runtime_protocol::messages::{tcp, udp};
+use mumble_server_runtime_protocol::{ControlMessage, UdpMessage, decode_udp};
 
 /// The root channel is always id 0 (spec §11.2, §20 invariant 1).
 pub const ROOT_CHANNEL_ID: u32 = 0;
@@ -880,7 +880,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "Audio.sender_session")]
     fn tunneled_audio_from_invisible_sender_panics() {
-        let bytes = voxloom_protocol::encode_udp(&UdpMessage::Audio(udp::Audio {
+        let bytes = mumble_server_runtime_protocol::encode_udp(&UdpMessage::Audio(udp::Audio {
             sender_session: 99,
             ..Default::default()
         }));

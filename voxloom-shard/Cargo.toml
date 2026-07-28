@@ -15,7 +15,7 @@ path = "src/voxloom_shard.rs"
 [dependencies]
 # The shard owns the translation from view mutations to control frames, so it is
 # the one place in this crate that knows the wire vocabulary.
-voxloom-protocol = { path = "../voxloom-protocol" }
+mumble-server-runtime-protocol = { path = "../mumble-server-runtime-protocol" }
 tokio = { version = "1", features = ["rt", "macros", "sync", "time"] }
 thiserror = "2"
 

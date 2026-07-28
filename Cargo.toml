@@ -7,8 +7,8 @@ members = [
     "tools/corpus-decode",
     "tools/mitm-proxy",
     # Fondations pures.
-    "voxloom-protocol",
-    "voxloom-crypto",
+    "mumble-server-runtime-protocol",
+    "mumble-server-runtime-crypto",
     # Runtime courant : logique de shard sans IO, puis gateway TLS/TCP/UDP.
     "voxloom-shard",
     "voxloom-gateway",

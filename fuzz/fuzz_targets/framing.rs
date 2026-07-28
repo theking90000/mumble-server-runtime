@@ -2,7 +2,7 @@
 //! Fuzz the TCP framer: arbitrary bytes must never panic, and draining frames
 //! must always terminate.
 use libfuzzer_sys::fuzz_target;
-use voxloom_protocol::parse_frame;
+use mumble_server_runtime_protocol::parse_frame;
 
 fuzz_target!(|data: &[u8]| {
     let mut buffer = data;

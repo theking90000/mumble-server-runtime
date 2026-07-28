@@ -58,14 +58,14 @@ forbid "shard/no-net" \
        '(std::net|tokio::net|TcpListener|TcpStream|UdpSocket)' "${shard_files[@]}"
 
 # --- Crates centrales : aucun concept du flavor de démonstration ---
-for central in voxloom-protocol voxloom-crypto voxloom-shard voxloom-gateway; do
+for central in mumble-server-runtime-protocol mumble-server-runtime-crypto voxloom-shard voxloom-gateway; do
   mapfile -t central_files < <(crate_src_files "$central")
   forbid "$central/no-demo-flavor" \
          '([Aa]urora|[Bb]orealis|voxloom[_-]arena)' "${central_files[@]}"
 done
 
-# --- voxloom-protocol / voxloom-crypto : crates purs, sans runtime ni IO ---
-for pure in voxloom-protocol voxloom-crypto; do
+# --- mumble-server-runtime-protocol / mumble-server-runtime-crypto : crates purs, sans runtime ni IO ---
+for pure in mumble-server-runtime-protocol mumble-server-runtime-crypto; do
   mapfile -t pure_files < <(crate_src_files "$pure")
   forbid "$pure/no-tokio"      '\btokio\b'                          "${pure_files[@]}"
   forbid "$pure/no-net"        'std::net'                           "${pure_files[@]}"

@@ -17,8 +17,8 @@
 //! channel, breaking one rule to satisfy another. The planner groups user
 //! additions together, so a run is exactly the set among which order is free.
 
-use voxloom_protocol::ControlMessage;
-use voxloom_protocol::messages::tcp;
+use mumble_server_runtime_protocol::ControlMessage;
+use mumble_server_runtime_protocol::messages::tcp;
 
 use crate::ids::{ActionKey, ChannelId, SessionId};
 use crate::plan::{ChannelPatch, PlanOp, UserPatch};

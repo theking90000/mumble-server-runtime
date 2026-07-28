@@ -34,9 +34,9 @@ use std::time::Instant;
 use anyhow::{Context, Result};
 use ring::rand::{SecureRandom, SystemRandom};
 use tokio::net::UdpSocket;
-use voxloom_crypto::{BLOCK_SIZE, CryptState, KEY_SIZE};
-use voxloom_protocol::messages::{tcp, udp};
-use voxloom_protocol::{ControlMessage, UdpMessage, decode_udp, encode_udp};
+use mumble_server_runtime_crypto::{BLOCK_SIZE, CryptState, KEY_SIZE};
+use mumble_server_runtime_protocol::messages::{tcp, udp};
+use mumble_server_runtime_protocol::{ControlMessage, UdpMessage, decode_udp, encode_udp};
 use voxloom_shard::VoiceAdmission;
 
 use crate::config::GatewayConfig;

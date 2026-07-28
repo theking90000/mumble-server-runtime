@@ -34,9 +34,9 @@
 //! it: each side resyncs against the IV the proxy itself controls (fail closed,
 //! L4 — an out-of-order or pre-setup resync is rejected, not guessed).
 
-use voxloom_crypto::{BLOCK_SIZE, CryptState, KEY_SIZE};
-use voxloom_protocol::ControlMessage;
-use voxloom_protocol::messages::tcp;
+use mumble_server_runtime_crypto::{BLOCK_SIZE, CryptState, KEY_SIZE};
+use mumble_server_runtime_protocol::ControlMessage;
+use mumble_server_runtime_protocol::messages::tcp;
 
 /// The proxy's own OCB2 secrets for the client-facing domain (proxy <-> client).
 ///

@@ -22,8 +22,8 @@ use tokio::sync::Mutex as TokioMutex;
 use tokio_rustls::rustls::pki_types::ServerName;
 use tokio_rustls::rustls::{ClientConfig, ServerConfig};
 use tokio_rustls::{TlsAcceptor, TlsConnector};
-use voxloom_crypto::{BLOCK_SIZE, KEY_SIZE};
-use voxloom_protocol::{ControlMessage, decode_frame, encode_frame, parse_frame};
+use mumble_server_runtime_crypto::{BLOCK_SIZE, KEY_SIZE};
+use mumble_server_runtime_protocol::{ControlMessage, decode_frame, encode_frame, parse_frame};
 
 use crate::session::{Action, ProxySecrets, Session};
 use crate::udp_relay::Registry;

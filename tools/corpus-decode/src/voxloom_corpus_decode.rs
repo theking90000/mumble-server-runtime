@@ -1,7 +1,7 @@
 //! Decode a captured `.voxcap` session into a readable, byte-complete transcript.
 //!
 //! This is the Phase 1 done-criterion: it replays real captured traffic through
-//! the pure codec ([`voxloom_protocol`]) and crypto ([`voxloom_crypto`]) and
+//! the pure codec ([`mumble_server_runtime_protocol`]) and crypto ([`mumble_server_runtime_crypto`]) and
 //! accounts for every byte. It is a verification tool, not part of the runtime,
 //! so it lives under `tools/` with IO allowed (R4/R5); the pure crates never
 //! depend back on it.
@@ -22,7 +22,7 @@
 //!    (introduced in 1.5.0). REF: references/mumble/src/MumbleProtocol.h :
 //!    `PROTOBUF_INTRODUCTION_VERSION = 1.5.0`. Its encrypted UDP voice plane is
 //!    therefore the **legacy** wire format, which ADR-0001 deliberately excludes
-//!    from `voxloom-protocol`. OCB2 decryption (version-independent) still works;
+//!    from `mumble-server-runtime-protocol`. OCB2 decryption (version-independent) still works;
 //!    `decode_udp` (protobuf-only) correctly rejects the legacy plaintext. The
 //!    transcript reports such packets as decrypted-but-legacy rather than
 //!    pretending to structurally decode a format the codec does not support.
@@ -31,11 +31,11 @@ use std::path::Path;
 
 use anyhow::{Context, Result, anyhow, bail};
 
-use voxloom_crypto::{BLOCK_SIZE, CryptState, KEY_SIZE};
-use voxloom_protocol::{ControlMessage, decode_control, decode_udp, parse_frame};
+use mumble_server_runtime_crypto::{BLOCK_SIZE, CryptState, KEY_SIZE};
+use mumble_server_runtime_protocol::{ControlMessage, decode_control, decode_udp, parse_frame};
 // Re-exported: `Decoded::Udp` wraps this, so a consumer matching on the
-// transcript needs the type without depending on voxloom-protocol directly.
-pub use voxloom_protocol::UdpMessage;
+// transcript needs the type without depending on mumble-server-runtime-protocol directly.
+pub use mumble_server_runtime_protocol::UdpMessage;
 
 /// Magic header of a `.voxcap` file, format version 01.
 /// REF: tools/recording-proxy/src/capture.rs : `MAGIC` (the format's authority).
@@ -243,7 +243,7 @@ pub enum Decoded {
     /// for the same reason as `Control`.
     Udp(Box<UdpMessage>),
     /// A decrypted UDP packet whose plaintext is the legacy wire format
-    /// (ADR-0001: out of scope for `voxloom-protocol`). Decryption succeeded;
+    /// (ADR-0001: out of scope for `mumble-server-runtime-protocol`). Decryption succeeded;
     /// the envelope is reported, not structurally decoded.
     DecryptedLegacyUdp {
         kind: LegacyUdpKind,

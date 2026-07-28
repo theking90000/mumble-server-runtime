@@ -24,7 +24,7 @@ anyhow = "1"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "sync", "time", "test-util"] }
-voxloom-protocol = { path = "../../voxloom-protocol" }
+mumble-server-runtime-protocol = { path = "../../mumble-server-runtime-protocol" }
 
 [lints]
 workspace = true

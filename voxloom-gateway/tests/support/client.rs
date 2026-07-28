@@ -20,9 +20,9 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt, ReadHalf, WriteHalf};
 use tokio::net::{TcpStream, UdpSocket};
 use tokio_rustls::TlsConnector;
 use tokio_rustls::client::TlsStream;
-use voxloom_crypto::{BLOCK_SIZE, CryptState, KEY_SIZE};
-use voxloom_protocol::messages::{tcp, udp};
-use voxloom_protocol::{
+use mumble_server_runtime_crypto::{BLOCK_SIZE, CryptState, KEY_SIZE};
+use mumble_server_runtime_protocol::messages::{tcp, udp};
+use mumble_server_runtime_protocol::{
     ControlMessage, UdpMessage, decode_frame, decode_udp, encode_frame, encode_udp, parse_frame,
 };
 

@@ -24,7 +24,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError, RwLock, RwLockReadGuard, Rw
 use std::time::{Duration, Instant};
 
 use tokio::sync::watch;
-use voxloom_crypto::CryptState;
+use mumble_server_runtime_crypto::CryptState;
 use voxloom_shard::{AudioRouting, ConnectionId, OutboundQueue, SessionId, ShardId};
 
 use crate::limits::{TextBudget, VoiceBudget};

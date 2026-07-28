@@ -3,7 +3,7 @@
 //! `ocb2_decrypt` target: hostile packet bytes must never panic and must fail
 //! closed (return None) unless authentic. A crash here fails the test.
 
-use voxloom_crypto::CryptState;
+use mumble_server_runtime_crypto::CryptState;
 
 /// xorshift64 — deterministic PRNG for reproducible inputs.
 struct Rng(u64);

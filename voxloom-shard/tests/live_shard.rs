@@ -15,7 +15,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
 
-use voxloom_protocol::ControlMessage;
+use mumble_server_runtime_protocol::ControlMessage;
 use voxloom_shard::{
     ActionKey, ActionTarget, ChannelId, ChannelKey, ConnectionId, DomainId, Effect, Narrow,
     Occupant, On, OutboundQueue, Reply, ScopeSet, SessionId, Shard, ShardBuilder, ShardCommand,
@@ -737,7 +737,7 @@ fn a_congested_connection_commits_nothing_and_converges_after_draining() {
 
 /// A message that carries no view state, used only to occupy a queue slot.
 fn filler() -> ControlMessage {
-    ControlMessage::Ping(voxloom_protocol::messages::tcp::Ping::default())
+    ControlMessage::Ping(mumble_server_runtime_protocol::messages::tcp::Ping::default())
 }
 
 #[test]

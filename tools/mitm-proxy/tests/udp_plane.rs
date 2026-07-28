@@ -20,11 +20,11 @@ use std::time::Duration;
 
 use tokio::net::UdpSocket;
 use tokio::time::timeout;
-use voxloom_crypto::CryptState;
+use mumble_server_runtime_crypto::CryptState;
 use voxloom_mitm_proxy::{ProxySecrets, Registration, Registry, Session, run_udp};
-use voxloom_protocol::messages::tcp;
-use voxloom_protocol::messages::udp::{Audio, audio};
-use voxloom_protocol::{ControlMessage, UdpMessage, decode_udp, encode_udp};
+use mumble_server_runtime_protocol::messages::tcp;
+use mumble_server_runtime_protocol::messages::udp::{Audio, audio};
+use mumble_server_runtime_protocol::{ControlMessage, UdpMessage, decode_udp, encode_udp};
 
 // Distinct byte patterns so a swapped field is caught, never masked by symmetry.
 const SERVER_KEY: [u8; 16] = [0x51; 16];

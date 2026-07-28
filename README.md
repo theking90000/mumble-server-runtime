@@ -130,7 +130,7 @@ Two crates carry the runtime:
 - `voxloom-gateway` handles TLS, TCP, UDP, the handshake, connections and
   migration between shards.
 
-`voxloom-protocol` and `voxloom-crypto` are the pure foundations: framing,
+`mumble-server-runtime-protocol` and `mumble-server-runtime-crypto` are the pure foundations: framing,
 protobuf, UDP envelopes, OCB2. `tools/voxloom-arena` is the demo above.
 `voxloom-testkit` is the independent judge, a simulated Mumble client that
 applies the protocol and refuses any violation of its strict model.

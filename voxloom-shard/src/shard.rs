@@ -46,7 +46,7 @@ use std::time::Duration;
 use tokio::sync::mpsc::error::TryRecvError;
 use tokio::sync::{Notify, mpsc, oneshot, watch};
 use tokio::time::Instant;
-use voxloom_protocol::ControlMessage;
+use mumble_server_runtime_protocol::ControlMessage;
 
 use crate::build::{BuildError, ShardBuilder};
 use crate::compose::{collapse, filter};

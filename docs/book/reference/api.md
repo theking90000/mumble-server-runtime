@@ -10,8 +10,8 @@ Entry points, in the order a reader is likely to need them:
 |---|---|
 | [`voxloom_shard`](../api/voxloom_shard/index.html) | shared views, scopes, overlays, audio relations, deltas, the shard loop |
 | [`voxloom_gateway`](../api/voxloom_gateway/index.html) | TLS control plane, handshake, connection routing, the voice plane |
-| [`voxloom_protocol`](../api/voxloom_protocol/index.html) | TCP framing, control messages, UDP envelopes |
-| [`voxloom_crypto`](../api/voxloom_crypto/index.html) | OCB2-AES128 and the per-connection crypto state |
+| [`mumble_server_runtime_protocol`](../api/mumble_server_runtime_protocol/index.html) | TCP framing, control messages, UDP envelopes |
+| [`mumble_server_runtime_crypto`](../api/mumble_server_runtime_crypto/index.html) | OCB2-AES128 and the per-connection crypto state |
 
 A broken intra-doc link fails the build, so every link in the generated
 documentation resolves.

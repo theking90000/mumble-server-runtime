@@ -29,7 +29,7 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use voxloom_protocol::ControlMessage;
+use mumble_server_runtime_protocol::ControlMessage;
 use voxloom_shard::{
     ChannelKey, ConnectionId, DomainId, Narrow, Occupant, OutboundQueue, PlanOp, Reply, ScopeSet,
     ShardBuilder, ShardCommand, ShardId, ShardLogic, ShardView, VoiceEvent, collapse, emit, filter,

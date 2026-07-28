@@ -37,10 +37,10 @@ voxloom-audio/src :
   interdits : Mutex, RwLock, .await dans le chemin par-paquet,
               Box<dyn Fn, appels vers voxloom-render ou un flavor
 voxloom-render/src :
-  interdit d'importer voxloom-protocol (le renderer ignore le wire format)
+  interdit d'importer mumble-server-runtime-protocol (le renderer ignore le wire format)
 voxloom-flavor/src :
   interdits : types protocolaires Mumble et concepts d'un flavor concret
-voxloom-protocol, voxloom-crypto :
+mumble-server-runtime-protocol, mumble-server-runtime-crypto :
   interdits : tokio, IO ; crates purs, sans dépendance runtime
 tout le workspace :
   interdits : unwrap() hors tests, static mut, unsafe sans commentaire SAFETY
@@ -67,7 +67,7 @@ Livrables :
 1. Workspace cargo avec les gates R4 actifs, CI verte sur un workspace vide.
 2. `references/mumble/` : clone pinné (commit hash fixé) du dépôt mumble-voip. Extraction de `Mumble.proto`, `MumbleUDP.proto`, et des vecteurs de test de `CryptState` (les tests OCB2 du dépôt officiel deviennent des fixtures).
 3. **Corpus de captures** : transcripts binaires de sessions réelles client officiel ↔ Murmur, via un proxy TCP/UDP d'enregistrement (à écrire, trivial : il ne décode rien, il journalise des octets horodatés et annotés par direction). Scénarios à capturer : handshake complet, join/leave de canal, création/suppression de canal, deux clients qui parlent, whisper, permission denied, déconnexion, resync crypto si provocable.
-4. Décision gelée : format UDP legacy supporté ou non. Elle conditionne la structure de `voxloom-protocol` et ne doit pas rester ouverte. Recommandation : legacy requis si un client Android doit se connecter un jour, et le corpus doit alors inclure une session Mumla.
+4. Décision gelée : format UDP legacy supporté ou non. Elle conditionne la structure de `mumble-server-runtime-protocol` et ne doit pas rester ouverte. Recommandation : legacy requis si un client Android doit se connecter un jour, et le corpus doit alors inclure une session Mumla.
 
 **Humain requis :** installer Murmur et le client officiel, dérouler les scénarios de capture à la main (un agent ne pilote pas une GUI Qt), trancher la décision legacy UDP.
 
@@ -75,7 +75,7 @@ Livrables :
 
 ---
 
-## Phase 1 : codec pur (`voxloom-protocol`, `voxloom-crypto`)
+## Phase 1 : codec pur (`mumble-server-runtime-protocol`, `mumble-server-runtime-crypto`)
 
 **Objectif :** encoder/décoder tout le corpus, sans IO. Crates purs, donc territoire idéal pour les agents : entrées/sorties définies, oracle disponible, fuzzing immédiat.
 

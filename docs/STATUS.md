@@ -9,9 +9,9 @@ chemin de production est :
 application / flavor
         |
         v
-voxloom-gateway -> voxloom-shard -> voxloom-protocol
+voxloom-gateway -> voxloom-shard -> mumble-server-runtime-protocol
         |
-        +-----------------------> voxloom-crypto
+        +-----------------------> mumble-server-runtime-crypto
 ```
 
 - `voxloom-shard` possède les portées, le constructeur de rendu, la vue

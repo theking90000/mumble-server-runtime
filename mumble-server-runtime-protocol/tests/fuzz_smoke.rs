@@ -30,7 +30,7 @@ fn decoders_never_panic_on_arbitrary_bytes() {
 
         // Framing: drain until incomplete or error; must always terminate.
         let mut buffer = &data[..];
-        while let Ok(Some(frame)) = voxloom_protocol::parse_frame(buffer) {
+        while let Ok(Some(frame)) = mumble_server_runtime_protocol::parse_frame(buffer) {
             let consumed = frame.total_len();
             if consumed == 0 || consumed > buffer.len() {
                 break;
@@ -41,10 +41,10 @@ fn decoders_never_panic_on_arbitrary_bytes() {
         // Control-message decode: first two bytes select the type code.
         if data.len() >= 2 {
             let message_type = u16::from_be_bytes([data[0], data[1]]);
-            let _ = voxloom_protocol::decode_control(message_type, &data[2..]);
+            let _ = mumble_server_runtime_protocol::decode_control(message_type, &data[2..]);
         }
 
         // UDP envelope decode.
-        let _ = voxloom_protocol::decode_udp(&data);
+        let _ = mumble_server_runtime_protocol::decode_udp(&data);
     }
 }

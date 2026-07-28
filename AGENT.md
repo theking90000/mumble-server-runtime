@@ -61,7 +61,7 @@ par-crate) et `ci/dep-direction.sh` (via `cargo metadata`) :
 | ------------------------------------ | ---------------------------------------------------------------------------- |
 | `voxloom-shard/src`                  | sockets (`std::net`, `tokio::net`, `TcpListener`, `TcpStream`, `UdpSocket`)  |
 | crates centraux                      | importer le flavor de démonstration `voxloom-arena`                          |
-| `voxloom-protocol`, `voxloom-crypto` | `tokio`, IO (`std::net`, `std::fs`) — crates purs                            |
+| `mumble-server-runtime-protocol`, `mumble-server-runtime-crypto` | `tokio`, IO (`std::net`, `std::fs`) — crates purs                            |
 | tout le workspace                    | `.unwrap()` hors tests, `static mut`, `unsafe` sans commentaire `// SAFETY:` |
 
 Échappatoire réservée à la revue humaine : annoter une ligne avec `gate:allow`.
@@ -78,14 +78,14 @@ ci/gates.sh && ci/dep-direction.sh && ci/verifier-boundary.sh
 Arêtes interdites dans le graphe cargo (`ci/dep-direction.sh`) :
 
 ```
-voxloom-protocol -/-> tokio                voxloom-crypto -/-> tokio
-voxloom-shard    -/-> voxloom-gateway      voxloom-shard  -/-> voxloom-crypto
+mumble-server-runtime-protocol -/-> tokio                mumble-server-runtime-crypto -/-> tokio
+voxloom-shard    -/-> voxloom-gateway      voxloom-shard  -/-> mumble-server-runtime-crypto
 crates centraux  -/-> voxloom-arena        crates centraux -/-> voxloom-testkit
 ```
 
 ## Carte des crates courants
 
-`voxloom-protocol` (framing/protobuf/UDP) · `voxloom-crypto`
+`mumble-server-runtime-protocol` (framing/protobuf/UDP) · `mumble-server-runtime-crypto`
 (OCB2/nonces/rejeu) · `voxloom-shard` (portées, rendu, diff/plan, journal,
 composition, routage, file bornée) · `voxloom-gateway` (TLS/TCP/UDP, handshake,
 registre multi-shards, migration) · `voxloom-testkit` (client simulé et modèle

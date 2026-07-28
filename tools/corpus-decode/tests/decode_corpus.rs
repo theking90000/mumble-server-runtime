@@ -19,7 +19,7 @@ const PROTOBUF_SERVER_SCENARIOS: &[&str] = &[
 ];
 
 /// Scenarios captured against a third-party Mumble 1.3.4 server: their voice plane
-/// is the legacy wire format, which ADR-0001 keeps out of `voxloom-protocol`.
+/// is the legacy wire format, which ADR-0001 keeps out of `mumble-server-runtime-protocol`.
 const LEGACY_SERVER_SCENARIOS: &[&str] = &["01-handshake", "02-channel-join-leave"];
 
 /// Count decoded protobuf Audio packets and decrypted legacy payloads in a
@@ -145,7 +145,7 @@ fn protobuf_server_scenarios_decode_real_protobuf_voice() {
 /// exercises `encode_control`/`encode_udp` against all real message types.
 #[test]
 fn every_decoded_message_reencodes_to_an_equal_message() {
-    use voxloom_protocol::{decode_control, decode_udp, encode_control, encode_udp};
+    use mumble_server_runtime_protocol::{decode_control, decode_udp, encode_control, encode_udp};
 
     for scenario in SCENARIOS {
         let path = corpus_dir().join(scenario).join("session.voxcap");

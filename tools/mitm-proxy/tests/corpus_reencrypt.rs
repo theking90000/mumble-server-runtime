@@ -20,11 +20,11 @@
 use std::path::PathBuf;
 
 use voxloom_corpus_decode::{Dir, Record, Transport, read_records};
-use voxloom_crypto::CryptState;
+use mumble_server_runtime_crypto::CryptState;
 use voxloom_mitm_proxy::{
     CryptChannels, DropReason, UdpOutcome, reencrypt_from_client, reencrypt_from_server,
 };
-use voxloom_protocol::{ControlMessage, decode_frame, decode_udp, parse_frame};
+use mumble_server_runtime_protocol::{ControlMessage, decode_frame, decode_udp, parse_frame};
 
 /// Scenarios captured against the local Mumble 1.5.857 server (protobuf voice).
 /// 03 additionally carries a mid-session full re-key, exercising the rebuild path.

@@ -16,7 +16,7 @@
 //!      any association is attempted.
 //! REF: references/mumble/src/murmur/Server.cpp : `Server::checkDecrypt` — a
 //!      failed decrypt is side-effect-free (OCB2 `decrypt` restores its IV and
-//!      writes no replay history on failure, see voxloom-crypto), so trying one
+//!      writes no replay history on failure, see mumble-server-runtime-crypto), so trying one
 //!      datagram against several candidate domains cannot corrupt them. That is
 //!      what makes the "bind on first success" loop safe here too.
 //!

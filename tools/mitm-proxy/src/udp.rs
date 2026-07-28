@@ -20,8 +20,8 @@
 //! Every datagram ends in exactly one explicit [`UdpOutcome`] — re-encrypted,
 //! passed through, or dropped with a reason — never a silent discard (L4).
 
-use voxloom_crypto::CryptState;
-use voxloom_protocol::{UdpMessage, decode_udp, encode_udp};
+use mumble_server_runtime_crypto::CryptState;
+use mumble_server_runtime_protocol::{UdpMessage, decode_udp, encode_udp};
 
 use crate::relay::Origin;
 use crate::session::CryptChannels;
@@ -136,8 +136,8 @@ mod tests {
 
     use super::*;
     use crate::session::{ProxySecrets, Session};
-    use voxloom_protocol::messages::tcp;
-    use voxloom_protocol::{ControlMessage, encode_udp};
+    use mumble_server_runtime_protocol::messages::tcp;
+    use mumble_server_runtime_protocol::{ControlMessage, encode_udp};
 
     const SERVER_KEY: [u8; 16] = [0x51; 16];
     const SERVER_NONCE: [u8; 16] = [0x52; 16];
@@ -159,8 +159,8 @@ mod tests {
     }
 
     fn sample_audio() -> Vec<u8> {
-        encode_udp(&UdpMessage::Audio(voxloom_protocol::messages::udp::Audio {
-            header: Some(voxloom_protocol::messages::udp::audio::Header::Target(0)),
+        encode_udp(&UdpMessage::Audio(mumble_server_runtime_protocol::messages::udp::Audio {
+            header: Some(mumble_server_runtime_protocol::messages::udp::audio::Header::Target(0)),
             sender_session: 3,
             frame_number: 42,
             opus_data: vec![0x11, 0x22, 0x33],

@@ -3,7 +3,7 @@
 //! the rest is the payload. Every type (and unknown codes) must decode or fail
 //! cleanly, never panic.
 use libfuzzer_sys::fuzz_target;
-use voxloom_protocol::decode_control;
+use mumble_server_runtime_protocol::decode_control;
 
 fuzz_target!(|data: &[u8]| {
     if data.len() < 2 {

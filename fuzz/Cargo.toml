@@ -19,8 +19,8 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4"
-voxloom-protocol = { path = "../voxloom-protocol" }
-voxloom-crypto = { path = "../voxloom-crypto" }
+mumble-server-runtime-protocol = { path = "../mumble-server-runtime-protocol" }
+mumble-server-runtime-crypto = { path = "../mumble-server-runtime-crypto" }
 
 [[bin]]
 name = "framing"

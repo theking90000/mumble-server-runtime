@@ -16,7 +16,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use thiserror::Error;
 use tokio::sync::mpsc;
-use voxloom_protocol::ControlMessage;
+use mumble_server_runtime_protocol::ControlMessage;
 
 /// How many messages one connection's queue holds.
 pub const CAPACITY: usize = 1024;
@@ -189,7 +189,7 @@ mod tests {
     #![allow(clippy::expect_used)]
 
     use super::*;
-    use voxloom_protocol::messages::tcp;
+    use mumble_server_runtime_protocol::messages::tcp;
 
     fn message(session: u32) -> ControlMessage {
         ControlMessage::UserRemove(tcp::UserRemove {
