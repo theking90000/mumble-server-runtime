@@ -27,4 +27,4 @@ git -C references/mumble checkout "$(cat references/mumble.pin)"
 
 The OCB2 `.cpp`/`.h` files are read-only references (R1): they are read to
 understand a mitigation, then every claim is checked against them before any
-`// REF:` comment. They are never compiled in Voxloom.
+`// REF:` comment. They are never compiled in Mumble Server Runtime.

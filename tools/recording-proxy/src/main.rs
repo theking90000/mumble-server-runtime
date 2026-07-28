@@ -1,4 +1,4 @@
-//! Voxloom recording proxy (Phase 0).
+//! Mumble Server Runtime recording proxy (Phase 0).
 //!
 //! Captures official Mumble client <-> Murmur server sessions into `.voxcap`
 //! files: TLS control plane is terminated and logged in clear, UDP voice is

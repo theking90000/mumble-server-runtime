@@ -15,7 +15,7 @@
 //!
 //! ```text
 //!   lobby                              arena
-//!   Voxloom Arena                      The Arena
+//!   Mumble Server Runtime Arena                      The Arena
 //!   |- Red Team                        |- Red Base          scope [1]
 //!   |- Blue Team                       |- Blue Base         scope [2]
 //!   |- Spectators                      |- Observation Deck  scope [3]

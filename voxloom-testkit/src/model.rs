@@ -5,7 +5,7 @@
 //! of the spec §20 protocol invariants — the same way the official client
 //! rejects a malformed server. It is the machine judge of the handshake and of
 //! every later phase (roadmap P3, R2): it is written against the spec and the
-//! vendored reference, never against the Voxloom server.
+//! vendored reference, never against the Mumble Server Runtime server.
 //!
 //! Each invariant is enforced by its own named `check_*` method, so a mutation
 //! that deletes one check is visible and testable in isolation.

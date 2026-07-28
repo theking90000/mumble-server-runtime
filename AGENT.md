@@ -1,6 +1,6 @@
 # AGENT.md — guide opérationnel pour agents d'implémentation
 
-Ce dépôt implémente **Voxloom**, un runtime vocal déclaratif compatible Mumble.
+Ce dépôt implémente **Mumble Server Runtime**, un runtime vocal déclaratif compatible Mumble.
 Ce fichier est le contrat de travail. Le guide d'implémentation
 (`docs/design/guide-implementation.md`) fait autorité sur l'architecture courante ;
 la spécification (`docs/voxloom-specification-technique-v0.1.md`) reste l'autorité
@@ -57,12 +57,12 @@ refusent `todo!`/`unimplemented!`).
 Appliqués par `ci/gates.sh` (grep, car clippy ne peut pas exprimer ces règles
 par-crate) et `ci/dep-direction.sh` (via `cargo metadata`) :
 
-| Zone                         | Interdit |
-|------------------------------|----------|
-| `voxloom-shard/src`          | sockets (`std::net`, `tokio::net`, `TcpListener`, `TcpStream`, `UdpSocket`) |
-| crates centraux              | importer le flavor de démonstration `voxloom-arena` |
-| `voxloom-protocol`, `voxloom-crypto` | `tokio`, IO (`std::net`, `std::fs`) — crates purs |
-| tout le workspace            | `.unwrap()` hors tests, `static mut`, `unsafe` sans commentaire `// SAFETY:` |
+| Zone                                 | Interdit                                                                     |
+| ------------------------------------ | ---------------------------------------------------------------------------- |
+| `voxloom-shard/src`                  | sockets (`std::net`, `tokio::net`, `TcpListener`, `TcpStream`, `UdpSocket`)  |
+| crates centraux                      | importer le flavor de démonstration `voxloom-arena`                          |
+| `voxloom-protocol`, `voxloom-crypto` | `tokio`, IO (`std::net`, `std::fs`) — crates purs                            |
+| tout le workspace                    | `.unwrap()` hors tests, `static mut`, `unsafe` sans commentaire `// SAFETY:` |
 
 Échappatoire réservée à la revue humaine : annoter une ligne avec `gate:allow`.
 Ne l'utilise pas de ta propre initiative.
@@ -96,7 +96,7 @@ Les anciens crates par connexion P4–P7 ont été retirés ; leur dernier état
 consultable au tag `legacy-p7-final`.
 
 Le métier concret appartient aux flavors compilés avec l'application, jamais au
-runtime Voxloom. La décision `docs/decisions/0002-flavor-owns-business-state.md`
+runtime Mumble Server Runtime. La décision `docs/decisions/0002-flavor-owns-business-state.md`
 fait autorité sur cette frontière.
 
 ## État

@@ -181,11 +181,11 @@ mod tests {
         let mut scenario = Arena::new(0);
 
         let first = scenario
-            .next(&model_in("Voxloom Arena", &lobby))
+            .next(&model_in("Mumble Server Runtime Arena", &lobby))
             .and_then(target);
         assert_eq!(first, Some(1));
 
-        assert!(scenario.next(&model_in("Voxloom Arena", &lobby)).is_none());
+        assert!(scenario.next(&model_in("Mumble Server Runtime Arena", &lobby)).is_none());
         let enter = scenario
             .next(&model_in("Red Team", &lobby))
             .and_then(target);

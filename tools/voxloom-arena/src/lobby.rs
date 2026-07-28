@@ -151,7 +151,7 @@ impl ShardLogic for Lobby {
             }
         }
 
-        let root_name = format!("Voxloom Arena | update {}", self.counter);
+        let root_name = format!("Mumble Server Runtime Arena | update {}", self.counter);
         let root = out.root(&root_name);
         // Every channel stays at the root scope: one group, one view, and the
         // whole lobby is a single delta for everyone.

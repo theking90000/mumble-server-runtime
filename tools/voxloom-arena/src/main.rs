@@ -71,7 +71,7 @@ async fn main() -> Result<()> {
     let config = GatewayConfig {
         bind,
         max_users,
-        welcome_text: "Voxloom arena. Double-click a channel to choose.".to_owned(),
+        welcome_text: "Mumble Server Runtime arena. Double-click a channel to choose.".to_owned(),
         ..default
     };
 

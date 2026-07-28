@@ -14,7 +14,7 @@
 > raisonnement. Le modèle courant — **portées en arbre, overlay privé et relation
 > audio orientée, séparés en trois mécanismes** — est décrit dans
 > `guide-implementation.md`, qui fait foi. Ce document reste utile pour le
-> *pourquoi* : diagnostic du quadratique, ordonnancement, sharding, migration,
+> _pourquoi_ : diagnostic du quadratique, ordonnancement, sharding, migration,
 > plan UDP, découpage en crates.
 
 ---
@@ -29,7 +29,7 @@ unique**, et c'est une signature :
 fn render(&self, snapshot: &Snapshot, connection: ConnectionId) -> RenderOutput
 ```
 
-L'unité de rendu est *le monde entier vu par une connexion*. Tout le reste en
+L'unité de rendu est _le monde entier vu par une connexion_. Tout le reste en
 découle mécaniquement :
 
 - N connexions, chacune voyant une vue de taille O(N) ⇒ matérialiser toutes les
@@ -49,14 +49,14 @@ symptômes obligés d'un rendu par connexion.
 **Mesures existantes** (`ci/bench-publication.sh`, checklist P7 signée) :
 
 | connexions | publication complète | par connexion |
-|---|---|---|
-| 2 | 25,75 µs | 12,88 µs |
-| 10 | 140,58 µs | 14,06 µs |
-| 50 | 1,35 ms | 26,90 µs |
-| 200 | 21,01 ms | 105,04 µs |
-| 500 | **198,21 ms** | 396,42 µs |
+| ---------- | -------------------- | ------------- |
+| 2          | 25,75 µs             | 12,88 µs      |
+| 10         | 140,58 µs            | 14,06 µs      |
+| 50         | 1,35 ms              | 26,90 µs      |
+| 200        | 21,01 ms             | 105,04 µs     |
+| 500        | **198,21 ms**        | 396,42 µs     |
 
-Le coût *par connexion* passe de 13 µs à 396 µs : la vue de chaque connexion
+Le coût _par connexion_ passe de 13 µs à 396 µs : la vue de chaque connexion
 grossit avec N, parce qu'elle contient les autres connexions.
 
 Amplification supplémentaire, indépendante : `connection.rs:200` déclenche une
@@ -66,13 +66,13 @@ publications à vide, chacune en O(N).
 
 ### 1.1 Notations
 
-| symbole | sens |
-|---|---|
-| `N` | nombre de connexions |
-| `W` | taille d'un shard : nombre d'éléments **distincts** (canaux, utilisateurs, relations), chaque fait compté **une fois** |
-| `V` | taille d'**une** vue (`W` filtré pour un spectateur) |
-| `D` | taille d'un delta (ce qui a changé entre deux versions du shard) |
-| `S_c` | masque de visibilité de la connexion `c` : le sous-ensemble de `W` qu'elle voit |
+| symbole | sens                                                                                                                   |
+| ------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `N`     | nombre de connexions                                                                                                   |
+| `W`     | taille d'un shard : nombre d'éléments **distincts** (canaux, utilisateurs, relations), chaque fait compté **une fois** |
+| `V`     | taille d'**une** vue (`W` filtré pour un spectateur)                                                                   |
+| `D`     | taille d'un delta (ce qui a changé entre deux versions du shard)                                                       |
+| `S_c`   | masque de visibilité de la connexion `c` : le sous-ensemble de `W` qu'elle voit                                        |
 
 Point clé : `V = O(N)` parce qu'une vue contient des utilisateurs. `W = O(N)`
 parce que chaque utilisateur est **un** fait, quel que soit le nombre de gens qui
@@ -84,7 +84,7 @@ le voient. `N × V` compte des copies ; `W` compte des faits.
 
 > **On réconcilie un shard une fois par tick. Chaque connexion attachée reçoit ce
 > delta partagé, filtré et retouché, plus trois termes qui valent zéro tant que
-> rien n'a changé *pour elle*.**
+> rien n'a changé _pour elle_.**
 
 L'intuition à retenir : on ne partage pas les **vues**, on partage les
 **changements**. C'est une propriété beaucoup plus robuste — elle tient même
@@ -93,12 +93,12 @@ filtré N fois coûte O(N·|D|) et non O(N·V).
 
 Quatre concepts, et rien d'autre :
 
-| concept | rôle |
-|---|---|
-| **Shard** | objet runtime de première classe : unité de **possession**, d'**ordonnancement** (une task), de rendu, d'allocation d'IDs et de routage audio |
-| **Version + journal de deltas** | l'état engagé du shard, versionné, et les deltas déjà encodés en octets |
-| **Cursor** (`u64`, par connexion) | jusqu'où cette connexion a été avancée dans le journal |
-| **Params** (par connexion) | le « fine-tune » : masque de visibilité, réécritures, overlay privé |
+| concept                           | rôle                                                                                                                                          |
+| --------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Shard**                         | objet runtime de première classe : unité de **possession**, d'**ordonnancement** (une task), de rendu, d'allocation d'IDs et de routage audio |
+| **Version + journal de deltas**   | l'état engagé du shard, versionné, et les deltas déjà encodés en octets                                                                       |
+| **Cursor** (`u64`, par connexion) | jusqu'où cette connexion a été avancée dans le journal                                                                                        |
+| **Params** (par connexion)        | le « fine-tune » : masque de visibilité, réécritures, overlay privé                                                                           |
 
 L'état filaire d'une connexion n'est jamais matérialisé. Il est **dérivé** :
 
@@ -179,7 +179,7 @@ loop {
 }
 ```
 
-**Il n'y a aucun tick dans le runtime.** Voxloom ne sait pas *pourquoi* un flavor
+**Il n'y a aucun tick dans le runtime.** Mumble Server Runtime ne sait pas _pourquoi_ un flavor
 voudrait être re-rendu périodiquement, donc il ne l'impose ni ne le propose : il
 se contente de réagir à un réveil et de le plafonner (§4.3).
 
@@ -206,7 +206,7 @@ différentes et vivent à deux endroits différents.
 ### 4.1 `ConnectionRouter` — où va une connexion qui arrive ?
 
 Une connexion qui vient de s'authentifier n'appartient à aucun shard : personne
-ne peut donc décider *depuis* un shard. Le routeur est un objet de niveau
+ne peut donc décider _depuis_ un shard. Le routeur est un objet de niveau
 runtime, fourni par le binaire de composition.
 
 ```rust
@@ -237,9 +237,9 @@ jette aujourd'hui) disparaît.
 
 ### 4.2 `ShardLogic` — trois méthodes, pas une de plus
 
-Voxloom pose exactement trois questions à un shard : *à quoi ressembles-tu*,
-*comment cette connexion est-elle retouchée*, et *voici ce qui s'est passé*. Tout
-le reste quitte le domaine de Voxloom pour entrer dans le métier.
+Mumble Server Runtime pose exactement trois questions à un shard : _à quoi ressembles-tu_,
+_comment cette connexion est-elle retouchée_, et _voici ce qui s'est passé_. Tout
+le reste quitte le domaine de Mumble Server Runtime pour entrer dans le métier.
 
 ```rust
 pub trait ShardLogic: Send + 'static {
@@ -255,10 +255,10 @@ pub trait ShardLogic: Send + 'static {
 }
 ```
 
-**Pas de `tick()`.** Voxloom ne sait pas pourquoi un flavor voudrait un rythme.
+**Pas de `tick()`.** Mumble Server Runtime ne sait pas pourquoi un flavor voudrait un rythme.
 Un flavor qui en veut un le fabrique lui-même (§4.3).
 
-**Pas de `on_message()`, pas de type `Message`.** Voxloom ne sait pas ce qu'un
+**Pas de `on_message()`, pas de type `Message`.** Mumble Server Runtime ne sait pas ce qu'un
 message métier signifie, donc il ne fournit pas de boîte aux lettres : **le flavor
 possède la sienne**. C'est ce qui résout la question « alors `ShardLogic` devrait
 être partagé ? » — non :
@@ -285,8 +285,8 @@ impl ShardLogic for MinecraftGame {
 L'intégration extérieure tient l'émetteur, pousse ses messages, puis appelle
 `handle.wake()`.
 
-La borne est **`Send + 'static`, et surtout pas `Sync`** — au sens où Voxloom ne
-le *demande pas*. Un flavor concret peut se trouver `Sync` (il le sera dès qu'il
+La borne est **`Send + 'static`, et surtout pas `Sync`** — au sens où Mumble Server Runtime ne
+le _demande pas_. Un flavor concret peut se trouver `Sync` (il le sera dès qu'il
 contient un `Arc<Mutex<…>>`), c'est son affaire. Ce que dit la borne, c'est que
 **le runtime n'a jamais besoin de partager la logique**, donc il ne force aucune
 synchronisation interne, et `&mut self` permet de mémoïser sans `Mutex` ni
@@ -294,9 +294,9 @@ synchronisation interne, et `&mut self` permet de mémoïser sans `Mutex` ni
 
 ### 4.3 `wake()` : la seule interface métier → runtime
 
-C'est *toute* la question, et elle mérite une réponse nette.
+C'est _toute_ la question, et elle mérite une réponse nette.
 
-Voxloom **ne peut pas savoir** quand l'état d'un flavor a changé : cet état est
+Mumble Server Runtime **ne peut pas savoir** quand l'état d'un flavor a changé : cet état est
 opaque et souvent extérieur au processus. Il n'a donc que deux options : sonder
 (rendre à chaque tick et diffuser, ce qui brûle du CPU à vide et impose un rythme
 arbitraire), ou être **prévenu**. `wake()` est ce « prévenu », et il ne transporte
@@ -309,9 +309,9 @@ Conséquences, et c'est là que le design se simplifie :
 - **Le rythme appartient au flavor, la protection au runtime.** Une horloge à
   10 Hz dans un nom de canal ? L'intégration lance son propre
   `tokio::interval(100ms)` et appelle `wake()`. Des positions à 20 Hz ? Pareil.
-  Voxloom, lui, garantit seulement qu'il ne re-rendra pas plus d'une fois par
+  Mumble Server Runtime, lui, garantit seulement qu'il ne re-rendra pas plus d'une fois par
   `MIN_INTERVAL` — un flavor qui réveille à 10 kHz ne peut pas le noyer.
-- **Le runtime n'a plus aucun tick.** Rien dans Voxloom n'a besoin d'un rythme
+- **Le runtime n'a plus aucun tick.** Rien dans Mumble Server Runtime n'a besoin d'un rythme
   propre : les budgets de voix sont pilotés par l'arrivée des paquets, les
   timeouts vivent dans les tasks de connexion, et le routage audio se recompile à
   partir du rendu.
@@ -349,13 +349,13 @@ let game = runtime.create_shard(|h| MinecraftGame::new(game_id, h, rx));
 ```
 
 `observe` n'a donc pas besoin de paramètre supplémentaire : le flavor tient déjà
-sa poignée. Et le même objet sert *dedans* (réagir à un événement vocal) et
-*dehors* (l'intégration décide de déplacer un joueur). Un vocabulaire, pas deux.
+sa poignée. Et le même objet sert _dedans_ (réagir à un événement vocal) et
+_dehors_ (l'intégration décide de déplacer un joueur). Un vocabulaire, pas deux.
 
 ### 4.5 Ce que ça rend possible gratuitement : le shard piloté par RPC
 
 Preuve que trois méthodes suffisent — un shard dont la logique est pilotée à
-distance ne demande **rien** à Voxloom :
+distance ne demande **rien** à Mumble Server Runtime :
 
 ```rust
 struct RpcShard {
@@ -374,7 +374,7 @@ impl ShardLogic for RpcShard {
 //     handle.wake();
 ```
 
-Voxloom ne connaît ni HTTP, ni gRPC, ni la forme du `DesiredState`. La variante
+Mumble Server Runtime ne connaît ni HTTP, ni gRPC, ni la forme du `DesiredState`. La variante
 « logique figée pilotée par des commandes prédéfinies » est le même code avec un
 `DesiredState` plus contraint. Seule contrainte, qui est celle de tout flavor :
 **les sections critiques doivent rester courtes**, parce qu'elles s'exécutent dans
@@ -424,7 +424,7 @@ pub struct Params {
 ```
 
 **Pourquoi cette forme.** Le typage rend le partage structurel, non
-disciplinaire : `render` ne *peut pas* produire du contenu par spectateur. Si le
+disciplinaire : `render` ne _peut pas_ produire du contenu par spectateur. Si le
 flavor a besoin de personnalisation, il la déclare dans `Params`, où son coût est
 visible et mesurable, au lieu de la cacher dans une boucle de rendu.
 
@@ -436,10 +436,10 @@ les `Arc<S>`.**
 `Snapshot` existait pour **deux** raisons, toutes deux dissoutes par « un shard =
 une task = un propriétaire » :
 
-1. *Immutabilité pendant une génération* — rendre toutes les connexions depuis un
+1. _Immutabilité pendant une génération_ — rendre toutes les connexions depuis un
    état figé, sans lecture déchirée. Dans une task mono-propriétaire, rien ne peut
    muter sous le rendu : c'est garanti par `&mut self`, pas par un `Arc`.
-2. *Le flavor possède sa concurrence, Voxloom ne le verrouille jamais* — le
+2. _Le flavor possède sa concurrence, Mumble Server Runtime ne le verrouille jamais_ — le
    runtime empruntait un `Arc` pour ne pas avoir à prendre de verrou. Sans
    partage, il n'y a plus rien à ne pas verrouiller ; `!Sync` le dit dans le type.
 
@@ -450,7 +450,7 @@ Ce qu'on garde autrement :
 - **Le replay** (spec P9) se fait mieux au niveau runtime : journaliser les deltas
   **émis** est un artefact plus fidèle qu'un snapshot métier, puisque c'est
   exactement ce que le client a reçu.
-- **La communication depuis l'extérieur** (serveur Minecraft → Voxloom) passe de
+- **La communication depuis l'extérieur** (serveur Minecraft → Mumble Server Runtime) passe de
   « publier un `Arc<Snapshot>` + drapeau dirty » à « envoyer un message typé dans
   la mailbox du shard ». C'est plus explicite et ça donne une **backpressure**
   que l'`Arc` partagé n'avait pas.
@@ -473,12 +473,12 @@ Il y a donc trois emplacements possibles, et chacun a un propriétaire net.
 
 C'est la réponse à « il faut bien que ça soit quelque part ». Si un serveur gRPC
 ou un plugin Minecraft doit écrire, c'est le flavor qui porte le mécanisme, et
-Voxloom ne le voit ni ne le touche. Deux formes, à choisir selon la sémantique :
+Mumble Server Runtime ne le voit ni ne le touche. Deux formes, à choisir selon la sémantique :
 
-| forme | quand | conséquence |
-|---|---|---|
-| `mpsc::Receiver<Msg>` dans la logique, `Sender` dehors | **flux d'événements** (« le joueur a rejoint l'équipe B ») | aucun verrou ; `try_recv()` ne bloque jamais la task de shard ; backpressure naturelle |
-| `Arc<Mutex<State>>` cloné dehors | **dernière valeur gagnante** (une table de positions réécrite à 20 Hz) | pas de file de valeurs périmées, mais un verrou que la task de shard prend dans `render()` |
+| forme                                                  | quand                                                                  | conséquence                                                                                |
+| ------------------------------------------------------ | ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| `mpsc::Receiver<Msg>` dans la logique, `Sender` dehors | **flux d'événements** (« le joueur a rejoint l'équipe B »)             | aucun verrou ; `try_recv()` ne bloque jamais la task de shard ; backpressure naturelle     |
+| `Arc<Mutex<State>>` cloné dehors                       | **dernière valeur gagnante** (une table de positions réécrite à 20 Hz) | pas de file de valeurs périmées, mais un verrou que la task de shard prend dans `render()` |
 
 **Recommandation par défaut : le canal.** Il rend impossible le mode de panne du
 mutex — un writer extérieur qui fait de l'I/O sous le verrou **bloque la task du
@@ -501,18 +501,18 @@ pub struct ShardHandle {
 
 `move_connection` et `close_connection` **envoient une commande**, ils ne mutent
 rien : les tables de shards appartiennent à des tasks. La poignée ne porte donc
-que la capacité de *signaler*, jamais un accès à l'état. C'est ce qui la rend
+que la capacité de _signaler_, jamais un accès à l'état. C'est ce qui la rend
 `Clone + Send + Sync` sans aucun verrou.
 
-#### c) Le runtime → des `Arc`, oui, mais tous *read-mostly* ou non contendus
+#### c) Le runtime → des `Arc`, oui, mais tous _read-mostly_ ou non contendus
 
-| structure | écrite par | lue par | nature |
-|---|---|---|---|
-| `ArcSwap<Bindings>` | association UDP, déconnexion, migration (rare) | plan UDP (chaque datagramme) | copy-on-write, lecture lock-free |
-| `Arc<ArcSwap<ShardRouting>>` | la task du shard | plan UDP | **le seul cellier partagé entre un shard et le hot path**, et il est en `store`/`load` |
-| `Arc<Mutex<CryptState>>` | plan UDP, tunnel TCP | idem | **par connexion**, donc jamais contendu ; l'état OCB2 est mutable par nature |
-| `Arc<AtomicU64>` (curseur) | la task d'écriture de la connexion | plan UDP (gating inv. 19) | atomique, pas de verrou |
-| `mpsc::Sender` (file de sortie) | task de shard, plan UDP | task d'écriture | canal borné |
+| structure                       | écrite par                                     | lue par                      | nature                                                                                 |
+| ------------------------------- | ---------------------------------------------- | ---------------------------- | -------------------------------------------------------------------------------------- |
+| `ArcSwap<Bindings>`             | association UDP, déconnexion, migration (rare) | plan UDP (chaque datagramme) | copy-on-write, lecture lock-free                                                       |
+| `Arc<ArcSwap<ShardRouting>>`    | la task du shard                               | plan UDP                     | **le seul cellier partagé entre un shard et le hot path**, et il est en `store`/`load` |
+| `Arc<Mutex<CryptState>>`        | plan UDP, tunnel TCP                           | idem                         | **par connexion**, donc jamais contendu ; l'état OCB2 est mutable par nature           |
+| `Arc<AtomicU64>` (curseur)      | la task d'écriture de la connexion             | plan UDP (gating inv. 19)    | atomique, pas de verrou                                                                |
+| `mpsc::Sender` (file de sortie) | task de shard, plan UDP                        | task d'écriture              | canal borné                                                                            |
 
 Aucune de ces lignes n'est un verrou global, et aucune n'est prise par le plan de
 contrôle. C'est ce que garantit l'énoncé en tête de §4.9 — pas l'absence d'`Arc`.
@@ -661,7 +661,7 @@ référence pendante.
   jamais une contrainte d'antériorité. Un plan valide filtré reste valide :
   **aucune replanification**. À encoder en test.
 - **L'injection a besoin d'un emplacement.** Ajouter des opérations privées est
-  une insertion, qui *peut* violer l'ordre. On garde les éléments privés dans leur
+  une insertion, qui _peut_ violer l'ordre. On garde les éléments privés dans leur
   propre sous-arbre et on append : la position devient trivialement sûre.
 
 ---
@@ -678,14 +678,14 @@ deltas** : on stocke les deltas consécutifs, on rejoue `cursor → head`, et on
 retombe sur un **snapshot complet** au-delà d'un seuil de profondeur. Mémoire
 bornée, consultation O(1), et un seul chemin pour cinq situations :
 
-| événement | traitement |
-|---|---|
-| tick, rien n'a changé | un rendu + diff vide. **Zéro travail par connexion.** |
-| changement | O(1) diff, O(1) encodage, puis O(N) clones d'`Arc` |
-| connexion qui arrive | snapshot au head, `cursor = head` |
-| connexion en retard | le curseur reste derrière, rejoue au drainage |
-| connexion tombée hors du journal | snapshot au head — **même chemin que l'arrivée** |
-| connexion qui change de shard | détacher, snapshot du nouveau shard — **encore le même** |
+| événement                        | traitement                                               |
+| -------------------------------- | -------------------------------------------------------- |
+| tick, rien n'a changé            | un rendu + diff vide. **Zéro travail par connexion.**    |
+| changement                       | O(1) diff, O(1) encodage, puis O(N) clones d'`Arc`       |
+| connexion qui arrive             | snapshot au head, `cursor = head`                        |
+| connexion en retard              | le curseur reste derrière, rejoue au drainage            |
+| connexion tombée hors du journal | snapshot au head — **même chemin que l'arrivée**         |
+| connexion qui change de shard    | détacher, snapshot du nouveau shard — **encore le même** |
 
 Mémoïser `filter(D, mask)` entre connexions partageant un masque redevient une
 **optimisation** ajoutable plus tard si la mesure la justifie, et non un mécanisme
@@ -720,7 +720,7 @@ filtrage de vue pilote le filtrage audio. Une structure, deux consommateurs.
 en retard est derrière. Chaque route porte donc `valid_from: u64`, et le hot path
 teste `cursor_r >= route.valid_from` — un chargement atomique et une comparaison,
 sans allocation. La révocation reste **eager et inconditionnelle** (entendre
-*moins* que son dû est toujours sûr) ; l'activation est **gated** sur le curseur.
+_moins_ que son dû est toujours sûr) ; l'activation est **gated** sur le curseur.
 C'est l'asymétrie déjà établie par le design actuel, exprimée par une comparaison
 de `u64` au lieu d'un protocole de commit.
 
@@ -738,12 +738,12 @@ ne touche pas les vues.
 C'est la décision structurante, et elle sépare deux choses que le mot
 « posséder » confond :
 
-| objet | propriétaire | pourquoi |
-|---|---|---|
-| **état de contrôle** d'une connexion (`cursor`, `params`, émetteur de file) | **le Shard** | c'est ce qui doit être cohérent avec la version du shard |
-| **socket TLS, crypto OCB2, boucle de lecture/écriture** | **la task de connexion** | une écriture socket await ; un shard ne doit jamais awaiter |
+| objet                                                                       | propriétaire             | pourquoi                                                    |
+| --------------------------------------------------------------------------- | ------------------------ | ----------------------------------------------------------- |
+| **état de contrôle** d'une connexion (`cursor`, `params`, émetteur de file) | **le Shard**             | c'est ce qui doit être cohérent avec la version du shard    |
+| **socket TLS, crypto OCB2, boucle de lecture/écriture**                     | **la task de connexion** | une écriture socket await ; un shard ne doit jamais awaiter |
 
-Le shard *possède* la connexion au sens de l'autorité et de l'ordonnancement ; il
+Le shard _possède_ la connexion au sens de l'autorité et de l'ordonnancement ; il
 ne détient pas le descripteur. C'est ce qui permet à la task de shard de rester
 purement CPU, et à un client lent de ne ralentir que lui-même.
 
@@ -771,8 +771,8 @@ Déplacer `c` du shard A vers le shard B :
    `c` avec `cursor = head_B`, recompile son routage avec `c`.
 5. **B accorde l'audio**, gated sur `cursor_c >= valid_from` (invariant 19).
 
-**Ordre garanti sans protocole supplémentaire** : A pousse (2) *avant* d'envoyer
-(3), B pousse (4) *après* avoir reçu (3), et la file de sortie de `c` est FIFO.
+**Ordre garanti sans protocole supplémentaire** : A pousse (2) _avant_ d'envoyer
+(3), B pousse (4) _après_ avoir reçu (3), et la file de sortie de `c` est FIFO.
 Le client voit donc le retrait puis l'ajout, jamais l'inverse.
 
 **Commandes entrantes pendant la migration.** La task de connexion tient un
@@ -954,18 +954,18 @@ shard.
 
 ## 12. Questions ouvertes
 
-| # | question | pourquoi elle bloque | statut |
-|---|---|---|---|
-| **Q1** | Le client Mumble officiel tolère-t-il des IDs de canaux **épars et grands** ? S'il les utilise comme indices de tableau, §10.4 s'effondre. | Réponse R1, dans les sources vendorées. **La moins chère et la plus structurante.** | ouverte |
-| **Q2** | Peut-on écrire `Params` pour 2–3 scénarios Minecraft réels sans y mettre l'identité du joueur ? | Si le terme 3 se déclenche en permanence, le gain en régime établi s'érode. **À falsifier en premier, sans code.** | ouverte |
-| **Q3** | La proximité reste-t-elle hors du VDOM ? | Une position par paire, mise dans la vue, force une personnalisation par joueur. | proposée : oui, routage seulement, tick séparé |
-| **Q4** | Qui construit le masque : le flavor le déclare (`params`), ou le runtime le dérive du rendu ? | Déclaré est plus simple et plus honnête, mais déplace une charge de correction vers l'auteur du flavor. | ouverte |
-| **Q5** | Profondeur du journal et seuil de snapshot ; mémoire par shard. | Dimensionne le pire cas d'un client lent. | ouverte |
-| **Q6** | Les IDs globaux fuitent la cardinalité. Les session IDs le font déjà. Acceptable ? | Décision de sécurité explicite. | ouverte |
-| **Q7** | Migration inter-processus : reconnexion, passage de fd, ou frontal ? Et steering UDP (`SO_REUSEPORT` + BPF) ? | À différer, mais écrire quelle porte on garde ouverte (§10.5, §11.5). | différée |
-| **Q8** | Utilisateurs synthétiques (spec 9.4), aujourd'hui refusés. L'overlay privé de `Params` leur donne-t-il enfin une place ? | Bloquant hérité de P7, à trancher avant P8. | ouverte |
-| **Q9** | Que devient une connexion quand son shard est détruit sous elle : repli vers un shard « lobby », ou fermeture ? | Politique, donc au flavor — mais le runtime doit offrir un défaut sûr. | ouverte |
-| **Q10** | Une task de shard qui panique ferme ses connexions. Faut-il un `catch_unwind` autour de l'appel au flavor pour survivre à un bug métier isolé ? | Compromis robustesse / fail-closed. | ouverte |
+| #       | question                                                                                                                                        | pourquoi elle bloque                                                                                               | statut                                         |
+| ------- | ----------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------- |
+| **Q1**  | Le client Mumble officiel tolère-t-il des IDs de canaux **épars et grands** ? S'il les utilise comme indices de tableau, §10.4 s'effondre.      | Réponse R1, dans les sources vendorées. **La moins chère et la plus structurante.**                                | ouverte                                        |
+| **Q2**  | Peut-on écrire `Params` pour 2–3 scénarios Minecraft réels sans y mettre l'identité du joueur ?                                                 | Si le terme 3 se déclenche en permanence, le gain en régime établi s'érode. **À falsifier en premier, sans code.** | ouverte                                        |
+| **Q3**  | La proximité reste-t-elle hors du VDOM ?                                                                                                        | Une position par paire, mise dans la vue, force une personnalisation par joueur.                                   | proposée : oui, routage seulement, tick séparé |
+| **Q4**  | Qui construit le masque : le flavor le déclare (`params`), ou le runtime le dérive du rendu ?                                                   | Déclaré est plus simple et plus honnête, mais déplace une charge de correction vers l'auteur du flavor.            | ouverte                                        |
+| **Q5**  | Profondeur du journal et seuil de snapshot ; mémoire par shard.                                                                                 | Dimensionne le pire cas d'un client lent.                                                                          | ouverte                                        |
+| **Q6**  | Les IDs globaux fuitent la cardinalité. Les session IDs le font déjà. Acceptable ?                                                              | Décision de sécurité explicite.                                                                                    | ouverte                                        |
+| **Q7**  | Migration inter-processus : reconnexion, passage de fd, ou frontal ? Et steering UDP (`SO_REUSEPORT` + BPF) ?                                   | À différer, mais écrire quelle porte on garde ouverte (§10.5, §11.5).                                              | différée                                       |
+| **Q8**  | Utilisateurs synthétiques (spec 9.4), aujourd'hui refusés. L'overlay privé de `Params` leur donne-t-il enfin une place ?                        | Bloquant hérité de P7, à trancher avant P8.                                                                        | ouverte                                        |
+| **Q9**  | Que devient une connexion quand son shard est détruit sous elle : repli vers un shard « lobby », ou fermeture ?                                 | Politique, donc au flavor — mais le runtime doit offrir un défaut sûr.                                             | ouverte                                        |
+| **Q10** | Une task de shard qui panique ferme ses connexions. Faut-il un `catch_unwind` autour de l'appel au flavor pour survivre à un bug métier isolé ? | Compromis robustesse / fail-closed.                                                                                | ouverte                                        |
 
 ---
 
@@ -1047,16 +1047,16 @@ VÉRIFICATEUR (R2)
 
 ### 13.3 Ce qui disparaît, en lignes
 
-| fichier | lignes | sort |
-|---|---|---|
-| `voxloom-control/src/publication.rs` | 1080 | supprimé (coordinateur, jetons, epochs) |
-| `voxloom-control/src/validation.rs` | 609 | ~supprimé (la confidentialité devient la clôture du masque) |
-| `voxloom-control/src/voxloom_control.rs` | 227 | supprimé |
-| `voxloom-session/src/view.rs` | 579 | supprimé (remplacé par un `u64`) |
-| `voxloom-control/src/voice_events.rs` | 466 | **survit**, déménage |
-| `voxloom-session/src/emit.rs` | 866 | **survit** |
-| `voxloom-session/src/inbound.rs` | 551 | **survit**, résout contre le masque |
-| `voxloom-server/src/outbound.rs` | 483 | **survit** (la file bornée + `try_reserve` est bonne) |
+| fichier                                  | lignes | sort                                                        |
+| ---------------------------------------- | ------ | ----------------------------------------------------------- |
+| `voxloom-control/src/publication.rs`     | 1080   | supprimé (coordinateur, jetons, epochs)                     |
+| `voxloom-control/src/validation.rs`      | 609    | ~supprimé (la confidentialité devient la clôture du masque) |
+| `voxloom-control/src/voxloom_control.rs` | 227    | supprimé                                                    |
+| `voxloom-session/src/view.rs`            | 579    | supprimé (remplacé par un `u64`)                            |
+| `voxloom-control/src/voice_events.rs`    | 466    | **survit**, déménage                                        |
+| `voxloom-session/src/emit.rs`            | 866    | **survit**                                                  |
+| `voxloom-session/src/inbound.rs`         | 551    | **survit**, résout contre le masque                         |
+| `voxloom-server/src/outbound.rs`         | 483    | **survit** (la file bornée + `try_reserve` est bonne)       |
 
 Environ **2 500 lignes supprimées**, contre ~700–900 à écrire (`project` +
 `journal`). Le crate `voxloom-control` disparaît entièrement.
@@ -1067,13 +1067,13 @@ C'est là que la robustesse se gagne vraiment : **on ne peut tester que ce qu'on
 sait nommer.** Le modèle actuel laisse implicites des choses qui deviennent des
 valeurs, et chaque valeur devient testable seule.
 
-| aujourd'hui, implicite | demain, nommé | propriété vérifiable seule |
-|---|---|---|
-| la projection d'une vue, cachée dans `render()` | `Params` + `filter` | `apply(filter(D)) == filter(apply(D))` ; masque clos ⇒ aucune référence pendante ; le filtrage préserve l'ordre |
-| « jusqu'où le client a été informé », éclaté entre `revision`, `CommitToken` et l'état de la file | `cursor: u64` | sémantique d'anneau : avancée, chute hors fenêtre, équivalence rejeu/snapshot — **sans aucun vocabulaire de vue** |
-| « qui possède une connexion » : personne (`SharedState` est un sac) | le Shard | isolation de panne, migration = detach+attach |
-| « quand rend-on » : 4 sites d'appel | une boucle | coalescence, plafond de débit, latence à vide |
-| la confidentialité, validée sur **chaque sortie** | la clôture du masque, validée **une fois** | surface de vérification divisée par le nombre d'éléments |
+| aujourd'hui, implicite                                                                            | demain, nommé                              | propriété vérifiable seule                                                                                        |
+| ------------------------------------------------------------------------------------------------- | ------------------------------------------ | ----------------------------------------------------------------------------------------------------------------- |
+| la projection d'une vue, cachée dans `render()`                                                   | `Params` + `filter`                        | `apply(filter(D)) == filter(apply(D))` ; masque clos ⇒ aucune référence pendante ; le filtrage préserve l'ordre   |
+| « jusqu'où le client a été informé », éclaté entre `revision`, `CommitToken` et l'état de la file | `cursor: u64`                              | sémantique d'anneau : avancée, chute hors fenêtre, équivalence rejeu/snapshot — **sans aucun vocabulaire de vue** |
+| « qui possède une connexion » : personne (`SharedState` est un sac)                               | le Shard                                   | isolation de panne, migration = detach+attach                                                                     |
+| « quand rend-on » : 4 sites d'appel                                                               | une boucle                                 | coalescence, plafond de débit, latence à vide                                                                     |
+| la confidentialité, validée sur **chaque sortie**                                                 | la clôture du masque, validée **une fois** | surface de vérification divisée par le nombre d'éléments                                                          |
 
 Et les couches basses gardent leurs oracles existants sans y toucher :
 `voxloom-reconcile` son proptest 4000 graines, `voxloom-audio` ses propriétés et
@@ -1097,32 +1097,32 @@ L'oracle composé du runtime (§7.1) ne fait que les empiler.
 Honnêteté du bilan : la refonte ne supprime pas le risque, elle le **déplace**,
 et il faut savoir où il atterrit.
 
-| gagné | perdu / déplacé |
-|---|---|
+| gagné                                                                                                                  | perdu / déplacé                                                                                 |
+| ---------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
 | Confidentialité **structurelle** (on ne peut pas adresser ce à quoi on n'est pas abonné) au lieu de validée par sortie | Le **contenu** du masque reste une décision du flavor. On valide sa clôture, pas sa pertinence. |
-| Rayon de panne : un shard, pas le serveur | Le flavor tourne **dans** la task de shard : bloquer ou paniquer y est plus grave (Q10) |
-| Un client lent est un `u64` en retard, il ne peut affecter personne | — |
-| 19 concepts → 4 : beaucoup moins d'états invalides représentables | IDs globaux épars (Q1) |
-| Un oracle par couche, testable sans les couches du dessus | Le transport distribué (annexe A) est de l'infrastructure neuve |
+| Rayon de panne : un shard, pas le serveur                                                                              | Le flavor tourne **dans** la task de shard : bloquer ou paniquer y est plus grave (Q10)         |
+| Un client lent est un `u64` en retard, il ne peut affecter personne                                                    | —                                                                                               |
+| 19 concepts → 4 : beaucoup moins d'états invalides représentables                                                      | IDs globaux épars (Q1)                                                                          |
+| Un oracle par couche, testable sans les couches du dessus                                                              | Le transport distribué (annexe A) est de l'infrastructure neuve                                 |
 
 ---
 
 ## 14. Complexité
 
-| | régime établi | changement de masque | rechargement complet |
-|---|---|---|---|
-| rendu + diff shard | O(W) | O(W) | O(W) |
-| par connexion | O(\|D\|) | O(\|S Δ S'\|) | O(W) |
-| **total par shard** | **O(W + N·\|D\|)** | + O(Σ churn masques) | O(N·W) |
+|                     | régime établi      | changement de masque | rechargement complet |
+| ------------------- | ------------------ | -------------------- | -------------------- |
+| rendu + diff shard  | O(W)               | O(W)                 | O(W)                 |
+| par connexion       | O(\|D\|)           | O(\|S Δ S'\|)        | O(W)                 |
+| **total par shard** | **O(W + N·\|D\|)** | + O(Σ churn masques) | O(N·W)               |
 
 En régime établi `|D|` vaut quelques opérations, donc **O(W + N)** — linéaire, et
 **indépendant du nombre de vues distinctes**. Les shards étant indépendants et
 sur des tasks séparées, K shards se répartissent sur K cœurs.
 
-| | rendu | diff | encodage | fan-out | total |
-|---|---|---|---|---|---|
-| aujourd'hui | O(N·V) | O(N·V) | O(N·V) | O(N) | **O(N²)**, mono-verrou |
-| proposition | O(W) | O(W) | O(\|D\|) | O(N) | **O(W + N·\|D\|)**, parallèle par shard |
+|             | rendu  | diff   | encodage | fan-out | total                                   |
+| ----------- | ------ | ------ | -------- | ------- | --------------------------------------- |
+| aujourd'hui | O(N·V) | O(N·V) | O(N·V)   | O(N)    | **O(N²)**, mono-verrou                  |
+| proposition | O(W)   | O(W)   | O(\|D\|) | O(N)    | **O(W + N·\|D\|)**, parallèle par shard |
 
 Le terme de fan-out ne disparaît jamais : il faut écrire des octets sur N sockets.
 C'est le plancher, et c'est pourquoi O(N) par tick est optimal et pas seulement
@@ -1166,7 +1166,7 @@ que les cinq règles de §10.5 étaient les bonnes.
 
 Deux flux descendants, tous deux rares :
 
-1. **Le journal de deltas du shard**, en *structuré* (pas encore en frames
+1. **Le journal de deltas du shard**, en _structuré_ (pas encore en frames
    Mumble), diffusé une fois par **proxy** — pas par connexion. Trois proxies et
    500 connexions ⇒ 3 copies, pas 500.
 2. **Les mises à jour de `Params`** par connexion, qui ne partent que sur les
@@ -1205,7 +1205,7 @@ et non O(R), le nombre de destinataires.** À 5 proxies, un locuteur coûte 4
 paquets internes, quel que soit le nombre d'auditeurs. Chaque proxy route pour
 ses propres connexions à partir de la table répliquée.
 
-Le chiffrement étant par connexion, il ne *peut* se faire que chez le propriétaire
+Le chiffrement étant par connexion, il ne _peut_ se faire que chez le propriétaire
 du socket : c'est ce qui impose ce découpage plutôt qu'un relais central.
 
 **Le gating de l'invariant 19 est local et gratuit.** `cursor_r >= valid_from` se
@@ -1235,10 +1235,10 @@ séquence.
 
 Deux espaces, deux propriétaires — et c'est plus propre que §10.4 :
 
-| espace | alloué par | pourquoi |
-|---|---|---|
+| espace                       | alloué par   | pourquoi                                                                                       |
+| ---------------------------- | ------------ | ---------------------------------------------------------------------------------------------- |
 | **session id** (utilisateur) | le **proxy** | c'est l'identité de la connexion, stable pour toute sa vie, y compris à travers les migrations |
-| **channel id** | le **shard** | un canal appartient à un shard et ne le quitte pas |
+| **channel id**               | le **shard** | un canal appartient à un shard et ne le quitte pas                                             |
 
 Partition statique des bits de poids fort (id de proxy / id de shard) plutôt qu'un
 service de bail : zéro coordination. En `u32`, par exemple 12 bits d'espace + 19
@@ -1248,12 +1248,12 @@ bits locaux + 1 bit éphémère. Serré mais suffisant.
 
 ### A.6 Ce qui n'est pas gratuit
 
-| point | nature |
-|---|---|
-| **Certificat serveur partagé** entre tous les proxies | Le client Mumble indexe ses préférences par shard, et son verdict UDP, sur le `sha1` de la clé publique du serveur. Des certificats différents ⇒ le client croit changer de serveur. Il faut distribuer le même matériel de clé. Opérationnel, mais réel. |
-| **Stickiness UDP** | Le client envoie son UDP à l'adresse:port de son TCP. Il faut donc que le datagramme atteigne *le proxy qui tient sa connexion TCP*. Le plus simple : une adresse publique par proxy, choix à la connexion (DNS round-robin). Sinon L4 avec hachage cohérent sur l'adresse source. Mumble n'offre pas de mécanisme de redirection. |
-| **Mort d'un shard** | Ses connexions ont une vue d'un monde mort. Les proxies détectent le silence du journal et appliquent la politique de Q9, à l'échelle physique. |
-| **Le transport interne** | Livraison du journal + fanout voix inter-proxy : c'est de l'infrastructure nouvelle, et c'est le vrai coût de cette topologie. |
+| point                                                 | nature                                                                                                                                                                                                                                                                                                                             |
+| ----------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Certificat serveur partagé** entre tous les proxies | Le client Mumble indexe ses préférences par shard, et son verdict UDP, sur le `sha1` de la clé publique du serveur. Des certificats différents ⇒ le client croit changer de serveur. Il faut distribuer le même matériel de clé. Opérationnel, mais réel.                                                                          |
+| **Stickiness UDP**                                    | Le client envoie son UDP à l'adresse:port de son TCP. Il faut donc que le datagramme atteigne _le proxy qui tient sa connexion TCP_. Le plus simple : une adresse publique par proxy, choix à la connexion (DNS round-robin). Sinon L4 avec hachage cohérent sur l'adresse source. Mumble n'offre pas de mécanisme de redirection. |
+| **Mort d'un shard**                                   | Ses connexions ont une vue d'un monde mort. Les proxies détectent le silence du journal et appliquent la politique de Q9, à l'échelle physique.                                                                                                                                                                                    |
+| **Le transport interne**                              | Livraison du journal + fanout voix inter-proxy : c'est de l'infrastructure nouvelle, et c'est le vrai coût de cette topologie.                                                                                                                                                                                                     |
 
 ### A.7 Réutilisation existante
 
@@ -1278,11 +1278,11 @@ ne la réclame (§27.4 de la spec : pas d'optimisation sans mesure).
 
 ## 15. Journal des révisions
 
-| date | révision |
-|---|---|
-| 2026-07-27 | **r1.** Première rédaction : diagnostic, modèle à quatre concepts, contrat de flavor, pipeline en quatre termes, ordonnancement, règles de correction, journal vs cache, audio, sharding et migration, complexité, questions ouvertes. |
-| 2026-07-27 | **r6.** Ajout de **§4.9 — où vivent les `Arc` et les `Mutex`**, et correction d'une formulation trop absolue de r5 : la borne est `Send + 'static` et Voxloom ne *demande* pas `Sync`, ce qui n'interdit pas à un flavor concret de l'être. Trois emplacements, trois propriétaires : le partage métier vit **dans le `ShardLogic` concret** (canal pour un flux d'événements, `Arc<Mutex>` pour du « dernière valeur gagnante », avec le mode de panne du second explicité) ; **`ShardHandle` ne porte aucun état** (un `Arc<Notify>` et un `mpsc::Sender<RuntimeCommand>` — signal et message, jamais pointeur) ; le runtime a des `Arc` mais tous *read-mostly* (`ArcSwap`) ou par-connexion non contendus. L'énoncé défendable devient : **aucun verrou global, aucun verrou tenu à travers un `.await`, aucun verrou contendu sur le chemin de contrôle**. |
-| 2026-07-27 | **r5.** §4 refondu. `ShardLogic` réduit à **trois méthodes** — `render`, `params`, `observe` : `tick()` et `on_message()`/`type Message` sont retirés, parce que Voxloom ne sait ni pourquoi un flavor voudrait un rythme, ni ce qu'un message métier signifie. **Le flavor possède sa propre boîte aux lettres** et la draine dans `render` (§4.2), ce qui règle « alors `ShardLogic` serait partagé ? » sans le rendre `Sync`. **`wake()` est explicité comme la seule interface métier → runtime** (§4.3) : le rythme appartient au flavor, la protection (`MIN_INTERVAL`) au runtime, et **le runtime n'a plus aucun tick**. `ShardControl` supprimé au profit d'une **poignée unique `ShardHandle`** remise à la construction, utilisable dedans comme dehors (§4.4). Ajout de §4.5 (shard piloté par RPC, preuve que trois méthodes suffisent) et §4.6 (**vue opérationnelle** : démarrage, arrivée d'une connexion, régime établi, métriques à exposer). Renumérotation : `Params` → §4.7, `Snapshot` → §4.8. |
-| 2026-07-27 | **r4.** §13 étoffé : critère d'existence d'un crate (« une arête à interdire »), **carte des crates proposée** (deux nouveaux purs : `voxloom-project` pour le masque/filtrage, `voxloom-journal` pour versions et curseurs ; `voxloom-control` disparaît ; `voxloom-server` devient `voxloom-runtime`), décompte des suppressions (~2 500 lignes contre ~800 à écrire), **un oracle par composant** (§13.4) et ce qu'on refuse de découper (§13.5). Ajout de §13.6 : où le risque se déplace, honnêtement. |
-| 2026-07-27 | **r3.** Ajout de l'**annexe A** (exploratoire, hors périmètre) : scaling horizontal avec shard = machine et étage de proxies façon BungeeCord. Vérifie que les cinq règles de §10.5 suffisent. Résultats notables : le proxy est la promotion de la task de connexion, donc le socket ne change jamais de propriétaire à aucune échelle ; la voix va proxy→proxy pour un coût **O(M) proxies** et non O(R) destinataires ; `Params` en tant que *donnée* est ce qui rend le modèle distribuable ; les session ids s'allouent depuis le **proxy** et les channel ids depuis le **shard** (révision de §10.4) ; le proxy orchestre la migration puisque la garantie FIFO d'une file unique ne tient plus entre machines. Coûts non gratuits recensés (certificat partagé, stickiness UDP, transport interne). |
-| 2026-07-27 | **r2.** Renommage World → **Shard**. Le Shard devient un objet runtime de première classe avec un cycle de vie impératif (`create`/`destroy`/`move`/`wake`), et non une énumération dérivée du flavor (§3.2). **Une task par shard** (§3.3), avec parallélisme et isolation de panne. Contrat de flavor éclaté en `ConnectionRouter` (où va une connexion ; **le jeton P8 y atterrit**) et `ShardLogic` (`Send`, délibérément **pas `Sync`**) (§4). **`Snapshot` supprimé** avec justification (§4.5). Possession clarifiée : le shard possède l'*état de contrôle*, la task de connexion possède le *socket* (§10.1), ce qui rend la migration intra-processus triviale. Protocole de migration détaillé avec la garantie d'ordre FIFO et le traitement des commandes en vol (§10.3). **Nouveau §11 : le plan UDP** — table `ArcSwap<Bindings>`, `ShardRouting` auto-suffisant, hot path sans task de shard, pré-filtrage IP en chemin froid, non-perturbation par la migration, pistes multi-processus. Q9 et Q10 ajoutées. |
+| date       | révision                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 2026-07-27 | **r1.** Première rédaction : diagnostic, modèle à quatre concepts, contrat de flavor, pipeline en quatre termes, ordonnancement, règles de correction, journal vs cache, audio, sharding et migration, complexité, questions ouvertes.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| 2026-07-27 | **r6.** Ajout de **§4.9 — où vivent les `Arc` et les `Mutex`**, et correction d'une formulation trop absolue de r5 : la borne est `Send + 'static` et Mumble Server Runtime ne _demande_ pas `Sync`, ce qui n'interdit pas à un flavor concret de l'être. Trois emplacements, trois propriétaires : le partage métier vit **dans le `ShardLogic` concret** (canal pour un flux d'événements, `Arc<Mutex>` pour du « dernière valeur gagnante », avec le mode de panne du second explicité) ; **`ShardHandle` ne porte aucun état** (un `Arc<Notify>` et un `mpsc::Sender<RuntimeCommand>` — signal et message, jamais pointeur) ; le runtime a des `Arc` mais tous _read-mostly_ (`ArcSwap`) ou par-connexion non contendus. L'énoncé défendable devient : **aucun verrou global, aucun verrou tenu à travers un `.await`, aucun verrou contendu sur le chemin de contrôle**.                                                                                                                                                      |
+| 2026-07-27 | **r5.** §4 refondu. `ShardLogic` réduit à **trois méthodes** — `render`, `params`, `observe` : `tick()` et `on_message()`/`type Message` sont retirés, parce que Mumble Server Runtime ne sait ni pourquoi un flavor voudrait un rythme, ni ce qu'un message métier signifie. **Le flavor possède sa propre boîte aux lettres** et la draine dans `render` (§4.2), ce qui règle « alors `ShardLogic` serait partagé ? » sans le rendre `Sync`. **`wake()` est explicité comme la seule interface métier → runtime** (§4.3) : le rythme appartient au flavor, la protection (`MIN_INTERVAL`) au runtime, et **le runtime n'a plus aucun tick**. `ShardControl` supprimé au profit d'une **poignée unique `ShardHandle`** remise à la construction, utilisable dedans comme dehors (§4.4). Ajout de §4.5 (shard piloté par RPC, preuve que trois méthodes suffisent) et §4.6 (**vue opérationnelle** : démarrage, arrivée d'une connexion, régime établi, métriques à exposer). Renumérotation : `Params` → §4.7, `Snapshot` → §4.8. |
+| 2026-07-27 | **r4.** §13 étoffé : critère d'existence d'un crate (« une arête à interdire »), **carte des crates proposée** (deux nouveaux purs : `voxloom-project` pour le masque/filtrage, `voxloom-journal` pour versions et curseurs ; `voxloom-control` disparaît ; `voxloom-server` devient `voxloom-runtime`), décompte des suppressions (~2 500 lignes contre ~800 à écrire), **un oracle par composant** (§13.4) et ce qu'on refuse de découper (§13.5). Ajout de §13.6 : où le risque se déplace, honnêtement.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| 2026-07-27 | **r3.** Ajout de l'**annexe A** (exploratoire, hors périmètre) : scaling horizontal avec shard = machine et étage de proxies façon BungeeCord. Vérifie que les cinq règles de §10.5 suffisent. Résultats notables : le proxy est la promotion de la task de connexion, donc le socket ne change jamais de propriétaire à aucune échelle ; la voix va proxy→proxy pour un coût **O(M) proxies** et non O(R) destinataires ; `Params` en tant que _donnée_ est ce qui rend le modèle distribuable ; les session ids s'allouent depuis le **proxy** et les channel ids depuis le **shard** (révision de §10.4) ; le proxy orchestre la migration puisque la garantie FIFO d'une file unique ne tient plus entre machines. Coûts non gratuits recensés (certificat partagé, stickiness UDP, transport interne).                                                                                                                                                                                                                        |
+| 2026-07-27 | **r2.** Renommage World → **Shard**. Le Shard devient un objet runtime de première classe avec un cycle de vie impératif (`create`/`destroy`/`move`/`wake`), et non une énumération dérivée du flavor (§3.2). **Une task par shard** (§3.3), avec parallélisme et isolation de panne. Contrat de flavor éclaté en `ConnectionRouter` (où va une connexion ; **le jeton P8 y atterrit**) et `ShardLogic` (`Send`, délibérément **pas `Sync`**) (§4). **`Snapshot` supprimé** avec justification (§4.5). Possession clarifiée : le shard possède l'_état de contrôle_, la task de connexion possède le _socket_ (§10.1), ce qui rend la migration intra-processus triviale. Protocole de migration détaillé avec la garantie d'ordre FIFO et le traitement des commandes en vol (§10.3). **Nouveau §11 : le plan UDP** — table `ArcSwap<Bindings>`, `ShardRouting` auto-suffisant, hot path sans task de shard, pré-filtrage IP en chemin froid, non-perturbation par la migration, pistes multi-processus. Q9 et Q10 ajoutées.      |

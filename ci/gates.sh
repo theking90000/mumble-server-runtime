@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# gates.sh — interdictions structurelles R4 de la roadmap Voxloom.
+# gates.sh — interdictions structurelles R4 de la roadmap Mumble Server Runtime.
 #
 # Ces gates encodent les frontières du guide d'implémentation et les ADR encore
 # actifs. Ils échouent dès qu'un agent introduit un motif interdit. Si un agent

@@ -1,6 +1,6 @@
 # Boundaries
 
-What Voxloom does not do, and what is fixed rather than configurable. Stated
+What Mumble Server Runtime does not do, and what is fixed rather than configurable. Stated
 early, because most of it follows from one decision: a client asks, and only the
 application decides.
 
@@ -32,7 +32,7 @@ rather than queued.
 Matches, teams, roles, positions and the rules deriving from them stay in the
 application. None of it is inspected, stored or interpreted by the runtime.
 
-Nothing outlives the process on Voxloom's side. Channels and participants exist
+Nothing outlives the process on Mumble Server Runtime's side. Channels and participants exist
 as the current render produces them, so persistence is the application's concern
 alone.
 
@@ -55,14 +55,14 @@ packets dropped rather than being disconnected.
 
 None of these is settable from application code.
 
-| limit | value |
-|---|---|
-| scope depth | 4 segments |
-| scopes observed per connection | 4 |
-| delta history retained | 256 versions |
-| context actions offered per connection | 64 |
-| output queue per connection | 1024 messages |
-| minimum interval between publications | 50 ms |
+| limit                                  | value         |
+| -------------------------------------- | ------------- |
+| scope depth                            | 4 segments    |
+| scopes observed per connection         | 4             |
+| delta history retained                 | 256 versions  |
+| context actions offered per connection | 64            |
+| output queue per connection            | 1024 messages |
+| minimum interval between publications  | 50 ms         |
 
 Each bound has a cost behind it rather than a preference. Exceeding one refuses
 the render, except for the queue, whose overflow closes the connection rather

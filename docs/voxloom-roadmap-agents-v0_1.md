@@ -1,4 +1,4 @@
-# Voxloom : roadmap d'implémentation orientée agents
+# Mumble Server Runtime : roadmap d'implémentation orientée agents
 
 **Statut :** roadmap P0–P7 archivée, complément historique de la spécification technique v0.1
 **Public :** agents IA d'implémentation, avec points de contrôle humains explicites
@@ -18,7 +18,7 @@ Ces règles s'appliquent à toutes les phases. Elles existent parce que les mode
 
 ### R1. La vérité protocolaire ne vient jamais de mémoire
 
-Toute affirmation sur le wire format doit être traçable vers une source vendored dans le dépôt : `references/mumble/` (clone pinné du dépôt mumble-voip), le corpus de captures (`fixtures/corpus/`), ou la spécification Voxloom. Un agent qui a besoin d'un détail absent de ces sources s'arrête et le signale au lieu de l'inventer. Chaque module protocolaire contient un commentaire `// REF:` pointant vers le fichier source Mumble correspondant.
+Toute affirmation sur le wire format doit être traçable vers une source vendored dans le dépôt : `references/mumble/` (clone pinné du dépôt mumble-voip), le corpus de captures (`fixtures/corpus/`), ou la spécification Mumble Server Runtime. Un agent qui a besoin d'un détail absent de ces sources s'arrête et le signale au lieu de l'inventer. Chaque module protocolaire contient un commentaire `// REF:` pointant vers le fichier source Mumble correspondant.
 
 ### R2. Séparation implémenteur / vérificateur
 
@@ -110,7 +110,7 @@ Pourquoi cette phase existe : si le client fonctionne normalement à travers le 
 
 **Objectif :** handshake sans Murmur. TLS accept, `Version`, `Authenticate` (jeton accepté en mode stub), `CryptSetup`, root channel, self user, `ServerSync`, `ServerConfig`, ping TCP/UDP, association UDP par preuve cryptographique, loopback audio, fallback tunnel TCP.
 
-En parallèle et par un agent distinct (R2) : `SimulatedMumbleClient` dans le testkit. Modèle strict qui applique les messages serveur à un état local et **panique** sur toute violation des invariants de la section 20 de la spec (canal inconnu référencé, parent manquant, self absent avant ServerSync, ID dupliqué...). Le client simulé est le juge de toutes les phases suivantes ; il doit être écrit contre le corpus et la référence, pas contre le serveur Voxloom.
+En parallèle et par un agent distinct (R2) : `SimulatedMumbleClient` dans le testkit. Modèle strict qui applique les messages serveur à un état local et **panique** sur toute violation des invariants de la section 20 de la spec (canal inconnu référencé, parent manquant, self absent avant ServerSync, ID dupliqué...). Le client simulé est le juge de toutes les phases suivantes ; il doit être écrit contre le corpus et la référence, pas contre le serveur Mumble Server Runtime.
 
 La séquence initiale est validée par golden test contre le corpus : l'ordre exact émis par Murmur fait foi en cas de doute (notamment la position de `CodecVersion` par rapport à `ServerSync`).
 
@@ -165,14 +165,14 @@ C'est ici que se vérifie l'hypothèse la plus originale et la moins prouvable p
 ## Phase 7 : intégration de flavors et publication atomique
 
 **Décision préalable :** `docs/decisions/0002-flavor-owns-business-state.md`.
-Voxloom ne possède jamais l'état métier. Le flavor compilé possède son snapshot,
+Mumble Server Runtime ne possède jamais l'état métier. Le flavor compilé possède son snapshot,
 ses commandes, ses acteurs et ses transactions. Le runtime ne connaît que les
 connexions vocales, les vues engagées, les routes audio et les générations
 publiées.
 
 **Objectif :** introduire le contrat `VoiceFlavor`, le coordinateur de
 publication `voxloom-control` et un binaire de composition. Un flavor fournit
-un snapshot métier immuable et des sorties déclaratives. Voxloom traite le
+un snapshot métier immuable et des sorties déclaratives. Mumble Server Runtime traite le
 snapshot comme opaque, valide les sorties et publie les transitions de vue et
 le snapshot audio dans l'ordre de sécurité.
 
@@ -190,7 +190,7 @@ position ou radio.
 ### T2. Publication d'un snapshot opaque
 
 Créer le chemin `Arc<F::Snapshot>` vers rendu complet de toutes les connexions.
-Le snapshot et sa révision restent figés pendant toute la génération. Voxloom ne
+Le snapshot et sa révision restent figés pendant toute la génération. Mumble Server Runtime ne
 lit le snapshot qu'en appelant le flavor et ne conserve aucun état métier
 dérivé comme source de vérité.
 
@@ -206,7 +206,7 @@ annule toute la génération et conserve la génération engagée.
 
 ### T4. Publication atomique avec ordre de sécurité
 
-Attribuer une génération Voxloom monotone et produire les transactions de vue
+Attribuer une génération Mumble Server Runtime monotone et produire les transactions de vue
 et le snapshot audio. Une révocation audio devient effective avant le retrait
 visuel ; une nouvelle route n'est activée qu'après le commit de la vue du
 destinataire.
@@ -217,7 +217,7 @@ destinataire.
 
 Convertir les actions Mumble déjà résolues dans la vue courante en
 `VoiceEvent` versionnés. Le flavor décide seul des mutations métier. Il peut
-ensuite publier un nouveau snapshot, mais Voxloom n'applique jamais de commande
+ensuite publier un nouveau snapshot, mais Mumble Server Runtime n'applique jamais de commande
 métier.
 
 **Done :** `cargo test -p voxloom-control voice_events`.
@@ -263,14 +263,14 @@ connexions pour un changement de snapshot.
 ## Phase 8 : flavor Minecraft
 
 **Objectif :** implémenter un flavor Minecraft au-dessus de l'API P7 et un
-binaire de composition qui le compile avec Voxloom. Le flavor possède les
+binaire de composition qui le compile avec Mumble Server Runtime. Le flavor possède les
 jetons à usage unique (10.2, consommation atomique, entropie, expiration),
 l'association certificat vers principal, l'état joueur, les parties, équipes,
 dimensions, positions autoritaires et règles de proximité.
 
 Les acteurs par partie, `MergeRealms`, `SplitRealm`, les changements d'équipe et
 le batching des événements Minecraft vivent dans ce flavor. Ils produisent des
-snapshots immuables consommés par Voxloom ; aucune crate centrale ne dépend de
+snapshots immuables consommés par Mumble Server Runtime ; aucune crate centrale ne dépend de
 Minecraft.
 
 Les positions suivent le chemin de la section 13.7 : hors VDOM, index spatial, recompilation du snapshot par tick batché (50-100 ms) et par domaine de routage, avec hystérésis sur les seuils de distance pour éviter le flapping des routes. Le VDOM ne voit un joueur bouger que si la structure change (changement de dimension, d'équipe), jamais à chaque déplacement.

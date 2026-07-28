@@ -1,4 +1,4 @@
-# Livre mdBook — documentation publiée de Voxloom.
+# Livre mdBook — documentation publiée de Mumble Server Runtime.
 #
 # `src` pointe sur docs/book/ : seuls les fichiers listés dans SUMMARY.md sont
 # rendus, donc les artefacts de process qui vivent ailleurs sous docs/ (roadmap,
@@ -8,9 +8,9 @@
 #   mdbook build            # sortie dans target/book/
 
 [book]
-title = "Voxloom"
+title = "Mumble Server Runtime"
 description = "Mumble-compatible voice runtime with per-connection views."
-authors = ["Voxloom contributors"]
+authors = ["Mumble Server Runtime contributors"]
 language = "en"
 src = "docs/book"
 

@@ -40,8 +40,8 @@ pub fn server_version(config: &GatewayConfig) -> ControlMessage {
             (u32::from(major) << 16) | (u32::from(minor) << 8) | u32::from(patch.min(0xFF)),
         ),
         version_v2: Some(config.version_v2()),
-        release: Some(format!("Voxloom {major}.{minor}.{patch}")),
-        os: Some("Voxloom".to_owned()),
+        release: Some(format!("Mumble Server Runtime {major}.{minor}.{patch}")),
+        os: Some("Mumble Server Runtime".to_owned()),
         os_version: None,
     })
 }

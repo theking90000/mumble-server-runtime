@@ -3,7 +3,7 @@
 > A receiver must see the speaker.
 
 This is the single point where visibility and audibility are not independent, and
-it does not originate in Voxloom.
+it does not originate in Mumble Server Runtime.
 
 ## A protocol constraint
 

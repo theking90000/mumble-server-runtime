@@ -181,7 +181,7 @@ async fn the_lobby_drains_external_updates_before_rendering() {
         .channels
         .get(&ChannelId::ROOT)
         .expect("the lobby renders a root");
-    assert_eq!(root.name, "Voxloom Arena | update 8");
+    assert_eq!(root.name, "Mumble Server Runtime Arena | update 8");
     assert!(
         lobby.version() > before,
         "the latest external update must produce a new shared view"

@@ -1,4 +1,4 @@
-//! Voxloom MITM proxy (Phase 2): a living oracle between a Mumble client and a
+//! Mumble Server Runtime MITM proxy (Phase 2): a living oracle between a Mumble client and a
 //! real Murmur server. It terminates TLS on both sides, decodes and re-encodes
 //! every control message (exercising the Phase 1 codec on live traffic), and
 //! rewrites the OCB2 key exchange so it holds an independent cipher domain toward

@@ -143,7 +143,7 @@ struct Realms {
 
 impl ShardLogic for Realms {
     fn render(&mut self, out: &mut ShardBuilder<'_>) {
-        let root = out.root("Voxloom");
+        let root = out.root("Mumble Server Runtime");
         let label = self.world.label;
 
         for realm in 0..2u32 {

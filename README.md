@@ -1,8 +1,8 @@
-# Voxloom
+# Mumble Server Runtime
 
 **A Mumble-compatible voice server your application drives.**
 
-Voxloom speaks the Mumble protocol to unmodified clients. No plugin, no custom
+Mumble Server Runtime speaks the Mumble protocol to unmodified clients. No plugin, no custom
 client, no protocol extension. What it does not have is a channel tree you
 configure: the channels, who sees whom and who hears whom are all computed from
 your application's state, live.
@@ -12,7 +12,7 @@ your application's state, live.
 > there is no integration guide, and no ready-made plugin for any game. See
 > [Status](#status) for what is real and what is not.
 
-> **AI-assisted development.** Most of Voxloom's implementation was delegated
+> **AI-assisted development.** Most of Mumble Server Runtime's implementation was delegated
 > to AI coding agents. See the [AI development notice](#ai-assisted-development)
 > at the end of this README for details about the process, safeguards and
 > limitations.
@@ -23,8 +23,8 @@ A conventional Mumble server has one channel tree shared by everyone, defined in
 configuration and edited by hand, by admins or by scripts. Voice structure ends
 up being maintained alongside your game state, and drifting from it.
 
-Voxloom inverts that. You write a render function. It describes what the voice
-session should look like _right now_, given your state. Voxloom works out the
+Mumble Server Runtime inverts that. You write a render function. It describes what the voice
+session should look like _right now_, given your state. Mumble Server Runtime works out the
 difference from what each connected client currently holds, and sends only that.
 
 Move a player to a game, end a round, promote someone to spectator: change your
@@ -45,7 +45,7 @@ If you run a Minecraft network, this is roughly what BungeeCord and Velocity giv
 you for game servers, applied to voice instead.
 
 One caveat, stated plainly because it is the kind of thing a README should not
-blur: shards are units of rendering inside a single Voxloom runtime, not separate
+blur: shards are units of rendering inside a single Mumble Server Runtime runtime, not separate
 machines. Moving a player between shards is implemented and covered by tests.
 Spreading shards across hosts behind voice proxies is designed and not built.
 
@@ -159,13 +159,13 @@ The live tests open loopback sockets. The toolchain is pinned in
 
 ## AI-assisted development
 
-Voxloom was designed by a human and implemented almost entirely by AI coding
+Mumble Server Runtime was designed by a human and implemented almost entirely by AI coding
 agents. The author invested substantial time in product definition, software
 architecture, specifications, failure analysis, review criteria and verification,
 while delegating most of the implementation work to agents.
 
 This may still be called "vibe coding", depending on how one defines the term.
-AI coding agents are becoming increasingly mature and capable, and Voxloom was
+AI coding agents are becoming increasingly mature and capable, and Mumble Server Runtime was
 also an opportunity to explore what AI-assisted software development can look
 like on a substantial systems project.
 
@@ -177,6 +177,6 @@ responsible for the design, specifications, architectural decisions and acceptan
 criteria, while delegating most of the implementation work to agents.
 
 These boundaries and safeguards increase confidence in the implementation, but
-they do not guarantee its correctness. Voxloom may still contain bugs, security
+they do not guarantee its correctness. Mumble Server Runtime may still contain bugs, security
 issues, protocol incompatibilities or other unexpected behavior. The project is
 provided "as is", without warranties or guarantees of any kind.

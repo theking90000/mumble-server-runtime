@@ -57,9 +57,9 @@ jobs:
             cat > site/api/index.html <<'HTML'
           <!doctype html>
           <meta charset="utf-8">
-          <title>Voxloom API</title>
+          <title>Mumble Server Runtime API</title>
           <meta http-equiv="refresh" content="0; url=voxloom_shard/index.html">
-          <a href="voxloom_shard/index.html">Voxloom API documentation</a>
+          <a href="voxloom_shard/index.html">Mumble Server Runtime API documentation</a>
           HTML
           fi
 

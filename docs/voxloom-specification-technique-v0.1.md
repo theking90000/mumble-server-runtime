@@ -1,4 +1,4 @@
-# Voxloom
+# Mumble Server Runtime
 
 ## Spécification technique d’un runtime vocal déclaratif compatible Mumble
 
@@ -9,7 +9,7 @@
 
 > **Amendement d'architecture :** la décision
 > `docs/decisions/0002-flavor-owns-business-state.md` précise que l'état métier
-> appartient au flavor compilé, pas au runtime Voxloom. Le terme historique
+> appartient au flavor compilé, pas au runtime Mumble Server Runtime. Le terme historique
 > `CanonicalState` désigne ici le snapshot d'un flavor, jamais un modèle imposé
 > par le cœur.
 >
@@ -23,12 +23,12 @@
 
 ## 1. Nommage
 
-### 1.1 Nom de travail retenu : Voxloom
+### 1.1 Nom de travail retenu : Mumble Server Runtime
 
-**Voxloom** combine :
+**Mumble Server Runtime** combine :
 
-- *vox*, la voix ;
-- *loom*, le métier à tisser ;
+- _vox_, la voix ;
+- _loom_, le métier à tisser ;
 - l’idée qu’un snapshot métier fourni par un flavor est « tissé » en vues,
   relations d’audibilité et interfaces différentes pour chaque connexion.
 
@@ -42,24 +42,24 @@ projetés à partir d'un snapshot métier opaque fourni par une intégration.
 
 ### 1.2 Autres noms envisageables
 
-| Nom | Idée |
-|---|---|
-| **Murmuration** | Un groupe qui se divise, fusionne et se recompose dynamiquement. Clin d’œil discret à Murmur. |
-| **Echoform** | La forme visible et audible produite à partir d’un état abstrait. |
-| **Parallax Voice** | Chaque observateur reçoit une vue différente du même monde. |
-| **Auralattice** | Un réseau de relations vocales plutôt qu’une arborescence de salons. |
-| **Manyfold** | Une vérité canonique, plusieurs projections. |
-| **Voxweave** | Variante plus explicite de Voxloom, un peu moins distinctive. |
+| Nom                | Idée                                                                                          |
+| ------------------ | --------------------------------------------------------------------------------------------- |
+| **Murmuration**    | Un groupe qui se divise, fusionne et se recompose dynamiquement. Clin d’œil discret à Murmur. |
+| **Echoform**       | La forme visible et audible produite à partir d’un état abstrait.                             |
+| **Parallax Voice** | Chaque observateur reçoit une vue différente du même monde.                                   |
+| **Auralattice**    | Un réseau de relations vocales plutôt qu’une arborescence de salons.                          |
+| **Manyfold**       | Une vérité canonique, plusieurs projections.                                                  |
+| **Voxweave**       | Variante plus explicite de Mumble Server Runtime, un peu moins distinctive.                   |
 
-Le reste du document utilise **Voxloom** comme nom de travail.
+Le reste du document utilise **Mumble Server Runtime** comme nom de travail.
 
 ---
 
 ## 2. Résumé exécutif
 
-Voxloom est une nouvelle implémentation de serveur compatible avec le protocole Mumble. Il ne cherche pas à reproduire Murmur, ses serveurs virtuels, ses ACL historiques ou son modèle « un utilisateur appartient à un canal partagé par tous ».
+Mumble Server Runtime est une nouvelle implémentation de serveur compatible avec le protocole Mumble. Il ne cherche pas à reproduire Murmur, ses serveurs virtuels, ses ACL historiques ou son modèle « un utilisateur appartient à un canal partagé par tous ».
 
-Voxloom ne conserve pas l'état métier. Un **flavor compilé** possède cet état et
+Mumble Server Runtime ne conserve pas l'état métier. Un **flavor compilé** possède cet état et
 publie des snapshots immuables, par exemple pour une application Minecraft :
 
 - joueurs Minecraft ;
@@ -74,7 +74,7 @@ publie des snapshots immuables, par exemple pour une application Minecraft :
 - relations d’audibilité.
 
 Pour chaque connexion Mumble, le flavor calcule des sorties déclaratives que
-Voxloom valide et publie :
+Mumble Server Runtime valide et publie :
 
 1. une **vue client**, contenant les canaux, utilisateurs, permissions et actions que le client doit afficher ;
 2. un **graphe d’audibilité**, indiquant quels flux audio cette connexion peut recevoir ;
@@ -118,11 +118,11 @@ Le client Mumble devient un terminal de rendu :
 - `UserRemove` retire un utilisateur ;
 - `PermissionQuery` renseigne les permissions effectives ;
 - `ContextActionModify` ajoute ou retire des interactions ;
-- les paquets audio sont transmis selon le graphe d’audibilité calculé par Voxloom.
+- les paquets audio sont transmis selon le graphe d’audibilité calculé par Mumble Server Runtime.
 
 La structure visible n’a aucune obligation de correspondre au routage audio. Deux utilisateurs peuvent être affichés dans le même canal sans s’entendre, ou dans des canaux différents tout en s’entendant. Un client doit seulement connaître la session d’un émetteur avant de recevoir son audio.
 
-Voxloom est donc plus proche de **Minestom pour Mumble** que d’un remplacement direct de Murmur : le protocole et les clients sont conservés, mais la sémantique serveur est reconstruite autour d’un modèle déclaratif.
+Mumble Server Runtime est donc plus proche de **Minestom pour Mumble** que d’un remplacement direct de Murmur : le protocole et les clients sont conservés, mais la sémantique serveur est reconstruite autour d’un modèle déclaratif.
 
 ---
 
@@ -130,7 +130,7 @@ Voxloom est donc plus proche de **Minestom pour Mumble** que d’un remplacement
 
 ### 3.1 Objectifs fonctionnels
 
-Voxloom doit permettre :
+Mumble Server Runtime doit permettre :
 
 - une vue Mumble différente pour chaque connexion ;
 - la modification dynamique de cette vue sans reconnexion ;
@@ -149,7 +149,7 @@ Voxloom doit permettre :
 Le système doit :
 
 - laisser le flavor posséder l'unique source de vérité métier ;
-- publier une seule révision de flavor par génération Voxloom ;
+- publier une seule révision de flavor par génération Mumble Server Runtime ;
 - rendre les vues de manière déterministe ;
 - séparer construction de vue, réconciliation et transport ;
 - permettre un rendu complet de référence ;
@@ -205,7 +205,7 @@ Les fonctions non supportées doivent être explicitement refusées ou neutralis
 ### 5.1 L'état métier appartient au flavor
 
 L'intégration choisit librement son modèle métier, sa concurrence et ses
-commandes. Voxloom reçoit seulement une référence immuable vers le type de
+commandes. Mumble Server Runtime reçoit seulement une référence immuable vers le type de
 snapshot associé au flavor :
 
 ```rust
@@ -310,7 +310,7 @@ struct FlavorSubjectRef(OpaqueKey);
 ```
 
 La structure du principal, ses UUID et ses capacités appartiennent au flavor.
-Voxloom peut conserver séparément les preuves vocales nécessaires au protocole,
+Mumble Server Runtime peut conserver séparément les preuves vocales nécessaires au protocole,
 comme le hash du certificat présenté.
 
 ### Connection
@@ -328,7 +328,7 @@ Connexion réseau Mumble active, comprenant :
 
 ### Flavor snapshot
 
-État métier autoritaire, immuable pendant un rendu et opaque pour Voxloom.
+État métier autoritaire, immuable pendant un rendu et opaque pour Mumble Server Runtime.
 
 ### Desired view
 
@@ -764,7 +764,7 @@ Lorsqu’un message contient un `actor`, cette session doit être visible par le
 ## 10. Authentification
 
 Les jetons, principals et associations propres à Minecraft décrits ci-dessous
-appartiennent au flavor Minecraft. Voxloom fournit seulement le contexte vocal
+appartiennent au flavor Minecraft. Mumble Server Runtime fournit seulement le contexte vocal
 et les preuves protocolaires nécessaires à leur validation.
 
 ### 10.1 Endpoint unique
@@ -787,7 +787,7 @@ Flux recommandé :
 2. Génération d’un jeton aléatoire, court dans le temps et à usage unique.
 3. Le joueur ouvre Mumble.
 4. Le jeton est transmis dans le champ password.
-5. Voxloom consomme atomiquement le jeton.
+5. Mumble Server Runtime consomme atomiquement le jeton.
 6. Le jeton est résolu vers un UUID Minecraft.
 7. Le certificat Mumble peut être mémorisé comme association durable.
 8. La vue initiale est rendue.
@@ -1344,7 +1344,7 @@ struct AudioDecision {
 
 Le target `0` correspond à la parole normale. Les targets personnalisés sont enregistrés par `VoiceTarget`. Le target réservé au loopback serveur doit être traité explicitement.
 
-Voxloom peut :
+Mumble Server Runtime peut :
 
 - supporter les targets standard ;
 - traduire les targets vers sa propre politique ;
@@ -1394,7 +1394,7 @@ Entrées :
 - support Opus ;
 - type de client.
 
-Voxloom traite le mot de passe comme un credential opaque.
+Mumble Server Runtime traite le mot de passe comme un credential opaque.
 
 ### 16.3 `Ping`
 
@@ -1603,7 +1603,7 @@ Client demande canal B.
 Serveur valide.
 Si accepté : VoiceEvent émis vers le flavor.
 Le flavor publie éventuellement un nouveau snapshot.
-Voxloom rend puis publie UserState.
+Mumble Server Runtime rend puis publie UserState.
 Si refusé : PermissionDenied, snapshot inchangé.
 ```
 
@@ -1889,7 +1889,7 @@ L'application et son flavor possèdent la sérialisation des mutations métier :
 - commandes et événements applicatifs ;
 - batching et révisions du snapshot métier.
 
-Voxloom reçoit une révision immuable déjà publiée. Son coordinateur sérialise
+Mumble Server Runtime reçoit une révision immuable déjà publiée. Son coordinateur sérialise
 uniquement la génération vocale correspondante : rendus, transitions de vues,
 routes audio et événements `VoiceEvent`. Il ne tient jamais un
 `RwLock<F::Snapshot>` pendant les rendus.
@@ -1931,7 +1931,7 @@ changement de partie
 ```
 
 Une petite fenêtre événementielle ou une transaction explicite appartient à
-l'intégration. Voxloom ne voit que le snapshot final et ne rend aucun état
+l'intégration. Mumble Server Runtime ne voit que le snapshot final et ne rend aucun état
 intermédiaire.
 
 ---
@@ -1940,7 +1940,7 @@ intermédiaire.
 
 ### 24.1 Modèle par flavors et snapshots
 
-L'intégration compile un flavor avec Voxloom. Le flavor possède son snapshot et
+L'intégration compile un flavor avec Mumble Server Runtime. Le flavor possède son snapshot et
 ses commandes. Le runtime ne connaît pas leur structure :
 
 ```rust
@@ -1961,7 +1961,7 @@ trait VoiceFlavor: Send + Sync + 'static {
 routes entre `ConnectionId` et un `InteractionRegistry`. Chaque route est
 déclarée par sa connexion receveuse et n'est valide que si sa vue projette
 l'émetteur. Les `ChannelId` et `SessionId` numériques sont attribués ensuite par
-Voxloom et ne traversent jamais la frontière du flavor.
+Mumble Server Runtime et ne traversent jamais la frontière du flavor.
 
 Une publication P7 fournit uniquement un `Arc<F::Snapshot>` ; le runtime rend
 toutes les connexions. Une éventuelle sélection ciblée reste une optimisation
@@ -2001,7 +2001,7 @@ enum VoiceEvent {
 ### 24.2 Intégration embarquée
 
 Un binaire de composition choisit un `VoiceFlavor` à la compilation. La
-dépendance va du flavor vers l'API Voxloom ; aucune crate centrale ne dépend
+dépendance va du flavor vers l'API Mumble Server Runtime ; aucune crate centrale ne dépend
 d'un flavor concret. Le flavor traite les `VoiceEvent`, modifie son propre état
 selon son modèle de concurrence, puis publie un nouveau snapshot si nécessaire.
 
@@ -2292,7 +2292,7 @@ Un processus unique :
 TCP/TLS acceptor
 UDP socket
 Flavor integration
-Voxloom runtime
+Mumble Server Runtime runtime
 View renderer
 Reconciler
 Audio router
@@ -2458,31 +2458,31 @@ Uniquement si l’échelle réelle l’exige.
 
 ## 30. Décisions proposées pour la v1
 
-| Sujet | Décision proposée |
-|---|---|
-| Nom | Voxloom |
-| Client minimum | Mumble 1.5+ |
-| Codec | Opus uniquement |
-| Endpoint | Un port TCP/UDP commun |
-| Authentification | Jeton à usage unique, puis certificat optionnel |
-| IP comme identité | Non |
-| Serveurs virtuels | Non |
-| Canaux | Projection UI |
-| Routage | Graphe indépendant |
-| ACL Murmur | Non reproduites |
-| Permissions effectives | Oui |
-| Éditeur ACL | Refusé |
-| Text chat | Support limité et autoritaire |
-| Voice targets | Sous-ensemble validé |
-| Listeners | Traduits ou refusés, jamais autoritaires |
-| Utilisateurs synthétiques | Support encadré |
-| Rendu | Full render par connexion affectée |
-| Cache | Plus tard |
-| Hot path | Snapshot précompilé |
-| Cluster | Hors v1 |
-| Opus decode | Non |
-| Position sécurité | Minecraft autoritaire |
-| Divergence grave | Reconnexion |
+| Sujet                     | Décision proposée                               |
+| ------------------------- | ----------------------------------------------- |
+| Nom                       | Mumble Server Runtime                           |
+| Client minimum            | Mumble 1.5+                                     |
+| Codec                     | Opus uniquement                                 |
+| Endpoint                  | Un port TCP/UDP commun                          |
+| Authentification          | Jeton à usage unique, puis certificat optionnel |
+| IP comme identité         | Non                                             |
+| Serveurs virtuels         | Non                                             |
+| Canaux                    | Projection UI                                   |
+| Routage                   | Graphe indépendant                              |
+| ACL Murmur                | Non reproduites                                 |
+| Permissions effectives    | Oui                                             |
+| Éditeur ACL               | Refusé                                          |
+| Text chat                 | Support limité et autoritaire                   |
+| Voice targets             | Sous-ensemble validé                            |
+| Listeners                 | Traduits ou refusés, jamais autoritaires        |
+| Utilisateurs synthétiques | Support encadré                                 |
+| Rendu                     | Full render par connexion affectée              |
+| Cache                     | Plus tard                                       |
+| Hot path                  | Snapshot précompilé                             |
+| Cluster                   | Hors v1                                         |
+| Opus decode               | Non                                             |
+| Position sécurité         | Minecraft autoritaire                           |
+| Divergence grave          | Reconnexion                                     |
 
 ---
 
@@ -2531,7 +2531,7 @@ Uniquement si l’échelle réelle l’exige.
 ### Administration
 
 26. Existe-t-il une UI externe dédiée ?
-27. Les bans sont-ils gérés par Minecraft, Voxloom ou les deux ?
+27. Les bans sont-ils gérés par Minecraft, Mumble Server Runtime ou les deux ?
 28. Faut-il exposer les statistiques réseau au client ?
 29. Les comptes enregistrés Mumble sont-ils totalement supprimés ?
 30. Quel niveau de compatibilité avec les outils d’administration existants ?
@@ -2607,7 +2607,7 @@ Le MVP est réussi lorsque :
 ## 34. Exemple complet de modèle
 
 Cet exemple vit dans le flavor Minecraft de la Phase 4. Il n'appartient pas aux
-crates centrales de Voxloom.
+crates centrales de Mumble Server Runtime.
 
 ```rust
 fn render_voice_world(
@@ -2686,7 +2686,7 @@ Le planificateur prend en charge ces contraintes.
 
 ## 35. Conclusion
 
-Voxloom doit être conçu autour de quatre abstractions indépendantes :
+Mumble Server Runtime doit être conçu autour de quatre abstractions indépendantes :
 
 ```text
 FlavorSnapshot (opaque)
@@ -2700,7 +2700,7 @@ Le pipeline de contrôle est :
 ```text
 snapshot publié par le flavor
 → rendu du flavor
-→ validation Voxloom
+→ validation Mumble Server Runtime
 → réconciliation
 → messages Mumble
 ```
@@ -2722,44 +2722,43 @@ Le protocole Mumble devient une cible de rendu et un transport audio. Les canaux
 
 C’est cette séparation qui rend possible un serveur vocal dynamique, pilotable et raisonnable à tester, plutôt qu’une collection de conditions dispersées qui finirait inévitablement par autoriser un fantôme mort dans une autre dimension à écouter la radio d’une équipe adverse.
 
-
 ---
 
 # Annexes
 
 ## Annexe A. Matrice complète des messages TCP
 
-Le protocole courant définit 27 types de messages TCP. Le tableau suivant fixe une proposition de comportement pour Voxloom v1.
+Le protocole courant définit 27 types de messages TCP. Le tableau suivant fixe une proposition de comportement pour Mumble Server Runtime v1.
 
-| Message | Direction habituelle | Support v1 proposé | Comportement |
-|---|---|---:|---|
-| `Version` | bidirectionnel | Requis | Négociation et observabilité. |
-| `UDPTunnel` | bidirectionnel | Requis | Payload audio UDP brut transporté dans le framing TCP. |
-| `Authenticate` | client → serveur | Requis | Résolution du jeton et du principal. |
-| `Ping` | bidirectionnel | Requis | Keepalive et statistiques. |
-| `Reject` | serveur → client | Requis | Refus explicite de connexion. |
-| `ServerSync` | serveur → client | Requis | Termine la synchronisation initiale. |
-| `ChannelRemove` | bidirectionnel | Requis côté serveur, refus côté client | Retrait de vue ; demandes client refusées par défaut. |
-| `ChannelState` | bidirectionnel | Requis côté serveur, limité côté client | Projection de canaux ; création/modification client refusée par défaut. |
-| `UserRemove` | bidirectionnel | Requis côté serveur, limité côté client | Disparition de vue ; kick/ban soumis à capability. |
-| `UserState` | bidirectionnel | Requis | Présence, déplacement demandé, self-state, listeners et contexte plugin. |
-| `BanList` | bidirectionnel | Optionnel | Réponse vide ou refus si administration native absente. |
-| `TextMessage` | bidirectionnel | Limité | Routage autoritaire, limites et résolution dans la vue. |
-| `PermissionDenied` | serveur → client | Requis | Refus de commandes. |
-| `ACL` | bidirectionnel | Non en v1 | Éditeur natif refusé ; permissions effectives séparées. |
-| `QueryUsers` | bidirectionnel | Limité | Seulement pour entités visibles et autorisées. |
-| `CryptSetup` | bidirectionnel | Requis | Clés, nonces et resynchronisation. |
-| `ContextActionModify` | serveur → client | Requis | Ajout/retrait d’actions déclaratives. |
-| `ContextAction` | client → serveur | Requis | Dispatch vers un handler actuel et revalidation. |
-| `UserList` | serveur → client après requête | Non en v1 | Refus ou liste vide. |
-| `VoiceTarget` | client → serveur | Limité | Targets validés, sessions et canaux visibles uniquement. |
-| `PermissionQuery` | bidirectionnel | Requis | Permissions effectives et invalidation de cache. |
-| `CodecVersion` | serveur → client | Requis ou compatibilité | Annonce Opus uniquement. |
-| `UserStats` | bidirectionnel | Limité | Statistiques minimales, sans fuite d’IP ou certificat. |
-| `RequestBlob` | client → serveur | Requis si blobs utilisés | Réponse seulement pour les entités visibles. |
-| `ServerConfig` | serveur → client | Requis | Configuration d’interface et limites. |
-| `SuggestConfig` | serveur → client | Optionnel | Suggestions non autoritaires. |
-| `PluginDataTransmission` | bidirectionnel | Optionnel et filtré | Allowlist de `dataID`, visibilité et rate limits. |
+| Message                  | Direction habituelle           |                      Support v1 proposé | Comportement                                                             |
+| ------------------------ | ------------------------------ | --------------------------------------: | ------------------------------------------------------------------------ |
+| `Version`                | bidirectionnel                 |                                  Requis | Négociation et observabilité.                                            |
+| `UDPTunnel`              | bidirectionnel                 |                                  Requis | Payload audio UDP brut transporté dans le framing TCP.                   |
+| `Authenticate`           | client → serveur               |                                  Requis | Résolution du jeton et du principal.                                     |
+| `Ping`                   | bidirectionnel                 |                                  Requis | Keepalive et statistiques.                                               |
+| `Reject`                 | serveur → client               |                                  Requis | Refus explicite de connexion.                                            |
+| `ServerSync`             | serveur → client               |                                  Requis | Termine la synchronisation initiale.                                     |
+| `ChannelRemove`          | bidirectionnel                 |  Requis côté serveur, refus côté client | Retrait de vue ; demandes client refusées par défaut.                    |
+| `ChannelState`           | bidirectionnel                 | Requis côté serveur, limité côté client | Projection de canaux ; création/modification client refusée par défaut.  |
+| `UserRemove`             | bidirectionnel                 | Requis côté serveur, limité côté client | Disparition de vue ; kick/ban soumis à capability.                       |
+| `UserState`              | bidirectionnel                 |                                  Requis | Présence, déplacement demandé, self-state, listeners et contexte plugin. |
+| `BanList`                | bidirectionnel                 |                               Optionnel | Réponse vide ou refus si administration native absente.                  |
+| `TextMessage`            | bidirectionnel                 |                                  Limité | Routage autoritaire, limites et résolution dans la vue.                  |
+| `PermissionDenied`       | serveur → client               |                                  Requis | Refus de commandes.                                                      |
+| `ACL`                    | bidirectionnel                 |                               Non en v1 | Éditeur natif refusé ; permissions effectives séparées.                  |
+| `QueryUsers`             | bidirectionnel                 |                                  Limité | Seulement pour entités visibles et autorisées.                           |
+| `CryptSetup`             | bidirectionnel                 |                                  Requis | Clés, nonces et resynchronisation.                                       |
+| `ContextActionModify`    | serveur → client               |                                  Requis | Ajout/retrait d’actions déclaratives.                                    |
+| `ContextAction`          | client → serveur               |                                  Requis | Dispatch vers un handler actuel et revalidation.                         |
+| `UserList`               | serveur → client après requête |                               Non en v1 | Refus ou liste vide.                                                     |
+| `VoiceTarget`            | client → serveur               |                                  Limité | Targets validés, sessions et canaux visibles uniquement.                 |
+| `PermissionQuery`        | bidirectionnel                 |                                  Requis | Permissions effectives et invalidation de cache.                         |
+| `CodecVersion`           | serveur → client               |                 Requis ou compatibilité | Annonce Opus uniquement.                                                 |
+| `UserStats`              | bidirectionnel                 |                                  Limité | Statistiques minimales, sans fuite d’IP ou certificat.                   |
+| `RequestBlob`            | client → serveur               |                Requis si blobs utilisés | Réponse seulement pour les entités visibles.                             |
+| `ServerConfig`           | serveur → client               |                                  Requis | Configuration d’interface et limites.                                    |
+| `SuggestConfig`          | serveur → client               |                               Optionnel | Suggestions non autoritaires.                                            |
+| `PluginDataTransmission` | bidirectionnel                 |                     Optionnel et filtré | Allowlist de `dataID`, visibilité et rate limits.                        |
 
 Politique générale pour une fonction non supportée :
 
@@ -2776,10 +2775,10 @@ Le serveur ne doit pas silencieusement accepter une commande qu’il n’appliqu
 
 ## Annexe B. Matrice des messages UDP
 
-| Message | Direction | Support | Notes |
-|---|---|---:|---|
-| `Audio` | bidirectionnel | Requis | Opus, target entrant, context sortant, session source, frame number, position et volume advisory. |
-| `Ping` | bidirectionnel | Requis | Détection UDP, RTT et informations serveur optionnelles. |
+| Message | Direction      | Support | Notes                                                                                             |
+| ------- | -------------- | ------: | ------------------------------------------------------------------------------------------------- |
+| `Audio` | bidirectionnel |  Requis | Opus, target entrant, context sortant, session source, frame number, position et volume advisory. |
+| `Ping`  | bidirectionnel |  Requis | Détection UDP, RTT et informations serveur optionnelles.                                          |
 
 Le serveur doit également connaître les anciens formats de paquets suffisamment pour :
 
@@ -2788,7 +2787,7 @@ Le serveur doit également connaître les anciens formats de paquets suffisammen
 
 ## Annexe C. ADR initiales
 
-### ADR-001 : l'état métier est indépendant de Mumble et de Voxloom
+### ADR-001 : l'état métier est indépendant de Mumble et de Mumble Server Runtime
 
 **Décision :** les canaux, ACL et serveurs virtuels Murmur ne sont pas le modèle
 métier. Ce modèle appartient au flavor et reste opaque pour le runtime, selon

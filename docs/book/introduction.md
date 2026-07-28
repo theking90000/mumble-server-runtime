@@ -38,9 +38,9 @@ Voice behaviour based on this state usually requires custom channel management,
 permissions or scripted moves. The resulting voice structure is maintained in
 parallel with the game state.
 
-## Voxloom
+## Mumble Server Runtime
 
-Voxloom is a Mumble-compatible server runtime for application-controlled voice
+Mumble Server Runtime is a Mumble-compatible server runtime for application-controlled voice
 sessions.
 
 The channel structure, participant visibility and audio routing are derived
@@ -57,9 +57,9 @@ maintained channel model.
 Connections are accepted from unmodified Mumble clients. No plugin, custom
 client or protocol extension is required.
 
-Mumble Link and Voxloom address separate parts of game integration. Positional
+Mumble Link and Mumble Server Runtime address separate parts of game integration. Positional
 metadata may still be provided through Mumble Link, while server-controlled
-visibility, grouping and audio routing are derived through Voxloom.
+visibility, grouping and audio routing are derived through Mumble Server Runtime.
 
 ## Application-controlled voice
 
@@ -128,7 +128,7 @@ channel moves requires additional special cases for each role.
 
 ## Responsibility boundary
 
-Application state remains outside the Voxloom runtime. Domain concepts such as
+Application state remains outside the Mumble Server Runtime runtime. Domain concepts such as
 players, matches, teams, roles and locations are not inspected by the runtime.
 
 Runtime ownership is limited to Mumble-specific state:
@@ -171,7 +171,7 @@ At a high level:
 
 The documentation is divided into the following parts:
 
-- **What Voxloom does** describes the available capabilities and their limits
+- **What Mumble Server Runtime does** describes the available capabilities and their limits
   without types or implementation details.
 - **The model** defines views, scopes, overlays, audio relations, deltas and
   propagation cost.

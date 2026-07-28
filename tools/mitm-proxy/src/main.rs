@@ -1,4 +1,4 @@
-//! CLI wiring for the Voxloom MITM proxy (Phase 2). All logic lives in the lib
+//! CLI wiring for the Mumble Server Runtime MITM proxy (Phase 2). All logic lives in the lib
 //! (`voxloom_mitm_proxy`); this binary only parses arguments, sets up TLS, and
 //! runs the control-plane relay until a fatal error or Ctrl-C.
 

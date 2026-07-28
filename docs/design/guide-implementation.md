@@ -1,7 +1,7 @@
 # Guide d'implémentation — runtime à shards
 
 > Document autoportant : il se lit linéairement et contient tout ce qu'il faut
-> pour écrire le système. `render-scheduling-and-sharding.md` explique *pourquoi*
+> pour écrire le système. `render-scheduling-and-sharding.md` explique _pourquoi_
 > on en est arrivé là ; sur le modèle de visibilité, **c'est ce document-ci qui
 > fait foi**.
 >
@@ -52,11 +52,11 @@ O(N·taille du monde).
 C'est le squelette du document. **Ils sont indépendants**, et vouloir les unifier
 est l'erreur qui fait proliférer les cas particuliers.
 
-| # | mécanisme | forme | ce qu'il résout | coût |
-|---|---|---|---|---|
-| 1 | **vue partagée + portées** | un arbre de portées, une portée par élément, un `ScopeSet` par observateur | parties, équipes, spectateurs, staff — les 95 % | O(W) une fois + O(\|D\|) par connexion |
-| 2 | **overlay privé** | quelques éléments visibles par **une seule** connexion | vanish, canal privé, placement par observateur | O(\|overlay\|) |
-| 3 | **routage audio** | une relation **orientée** par destinataire | absolument tout l'audio | O(N + arêtes) |
+| #   | mécanisme                  | forme                                                                      | ce qu'il résout                                 | coût                                   |
+| --- | -------------------------- | -------------------------------------------------------------------------- | ----------------------------------------------- | -------------------------------------- |
+| 1   | **vue partagée + portées** | un arbre de portées, une portée par élément, un `ScopeSet` par observateur | parties, équipes, spectateurs, staff — les 95 % | O(W) une fois + O(\|D\|) par connexion |
+| 2   | **overlay privé**          | quelques éléments visibles par **une seule** connexion                     | vanish, canal privé, placement par observateur  | O(\|overlay\|)                         |
+| 3   | **routage audio**          | une relation **orientée** par destinataire                                 | absolument tout l'audio                         | O(N + arêtes)                          |
 
 ### 1.1 La règle qui dit lequel utiliser
 
@@ -66,7 +66,7 @@ est l'erreur qui fait proliférer les cas particuliers.
 
 Un rôle — joueur, host, spectateur niveau 1, spectateur niveau 2, staff — est par
 nature un **groupe**, même s'il n'a qu'un membre. L'overlay ne sert qu'aux cas où
-une *personne* diverge de son propre rôle.
+une _personne_ diverge de son propre rôle.
 
 ### 1.2 Le seul couplage, et il n'est pas de nous
 
@@ -109,7 +109,7 @@ fn comparable(a: Scope, b: Scope) -> bool {
 ```
 
 Les **deux** directions comptent, et c'est ce qui rend la relation utile : un
-joueur à `/g7/t2` voit ses ancêtres (`/`, `/g7`) *et* ses descendants ; un
+joueur à `/g7/t2` voit ses ancêtres (`/`, `/g7`) _et_ ses descendants ; un
 spectateur à `/g7` voit toutes les équipes sans qu'on ait rien ajouté au modèle.
 Monter dans l'arbre, c'est voir plus large.
 
@@ -123,7 +123,7 @@ pub const MAX_DEPTH: usize = 4;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Scope {
-    /// Segments opaques pour Voxloom : le flavor y met ce qu'il veut
+    /// Segments opaques pour Mumble Server Runtime : le flavor y met ce qu'il veut
     /// (id de partie, id d'équipe…).
     segments: [u32; MAX_DEPTH],
     depth: u8,
@@ -163,8 +163,8 @@ seule contrainte au rendu :
 > **La portée d'un canal enfant étend celle de son parent. La portée d'un
 > utilisateur étend celle de son canal.**
 
-Alors la propriété dont tout dépend — *si je vois un élément, je vois ce à quoi il
-fait référence* — est **automatique**. Démonstration, avec `c` la portée du canal
+Alors la propriété dont tout dépend — _si je vois un élément, je vois ce à quoi il
+fait référence_ — est **automatique**. Démonstration, avec `c` la portée du canal
 et `u` celle de l'utilisateur, `c` préfixe de `u`. Un observateur voit
 l'utilisateur via une portée `s` comparable à `u` :
 
@@ -364,7 +364,7 @@ Ce que la présence privée permet, et qui est le cœur du besoin :
 
 - **vanish** : un admin dans n'importe quel vocal, visible de lui seul ;
 - **annonce audio** : il « rejoint » virtuellement tous les canaux — une entrée
-  d'overlay par observateur, chacune plaçant la **même session** dans *son* canal.
+  d'overlay par observateur, chacune plaçant la **même session** dans _son_ canal.
   Coût O(N) éléments, linéaire et visible dans la loi de coût (§13) ;
 - **il se voit lui-même** où il est réellement, via son propre overlay.
 
@@ -378,16 +378,16 @@ Les portées ne pilotent **que** le visuel partagé. L'audio est une relation
 orientée que le flavor déclare, exactement ton « bitmap de réception par
 utilisateur » — un sens, deux sens, ou rien.
 
-| primitive | coût | pour |
-|---|---|---|
-| `audio_domain(d, membres)` | O(\|membres\|) | le gros : un canal, une équipe |
-| `audio_listen(qui, d)` | O(1) | admin, spectateur : entend sans être entendu |
-| `audio_edge(s, r)` | O(1) | généralité totale, au coût du flavor |
+| primitive                  | coût           | pour                                         |
+| -------------------------- | -------------- | -------------------------------------------- |
+| `audio_domain(d, membres)` | O(\|membres\|) | le gros : un canal, une équipe               |
+| `audio_listen(qui, d)`     | O(1)           | admin, spectateur : entend sans être entendu |
+| `audio_edge(s, r)`         | O(1)           | généralité totale, au coût du flavor         |
 
 Deux vérifications sur la sortie :
 
 1. **`r` voit `s`** (§1.2), sinon le paquet serait jeté par le client ;
-2 . les domaines ne franchissent pas les frontières de shard — c'est ce qui rend
+   2 . les domaines ne franchissent pas les frontières de shard — c'est ce qui rend
    la table de routage auto-suffisante (§9.3).
 
 ---
@@ -421,8 +421,8 @@ d'`Occupant::Synthetic`.
 zéro ligne et ça supprime toute une famille de cas particuliers.
 
 Quand un joueur change d'équipe, sa portée passe de `/g7/t3` à `/g7/t2`. Ce n'est
-pas « un champ qui change », c'est *l'entrée `(B, /g7/t3)` qui disparaît et
-l'entrée `(B, /g7/t2)` qui apparaît*. Le diff ordinaire produit donc tout seul :
+pas « un champ qui change », c'est _l'entrée `(B, /g7/t3)` qui disparaît et
+l'entrée `(B, /g7/t2)` qui apparaît_. Le diff ordinaire produit donc tout seul :
 
 ```
 RemoveUser(B)              [portée /g7/t3]
@@ -431,15 +431,15 @@ AddUser(B, canal Équipe2)  [portée /g7/t2]
 
 Et le filtre reste **un seul test**, sans branche :
 
-| connexion | observe | reçoit |
-|---|---|---|
-| coéquipier resté en t3 | `{/g7/t3}` | le `Remove` seul → B disparaît ✅ |
-| joueur de t2 | `{/g7/t2}` | le `Add` seul → B apparaît ✅ |
-| spectateur | `{/g7}` | les **deux** → réglé par `collapse` (§6.3) |
-| joueur d'une autre partie | `{/g8}` | rien ✅ |
+| connexion                 | observe    | reçoit                                     |
+| ------------------------- | ---------- | ------------------------------------------ |
+| coéquipier resté en t3    | `{/g7/t3}` | le `Remove` seul → B disparaît ✅          |
+| joueur de t2              | `{/g7/t2}` | le `Add` seul → B apparaît ✅              |
+| spectateur                | `{/g7}`    | les **deux** → réglé par `collapse` (§6.3) |
+| joueur d'une autre partie | `{/g8}`    | rien ✅                                    |
 
-> **Propriété qui tombe toute seule :** un déplacement *à l'intérieur* d'une
-> portée reste un `MoveUser` ; un déplacement *entre* portées devient un départ et
+> **Propriété qui tombe toute seule :** un déplacement _à l'intérieur_ d'une
+> portée reste un `MoveUser` ; un déplacement _entre_ portées devient un départ et
 > une arrivée. Ce qui est sémantiquement exact.
 
 ### 5.1 Les opérations de plan
@@ -541,13 +541,13 @@ fn collapse(ops: &mut Vec<PlanOp>) {
 Parce que dans tous les cas la bonne réponse est la même : **un élément qui a un
 `Add` quelque part existe encore, donc le `Remove` est faux.**
 
-| situation | ops produites | après `collapse` |
-|---|---|---|
-| l'élément change de portée (§5) | Remove(ancienne) + Add(nouvelle) | Add seul ✅ |
-| vanish → unvanish | Remove(overlay) + Add(partagé) | Add seul, fusion → il change de canal ✅ |
-| unvanish → vanish | Remove(partagé) + Add(overlay) | Add seul ✅ |
-| retiré de l'overlay, absent du partagé | Remove seul | Remove conservé ✅ |
-| disparaît partout | Remove seul | Remove conservé ✅ |
+| situation                              | ops produites                    | après `collapse`                         |
+| -------------------------------------- | -------------------------------- | ---------------------------------------- |
+| l'élément change de portée (§5)        | Remove(ancienne) + Add(nouvelle) | Add seul ✅                              |
+| vanish → unvanish                      | Remove(overlay) + Add(partagé)   | Add seul, fusion → il change de canal ✅ |
+| unvanish → vanish                      | Remove(partagé) + Add(overlay)   | Add seul ✅                              |
+| retiré de l'overlay, absent du partagé | Remove seul                      | Remove conservé ✅                       |
+| disparaît partout                      | Remove seul                      | Remove conservé ✅                       |
 
 Trois problèmes qu'on croyait distincts, une seule fonction : c'est le signe
 qu'elle est au bon niveau.
@@ -583,7 +583,7 @@ depuis `overlay_sent`. **L'overlay n'a pas besoin d'être journalisé.**
 Une seule, au moment où le flavor le construit :
 
 > **Un overlay ne peut référencer qu'un élément présent dans la vue partagée
-> *après* transition, et visible par cette connexion.**
+> _après_ transition, et visible par cette connexion.**
 
 Un `lookup` par élément d'overlay. Ça interdit d'un coup : placer quelqu'un dans
 un canal qui va disparaître, dans un canal que cette connexion ne voit pas, ou
@@ -596,12 +596,12 @@ référencer une session inexistante.
 Règle unique : **chaque donnée mutable a exactement une task propriétaire, et on
 communique en déplaçant des valeurs.**
 
-| task | il y en a | possède | ne fait jamais |
-|---|---|---|---|
-| **runtime** | 1 | registre des shards et des connexions, bindings UDP, allocateurs d'identifiants | de calcul long |
-| **shard** | 1 par shard | l'état métier, la vue courante, le journal, l'état de contrôle des connexions | **awaiter une I/O** |
-| **connexion** | 1 par connexion | socket TLS, état OCB2, boucle lecture/écriture | tenir un verrou pendant un `.await` |
-| **plan UDP** | 1 ou quelques-unes | la socket UDP | toucher une task de shard |
+| task          | il y en a          | possède                                                                         | ne fait jamais                      |
+| ------------- | ------------------ | ------------------------------------------------------------------------------- | ----------------------------------- |
+| **runtime**   | 1                  | registre des shards et des connexions, bindings UDP, allocateurs d'identifiants | de calcul long                      |
+| **shard**     | 1 par shard        | l'état métier, la vue courante, le journal, l'état de contrôle des connexions   | **awaiter une I/O**                 |
+| **connexion** | 1 par connexion    | socket TLS, état OCB2, boucle lecture/écriture                                  | tenir un verrou pendant un `.await` |
+| **plan UDP**  | 1 ou quelques-unes | la socket UDP                                                                   | toucher une task de shard           |
 
 ```
                        ┌──────────────┐
@@ -635,24 +635,24 @@ La proposition ne prétend pas « aucun `Arc` nulle part ». Elle prétend :
 
 **Le partage métier vit dans le `ShardLogic` concret**, jamais ailleurs :
 
-| forme | quand | conséquence |
-|---|---|---|
-| `mpsc::Receiver<Msg>` dans la logique | **flux d'événements** | aucun verrou ; `try_recv()` ne bloque jamais ; backpressure naturelle |
-| `watch::Receiver<Arc<State>>` | **dernière valeur gagnante** (positions à 20 Hz) | pas de file de valeurs périmées ; l'émetteur construit hors verrou |
+| forme                                 | quand                                            | conséquence                                                           |
+| ------------------------------------- | ------------------------------------------------ | --------------------------------------------------------------------- |
+| `mpsc::Receiver<Msg>` dans la logique | **flux d'événements**                            | aucun verrou ; `try_recv()` ne bloque jamais ; backpressure naturelle |
+| `watch::Receiver<Arc<State>>`         | **dernière valeur gagnante** (positions à 20 Hz) | pas de file de valeurs périmées ; l'émetteur construit hors verrou    |
 
 À éviter : `Arc<Mutex<World>>` où `render` verrouille et construit la vue sous le
 verrou. La section critique contiendrait du code métier de durée arbitraire, et un
 écrivain extérieur qui ferait de l'I/O sous le verrou **bloquerait la task du
 shard**.
 
-**Les `Arc` du runtime**, tous *read-mostly* ou non contendus :
+**Les `Arc` du runtime**, tous _read-mostly_ ou non contendus :
 
-| structure | partagée entre | pourquoi c'est sans risque |
-|---|---|---|
-| `ArcSwap<Bindings>` | runtime → plan UDP | copy-on-write, écrite rarement, lue sans verrou |
-| `ArcSwap<ShardRouting>` | task de shard → plan UDP | idem ; le contenu est une **valeur**, donc transmissible par réseau plus tard |
-| `Arc<Mutex<CryptState>>` | plan UDP ↔ task de connexion | **par connexion**, jamais contendu, et toujours sur la même machine |
-| `Arc<AtomicU64>` (curseur) | connexion → plan UDP | atomique |
+| structure                  | partagée entre               | pourquoi c'est sans risque                                                    |
+| -------------------------- | ---------------------------- | ----------------------------------------------------------------------------- |
+| `ArcSwap<Bindings>`        | runtime → plan UDP           | copy-on-write, écrite rarement, lue sans verrou                               |
+| `ArcSwap<ShardRouting>`    | task de shard → plan UDP     | idem ; le contenu est une **valeur**, donc transmissible par réseau plus tard |
+| `Arc<Mutex<CryptState>>`   | plan UDP ↔ task de connexion | **par connexion**, jamais contendu, et toujours sur la même machine           |
+| `Arc<AtomicU64>` (curseur) | connexion → plan UDP         | atomique                                                                      |
 
 ### 7.2 La règle de la frontière réseau
 
@@ -766,7 +766,7 @@ async fn shard_task(mut shard: Shard) {
 }
 ```
 
-**Il n'y a aucun tick dans le runtime.** Voxloom ne sait pas pourquoi un flavor
+**Il n'y a aucun tick dans le runtime.** Mumble Server Runtime ne sait pas pourquoi un flavor
 voudrait un rythme : un flavor qui en veut un lance son propre
 `tokio::interval` et appelle `wake()`. `MIN_INTERVAL` (50 ms pour commencer) est
 le seul réglage, et c'est une **protection**, pas une politique. Il borne les
@@ -967,8 +967,8 @@ struct Binding {
 **Chemin froid, adresse inconnue** : candidats = connexions dont l'IP hôte TCP est
 la même ; tenter `checkDecrypt` sur chacune ; lier au premier succès. C'est sûr
 parce qu'un déchiffrement OCB2 en échec est **sans effet de bord** (l'IV est
-restauré, rien n'est écrit dans l'historique anti-rejeu). L'index *IP hôte →
-connexions* est **runtime-global**, pas par shard : on ne sait pas encore de quel
+restauré, rien n'est écrit dans l'historique anti-rejeu). L'index _IP hôte →
+connexions_ est **runtime-global**, pas par shard : on ne sait pas encore de quel
 shard vient l'émetteur.
 
 > **Une migration ne perturbe pas l'UDP.** L'adresse, la clé et la session ne
@@ -1125,18 +1125,18 @@ tour**, et sharder par partie borne le pic à la taille d'une partie.
 
 ## 14. Ordre de construction
 
-| # | à écrire | fini quand |
-|---|---|---|
-| 1 | `Scope`, `ScopeSet` : `child`, `is_prefix_of`, `comparable`, `sees`. **Pur, ~80 lignes.** | propriétés : `comparable` réflexive et symétrique ; `child` ne rend jamais un préfixe strict de son parent |
-| 2 | `ShardBuilder` + types de vue + `finish()`. **Pur.** | propriété : **toute** vue produite satisfait la clôture — impossible à faire échouer, c'est le but |
-| 3 | `diff` + `plan` avec la clé `(élément, portée)` ; retirer les ops audio ; faire porter la portée par l'op | le proptest existant à 4000 graines repasse au vert **et** un changement de portée produit bien Remove + Add |
-| 4 | `filter`, `splice`, `collapse`. **Pur, ~50 lignes.** | les propriétés du §12 avec un générateur couvrant les quatre classes |
-| 5 | `Journal`. **Pur, sans vocabulaire de vue.** | proptest : rejouer par morceaux == d'un coup ; tomber sous `tail` est détecté |
-| 6 | Une task de shard, **une** connexion : boucle, `reconcile`, `push`, file bornée | le client simulé reçoit l'arbre, aucune violation §20 |
-| 7 | N connexions à portées différentes, `replan`, overlays | deux clients voient des arbres différents ; l'un change de portée et converge **sans clignotement** ; un vanish apparaît chez un seul |
-| 8 | Plan UDP : `Bindings`, `ShardRouting`, chemin froid, gating | deux vrais clients s'entendent, en UDP et en repli tunnel ; un admin en `audio_listen` entend sans être entendu |
-| 9 | Plusieurs shards : `RuntimeHandle`, `ConnectionRouter`, attacher/détacher | deux clients dans deux shards ne se voient ni ne s'entendent |
-| 10 | Migration, `ShardHandle`, `wake`, flavor de référence | scénario complet rejoué par un binaire de composition |
+| #   | à écrire                                                                                                  | fini quand                                                                                                                            |
+| --- | --------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | `Scope`, `ScopeSet` : `child`, `is_prefix_of`, `comparable`, `sees`. **Pur, ~80 lignes.**                 | propriétés : `comparable` réflexive et symétrique ; `child` ne rend jamais un préfixe strict de son parent                            |
+| 2   | `ShardBuilder` + types de vue + `finish()`. **Pur.**                                                      | propriété : **toute** vue produite satisfait la clôture — impossible à faire échouer, c'est le but                                    |
+| 3   | `diff` + `plan` avec la clé `(élément, portée)` ; retirer les ops audio ; faire porter la portée par l'op | le proptest existant à 4000 graines repasse au vert **et** un changement de portée produit bien Remove + Add                          |
+| 4   | `filter`, `splice`, `collapse`. **Pur, ~50 lignes.**                                                      | les propriétés du §12 avec un générateur couvrant les quatre classes                                                                  |
+| 5   | `Journal`. **Pur, sans vocabulaire de vue.**                                                              | proptest : rejouer par morceaux == d'un coup ; tomber sous `tail` est détecté                                                         |
+| 6   | Une task de shard, **une** connexion : boucle, `reconcile`, `push`, file bornée                           | le client simulé reçoit l'arbre, aucune violation §20                                                                                 |
+| 7   | N connexions à portées différentes, `replan`, overlays                                                    | deux clients voient des arbres différents ; l'un change de portée et converge **sans clignotement** ; un vanish apparaît chez un seul |
+| 8   | Plan UDP : `Bindings`, `ShardRouting`, chemin froid, gating                                               | deux vrais clients s'entendent, en UDP et en repli tunnel ; un admin en `audio_listen` entend sans être entendu                       |
+| 9   | Plusieurs shards : `RuntimeHandle`, `ConnectionRouter`, attacher/détacher                                 | deux clients dans deux shards ne se voient ni ne s'entendent                                                                          |
+| 10  | Migration, `ShardHandle`, `wake`, flavor de référence                                                     | scénario complet rejoué par un binaire de composition                                                                                 |
 
 Les étapes **1 à 5 sont entièrement pures** — ni tokio, ni socket, ni horloge.
 C'est la moitié du système, testable sans rien lancer.
@@ -1148,7 +1148,7 @@ C'est la moitié du système, testable sans rien lancer.
 **Propres à ce design**
 
 - **Ne jamais mettre de contenu changeant dans une identité.** Une horloge dans un
-  *nom* de canal, c'est un champ. Dans l'*identité* du canal, c'est un canal
+  _nom_ de canal, c'est un champ. Dans l'_identité_ du canal, c'est un canal
   détruit et recréé dix fois par seconde, avec des identifiants brûlés.
 - **La portée d'une suppression vient de la vue d'avant.** Fais-la porter par
   l'opération à la planification.
@@ -1180,12 +1180,12 @@ C'est la moitié du système, testable sans rien lancer.
 
 ## 16. Journal des révisions
 
-| rév. | changement |
-|---|---|
-| **r4** | **Bascule achevée** : le testkit juge `voxloom-gateway` et `voxloom-shard`, l'ancien pipeline P5–P7 est retiré et `legacy-p7-final` devient son archive. Un `ChannelId` accepté comme retiré par un client est désormais mort globalement (§18), y compris lors d'un simple changement de portée. |
+| rév.   | changement                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| ------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **r4** | **Bascule achevée** : le testkit juge `voxloom-gateway` et `voxloom-shard`, l'ancien pipeline P5–P7 est retiré et `legacy-p7-final` devient son archive. Un `ChannelId` accepté comme retiré par un client est désormais mort globalement (§18), y compris lors d'un simple changement de portée.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | **r3** | **Trois mécanismes explicitement séparés** (§1) : vue partagée + portées / overlay privé / relation audio, avec la règle « portée = groupe, overlay = exception individuelle ». La portée d'un utilisateur **étend** celle de son canal au lieu de l'égaler (§2.4) : un canal peut contenir plusieurs ensembles filtrés, jusqu'à une portée par joueur — le théorème de clôture est reprouvé. L'audio quitte les portées et devient une **relation orientée** (`audio_domain` / `audio_listen` / `audio_edge`), donc asymétrique par nature ; `Observation` se réduit à `see`. **Overlay réintégré** comme placement par observateur (vanish, annonce audio), avec l'invariant **partagé xor privé** et sa composition détaillée : `splice` dans les phases (§6.2) et `collapse` généralisé (§6.3). L'état engagé devient un **triplet** `(cursor, see, overlay_sent)` avançant atomiquement (§6.5). Routage recompilé **conditionnellement** et `Delivery` pointant vers le transport vivant (§8.3). Loi de coût explicitée (§13) : aucun terme en nombre de rôles. Oracle à **quatre** classes de changement + trois tests de mutation (§12). |
-| **r2** | La visibilité passe d'une étiquette posée à côté des éléments à une **portée** (position dans un arbre) ; la clôture devient un théorème au lieu d'une validation ; `render` construit au lieu de décrire. |
-| **r1** | Première rédaction : journal + curseur, filtrage, chemin UDP, ordre de construction. |
+| **r2** | La visibilité passe d'une étiquette posée à côté des éléments à une **portée** (position dans un arbre) ; la clôture devient un théorème au lieu d'une validation ; `render` construit au lieu de décrire.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| **r1** | Première rédaction : journal + curseur, filtrage, chemin UDP, ordre de construction.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 
 ---
 
@@ -1214,25 +1214,25 @@ C'est la moitié du système, testable sans rien lancer.
 ## 18. Ce que l'implémentation a changé au guide
 
 Écarts délibérés entre ce document et `voxloom-shard`. Chacun est motivé, et
-motivé *par une règle du guide lui-même* : là où le pseudo-code et une règle se
+motivé _par une règle du guide lui-même_ : là où le pseudo-code et une règle se
 contredisaient, c'est la règle qui a gagné.
 
-| § | le guide dit | le code fait | pourquoi |
-|---|---|---|---|
-| 2.2 | `Scope::child(seg) -> Scope` | `-> Option<Scope>` | Au-delà de `MAX_DEPTH`, saturer rendrait à l'enfant la portée de son parent : une fuite de visibilité déguisée en arrondi. Refuser remonte en `BuildError` et garde la vue précédente (§11.7). |
-| 3.2 | `channel(parent, name, narrow)` | `channel(parent, key, name, narrow)` | Le guide ne dit jamais d'où vient l'**identité** d'un canal. La déduire du nom est exactement le piège du §15 (une horloge dans le nom brûlerait un ID par seconde). Le flavor la déclare, le nom reste un champ. Un utilisateur n'a pas ce problème : l'`Occupant` *est* son identité. |
-| 3.2 | `debug_assert!` sur `channel_link` | `BuildError::LinkAcrossScopes` | Une assertion de debug ne fait rien en release. Fail closed (R6). |
-| 5.1 | `UpdateChannel(ChannelPatch)` avec un jeu de liens | `links_added` / `links_removed` | Le client traite `links` non vide comme un remplacement **total** et ignore une liste vide ; `links_add`/`links_remove` sont traités dans leurs propres blocs. Les jeux incrémentaux composent sur un rejeu et n'exigent pas de connaître la vue engagée. REF `mumble/Messages.cpp::msgChannelState`. |
-| 9.2 | `version += 1` à chaque tour utile | version incrémentée **seulement** si le delta partagé est non vide | Seul le delta partagé va au journal : un replan lit les vues, un overlay se recalcule. Sans ça, une connexion durablement congestionnée fait tourner la version à chaque tour et pousse le `tail` du journal au-delà de ce dont ses pairs ont besoin. |
-| 9.4 | `replan` affecte `conn.see` avant d'envoyer | les trois composantes n'avancent qu'au succès | C'est la règle 6 du §11, que le pseudo-code du §9.4 contredisait. Sinon une connexion congestionnée garderait la nouvelle observation avec l'ancienne vue, et le filtre du tour suivant utiliserait une portée dont le client n'a jamais entendu parler. |
-| 3.5 / 8.3 | « vérifier que `r` voit `s` » sur les arêtes | vérification **par portée distincte**, jamais par paire | Matérialiser les paires d'un domaine est quadratique et tournait à *chaque* rendu. À 500 connexions, ces deux passages en `BTreeSet` coûtaient plus que tout le reste du tour (21,6 ms contre 0,74 ms une fois corrigés). `resolve()` reste la définition, et un test y épingle `compile`. |
-| 4 | allocateur d'identifiants **par shard** | un seul allocateur pour tout le runtime, canaux indexés sur `(shard, clé)` | Dès qu'une connexion peut changer de shard, l'allocation par shard casse la règle 3 du §11 vue du client : le shard A retire le canal 5, le shard B en crée un autre qui porte aussi le 5. Les sessions sont pires — voir la ligne suivante. Comme la session est indexée sur l'`Occupant`, une migration garde la sienne **gratuitement**. |
-| 4 / 11.3 | une clé de canal garde son identifiant | un `ChannelId` est retiré dès qu'un client accepte son `ChannelRemove` | Le client mémorise les identifiants retirés, même quand le canal existe encore dans la portée d'un autre client. L'identifiant est donc retiré globalement et le prochain rendu le fait tourner pour tous ; le compteur monotone garantit qu'il ne revient jamais. |
-| 9.6 | « migrer = détacher de A, attacher à B, **rien d'autre** » | le détachement d'une migration ne pousse **rien** ; A transmet la vue tenue par le client, B planifie une seule transition dessus | Le démontage n'est pas seulement du gaspillage, il **déconnecte le client officiel**. `msgUserRemove` ne retire pas la victime du modèle quand c'est soi (`if (pDst != pSelf)`), donc le `ChannelRemove` qui suit ressemble à la suppression d'un canal occupé ; `msgChannelRemove` journalise « Protocol violation » et appelle `disconnect()`. REF `mumble/Messages.cpp`, `mumble/UserModel.cpp::removeChannel`. |
-| 9.2 | table de routage compilée depuis la vue partagée | compilée depuis la vue partagée **plus la présence propre de chaque overlay** | Une connexion sans présence partagée n'est pas absente du runtime : c'est exactement ce qu'est un vanish. L'omettre transformait silencieusement « entend tout, n'est entendu de personne » en « ne participe pas à l'audio », sans que le flavor puisse distinguer les deux. Qui l'entend reste une autre question, et le rendu refuse déjà une relation dont la réponse est non. |
-| 16.9 | `TextMessage` : « résoudre les cibles, puis livrer » | livré à tout le monde **sauf** qui ne voit pas l'émetteur | Murmur estampille `actor` sans condition parce que sa visibilité est globale ; ici elle est par connexion. Un destinataire qui ne tient pas la session de l'émetteur afficherait le message comme venant de « Server » (REF `mumble/Messages.cpp::msgTextMessage`, repli `tr("Server", "message from")`), et le nommer quand même violerait les invariants 14 et 15 du §20 que le testkit vérifie. C'est la règle audio - un récepteur voit son émetteur - appliquée au texte. Un flavor qui veut que tout le monde lise dispose de `Reply::announce`, qui ne porte pas d'acteur. |
-| 16.9 | cibles multiples autorisées dans un même message | **exactement une** cible, sinon refus | Le client officiel n'en envoie jamais plus d'une : `sendUserTextMessage` remplit une session, `sendChannelTextMessage` un `channel_id` **ou** un `tree_id` (REF `mumble/ServerHandler.cpp`). Accepter un mélange reviendrait à inventer un fan-out que personne n'a demandé, sur un message que rien ne borne. Fail closed (R6). |
-| 10.1 | `route(&identity)` | `route(connection, &identity)` | Un `VoiceEvent` ne transporte qu'un `ConnectionId` — délibérément, le runtime n'a pas d'opinion sur ce qu'est un utilisateur. Le routage est donc le seul instant où l'identité et l'identifiant se rencontrent : une application qui veut que son flavor connaisse un nom enregistre la paire là. |
+| §         | le guide dit                                               | le code fait                                                                                                                      | pourquoi                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| --------- | ---------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 2.2       | `Scope::child(seg) -> Scope`                               | `-> Option<Scope>`                                                                                                                | Au-delà de `MAX_DEPTH`, saturer rendrait à l'enfant la portée de son parent : une fuite de visibilité déguisée en arrondi. Refuser remonte en `BuildError` et garde la vue précédente (§11.7).                                                                                                                                                                                                                                                                                                                                                                                    |
+| 3.2       | `channel(parent, name, narrow)`                            | `channel(parent, key, name, narrow)`                                                                                              | Le guide ne dit jamais d'où vient l'**identité** d'un canal. La déduire du nom est exactement le piège du §15 (une horloge dans le nom brûlerait un ID par seconde). Le flavor la déclare, le nom reste un champ. Un utilisateur n'a pas ce problème : l'`Occupant` _est_ son identité.                                                                                                                                                                                                                                                                                           |
+| 3.2       | `debug_assert!` sur `channel_link`                         | `BuildError::LinkAcrossScopes`                                                                                                    | Une assertion de debug ne fait rien en release. Fail closed (R6).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| 5.1       | `UpdateChannel(ChannelPatch)` avec un jeu de liens         | `links_added` / `links_removed`                                                                                                   | Le client traite `links` non vide comme un remplacement **total** et ignore une liste vide ; `links_add`/`links_remove` sont traités dans leurs propres blocs. Les jeux incrémentaux composent sur un rejeu et n'exigent pas de connaître la vue engagée. REF `mumble/Messages.cpp::msgChannelState`.                                                                                                                                                                                                                                                                             |
+| 9.2       | `version += 1` à chaque tour utile                         | version incrémentée **seulement** si le delta partagé est non vide                                                                | Seul le delta partagé va au journal : un replan lit les vues, un overlay se recalcule. Sans ça, une connexion durablement congestionnée fait tourner la version à chaque tour et pousse le `tail` du journal au-delà de ce dont ses pairs ont besoin.                                                                                                                                                                                                                                                                                                                             |
+| 9.4       | `replan` affecte `conn.see` avant d'envoyer                | les trois composantes n'avancent qu'au succès                                                                                     | C'est la règle 6 du §11, que le pseudo-code du §9.4 contredisait. Sinon une connexion congestionnée garderait la nouvelle observation avec l'ancienne vue, et le filtre du tour suivant utiliserait une portée dont le client n'a jamais entendu parler.                                                                                                                                                                                                                                                                                                                          |
+| 3.5 / 8.3 | « vérifier que `r` voit `s` » sur les arêtes               | vérification **par portée distincte**, jamais par paire                                                                           | Matérialiser les paires d'un domaine est quadratique et tournait à _chaque_ rendu. À 500 connexions, ces deux passages en `BTreeSet` coûtaient plus que tout le reste du tour (21,6 ms contre 0,74 ms une fois corrigés). `resolve()` reste la définition, et un test y épingle `compile`.                                                                                                                                                                                                                                                                                        |
+| 4         | allocateur d'identifiants **par shard**                    | un seul allocateur pour tout le runtime, canaux indexés sur `(shard, clé)`                                                        | Dès qu'une connexion peut changer de shard, l'allocation par shard casse la règle 3 du §11 vue du client : le shard A retire le canal 5, le shard B en crée un autre qui porte aussi le 5. Les sessions sont pires — voir la ligne suivante. Comme la session est indexée sur l'`Occupant`, une migration garde la sienne **gratuitement**.                                                                                                                                                                                                                                       |
+| 4 / 11.3  | une clé de canal garde son identifiant                     | un `ChannelId` est retiré dès qu'un client accepte son `ChannelRemove`                                                            | Le client mémorise les identifiants retirés, même quand le canal existe encore dans la portée d'un autre client. L'identifiant est donc retiré globalement et le prochain rendu le fait tourner pour tous ; le compteur monotone garantit qu'il ne revient jamais.                                                                                                                                                                                                                                                                                                                |
+| 9.6       | « migrer = détacher de A, attacher à B, **rien d'autre** » | le détachement d'une migration ne pousse **rien** ; A transmet la vue tenue par le client, B planifie une seule transition dessus | Le démontage n'est pas seulement du gaspillage, il **déconnecte le client officiel**. `msgUserRemove` ne retire pas la victime du modèle quand c'est soi (`if (pDst != pSelf)`), donc le `ChannelRemove` qui suit ressemble à la suppression d'un canal occupé ; `msgChannelRemove` journalise « Protocol violation » et appelle `disconnect()`. REF `mumble/Messages.cpp`, `mumble/UserModel.cpp::removeChannel`.                                                                                                                                                                |
+| 9.2       | table de routage compilée depuis la vue partagée           | compilée depuis la vue partagée **plus la présence propre de chaque overlay**                                                     | Une connexion sans présence partagée n'est pas absente du runtime : c'est exactement ce qu'est un vanish. L'omettre transformait silencieusement « entend tout, n'est entendu de personne » en « ne participe pas à l'audio », sans que le flavor puisse distinguer les deux. Qui l'entend reste une autre question, et le rendu refuse déjà une relation dont la réponse est non.                                                                                                                                                                                                |
+| 16.9      | `TextMessage` : « résoudre les cibles, puis livrer »       | livré à tout le monde **sauf** qui ne voit pas l'émetteur                                                                         | Murmur estampille `actor` sans condition parce que sa visibilité est globale ; ici elle est par connexion. Un destinataire qui ne tient pas la session de l'émetteur afficherait le message comme venant de « Server » (REF `mumble/Messages.cpp::msgTextMessage`, repli `tr("Server", "message from")`), et le nommer quand même violerait les invariants 14 et 15 du §20 que le testkit vérifie. C'est la règle audio - un récepteur voit son émetteur - appliquée au texte. Un flavor qui veut que tout le monde lise dispose de `Reply::announce`, qui ne porte pas d'acteur. |
+| 16.9      | cibles multiples autorisées dans un même message           | **exactement une** cible, sinon refus                                                                                             | Le client officiel n'en envoie jamais plus d'une : `sendUserTextMessage` remplit une session, `sendChannelTextMessage` un `channel_id` **ou** un `tree_id` (REF `mumble/ServerHandler.cpp`). Accepter un mélange reviendrait à inventer un fan-out que personne n'a demandé, sur un message que rien ne borne. Fail closed (R6).                                                                                                                                                                                                                                                  |
+| 10.1      | `route(&identity)`                                         | `route(connection, &identity)`                                                                                                    | Un `VoiceEvent` ne transporte qu'un `ConnectionId` — délibérément, le runtime n'a pas d'opinion sur ce qu'est un utilisateur. Le routage est donc le seul instant où l'identité et l'identifiant se rencontrent : une application qui veut que son flavor connaisse un nom enregistre la paire là.                                                                                                                                                                                                                                                                                |
 
 ### 18.1 Points ouverts
 
@@ -1256,12 +1256,12 @@ contredisaient, c'est la règle qui a gagné.
   `PermissionQuery`, `UserStats` et `ContextAction`. Tout le reste reçoit un
   `PermissionDenied` journalisé. Le backlog, par ordre de valeur décroissante :
 
-  | message | ce qu'il demande |
-  |---|---|
+  | message                                         | ce qu'il demande                                                                                                                                        |
+  | ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
   | `ChannelState` / `ChannelRemove` / `UserRemove` | Créer, renommer, kick. Même forme que `RequestedChannel` (un événement, le flavor tranche), donc bon marché, mais sans utilisateur concret aujourd'hui. |
-  | `UserState` visant une autre session | Mute serveur, déplacement d'autrui. Refusé explicitement, pas par omission. |
-  | `RequestBlob` | La `ShardView` ne porte ni commentaire, ni texture, ni description : il n'y a rien à répondre tant qu'elle ne les porte pas. |
-  | `UserList` / `BanList` / `ACL` / `QueryUsers` | Administration d'utilisateurs enregistrés. Aucun registre n'existe, donc le refus **est** la réponse correcte (spec 16.10 à 16.14). |
+  | `UserState` visant une autre session            | Mute serveur, déplacement d'autrui. Refusé explicitement, pas par omission.                                                                             |
+  | `RequestBlob`                                   | La `ShardView` ne porte ni commentaire, ni texture, ni description : il n'y a rien à répondre tant qu'elle ne les porte pas.                            |
+  | `UserList` / `BanList` / `ACL` / `QueryUsers`   | Administration d'utilisateurs enregistrés. Aucun registre n'existe, donc le refus **est** la réponse correcte (spec 16.10 à 16.14).                     |
 
   Le piège de `perm::TEXT_MESSAGE` est levé : le bit n'est plus une constante mais
   se déduit du rendu, comme `can_enter`. `ShardBuilder::channel_can_text` déclare
@@ -1315,7 +1315,7 @@ lieu de faire comme si le déplacement avait eu lieu.
 Deux points sur ce câblage :
 
 - La fermeture ne tient qu'un `Weak` sur le runtime. Une référence forte fermerait
-  l'anneau *runtime → annuaire → tâche → shard → fermeture*, et le runtime
+  l'anneau _runtime → annuaire → tâche → shard → fermeture_, et le runtime
   survivrait à toutes ses poignées, pour toujours.
 - Les paroles partent **avant** les effets. Un flavor qui dit au revoir et bascule
   dans le même souffle a son message sur la socket avant que le déplacement soit
@@ -1332,12 +1332,12 @@ Le tableau ci-dessous conserve aussi la dernière baseline P7, issue du tag
 médiane sur 20 tours :
 
 | connexions | tour de shard | par connexion | delta ops | publication P7 | par connexion |
-|---|---|---|---|---|---|
-| 2 | 4,50 µs | 2,25 µs | 3 | 25,96 µs | 12,98 µs |
-| 10 | 28,42 µs | 2,84 µs | 7 | 156,67 µs | 15,67 µs |
-| 50 | 290,88 µs | 5,82 µs | 28 | 1,47 ms | 29,48 µs |
-| 200 | 1,02 ms | 5,11 µs | 103 | 21,39 ms | 106,97 µs |
-| 500 | **5,19 ms** | **10,38 µs** | 253 | **205,25 ms** | 410,50 µs |
+| ---------- | ------------- | ------------- | --------- | -------------- | ------------- |
+| 2          | 4,50 µs       | 2,25 µs       | 3         | 25,96 µs       | 12,98 µs      |
+| 10         | 28,42 µs      | 2,84 µs       | 7         | 156,67 µs      | 15,67 µs      |
+| 50         | 290,88 µs     | 5,82 µs       | 28        | 1,47 ms        | 29,48 µs      |
+| 200        | 1,02 ms       | 5,11 µs       | 103       | 21,39 ms       | 106,97 µs     |
+| 500        | **5,19 ms**   | **10,38 µs**  | 253       | **205,25 ms**  | 410,50 µs     |
 
 Le runtime à shards reste environ 39 fois plus rapide à 500 connexions sur ce
 scénario. En revanche, la colonne `delta ops` expose honnêtement le coût du

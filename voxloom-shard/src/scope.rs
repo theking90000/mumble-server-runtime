@@ -42,7 +42,7 @@ pub const MAX_OBSERVED: usize = 4;
 
 /// A position in the visibility tree.
 ///
-/// Segments are opaque to Voxloom: a flavor puts whatever it wants in them (a
+/// Segments are opaque to Mumble Server Runtime: a flavor puts whatever it wants in them (a
 /// game id, a team id). Two scopes are equal when their paths are equal, so this
 /// derives `Ord` for use as a map key and for canonicalizing a [`ScopeSet`].
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Default)]
