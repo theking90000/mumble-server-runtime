@@ -11,7 +11,7 @@
 //!
 //! REF: docs/design/guide-implementation.md 10.1
 
-use voxloom_shard::{ConnectionId, ShardId};
+use mumble_server_runtime_shard::{ConnectionId, ShardId};
 
 /// What the gateway knows about a connection at the moment it must be routed.
 ///
@@ -55,7 +55,7 @@ pub trait ConnectionRouter: Send + Sync + 'static {
     /// the cost is borne by the arriving client alone.
     ///
     /// The identifier is handed over as well as the claim, because this is the
-    /// only moment where the two meet. A shard's [`voxloom_shard::VoiceEvent`]
+    /// only moment where the two meet. A shard's [`mumble_server_runtime_shard::VoiceEvent`]
     /// carries a `ConnectionId` and nothing else - deliberately, since the
     /// runtime has no opinion on what a user *is* - so an application that wants
     /// its flavor to know a name records the pair here.

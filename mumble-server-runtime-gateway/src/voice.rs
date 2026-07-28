@@ -37,7 +37,7 @@ use tokio::net::UdpSocket;
 use mumble_server_runtime_crypto::{BLOCK_SIZE, CryptState, KEY_SIZE};
 use mumble_server_runtime_protocol::messages::{tcp, udp};
 use mumble_server_runtime_protocol::{ControlMessage, UdpMessage, decode_udp, encode_udp};
-use voxloom_shard::VoiceAdmission;
+use mumble_server_runtime_shard::VoiceAdmission;
 
 use crate::config::GatewayConfig;
 use crate::limits;
@@ -129,7 +129,7 @@ impl VoicePlane {
             for (sealed, to) in self.handle_datagram(datagram, from) {
                 if let Err(error) = self.socket.send_to(&sealed, to).await {
                     // One failed send is not fatal to the plane.
-                    eprintln!("voxloom-gateway: UDP send to {to} failed: {error}");
+                    eprintln!("mumble-server-runtime-gateway: UDP send to {to} failed: {error}");
                 }
             }
         }
@@ -149,7 +149,7 @@ impl VoicePlane {
                     // Replay, tamper or a desynchronised nonce. Dropping is the
                     // only safe answer; resync handling is future work.
                     eprintln!(
-                        "voxloom-gateway: undecryptable datagram from bound session {:?} at {from}",
+                        "mumble-server-runtime-gateway: undecryptable datagram from bound session {:?} at {from}",
                         peer.session()
                     );
                     Vec::new()
@@ -173,7 +173,7 @@ impl VoicePlane {
             return vec![(self.ping_reply(&ping), from)];
         }
 
-        eprintln!("voxloom-gateway: dropping an unroutable datagram from {from}");
+        eprintln!("mumble-server-runtime-gateway: dropping an unroutable datagram from {from}");
         Vec::new()
     }
 
@@ -183,7 +183,7 @@ impl VoicePlane {
         // enforce one rule (spec 15.7).
         if !limits::is_acceptable_size(plaintext.len()) {
             eprintln!(
-                "voxloom-gateway: dropping a {}-byte packet from session {:?} (outside the band)",
+                "mumble-server-runtime-gateway: dropping a {}-byte packet from session {:?} (outside the band)",
                 plaintext.len(),
                 peer.session()
             );
@@ -205,7 +205,7 @@ impl VoicePlane {
             }
             Err(error) => {
                 eprintln!(
-                    "voxloom-gateway: bad envelope from session {:?}: {error}",
+                    "mumble-server-runtime-gateway: bad envelope from session {:?}: {error}",
                     peer.session()
                 );
                 Vec::new()
@@ -229,7 +229,7 @@ impl VoicePlane {
     ) -> Vec<Datagram> {
         if !sender.allow_voice(now, bytes) {
             eprintln!(
-                "voxloom-gateway: session {:?}: voice packet dropped, budget exhausted",
+                "mumble-server-runtime-gateway: session {:?}: voice packet dropped, budget exhausted",
                 sender.session()
             );
             return Vec::new();
@@ -239,7 +239,7 @@ impl VoicePlane {
             // `context` is the server-to-client direction and a header-less
             // packet says nothing. Either way there is no intent to honour.
             eprintln!(
-                "voxloom-gateway: session {:?}: voice packet with no target",
+                "mumble-server-runtime-gateway: session {:?}: voice packet with no target",
                 sender.session()
             );
             return Vec::new();
@@ -254,7 +254,7 @@ impl VoicePlane {
                 // normal speech would deliver voice to listeners the client
                 // never addressed here.
                 eprintln!(
-                    "voxloom-gateway: session {:?}: refusing unregistered voice target {registered}",
+                    "mumble-server-runtime-gateway: session {:?}: refusing unregistered voice target {registered}",
                     sender.session()
                 );
                 Vec::new()
@@ -311,7 +311,7 @@ impl VoicePlane {
         let session = sender.session();
         if !sender.routing().may_speak(session) {
             eprintln!(
-                "voxloom-gateway: session {session:?}: refusing loopback, this speaker is muted"
+                "mumble-server-runtime-gateway: session {session:?}: refusing loopback, this speaker is muted"
             );
             return Vec::new();
         }
@@ -330,7 +330,7 @@ impl VoicePlane {
         &self,
         receiver: &Arc<Peer>,
         audio: &udp::Audio,
-        sender: voxloom_shard::SessionId,
+        sender: mumble_server_runtime_shard::SessionId,
         out: &mut Vec<Datagram>,
     ) {
         let plaintext = encode_udp(&UdpMessage::Audio(outgoing(audio, sender)));
@@ -339,7 +339,7 @@ impl VoicePlane {
             Some(address) => match receiver.encrypt(&plaintext) {
                 Some(sealed) => out.push((sealed, address)),
                 None => eprintln!(
-                    "voxloom-gateway: dropping audio for session {:?}: no usable crypto state",
+                    "mumble-server-runtime-gateway: dropping audio for session {:?}: no usable crypto state",
                     receiver.session()
                 ),
             },
@@ -378,7 +378,7 @@ impl VoicePlane {
 ///   `target` client-to-server and `context` server-to-client, so the target is
 ///   replaced rather than forwarded; `sender_session` "will always be set when
 ///   receiving audio from the server".
-fn outgoing(source: &udp::Audio, sender: voxloom_shard::SessionId) -> udp::Audio {
+fn outgoing(source: &udp::Audio, sender: mumble_server_runtime_shard::SessionId) -> udp::Audio {
     udp::Audio {
         header: Some(udp::audio::Header::Context(NORMAL_CONTEXT)),
         sender_session: sender.0,
@@ -410,7 +410,7 @@ mod tests {
             is_terminator: false,
         };
 
-        let rewritten = outgoing(&source, voxloom_shard::SessionId(9));
+        let rewritten = outgoing(&source, mumble_server_runtime_shard::SessionId(9));
 
         assert_eq!(
             rewritten.header,

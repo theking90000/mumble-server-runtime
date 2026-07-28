@@ -26,7 +26,7 @@ use mumble_server_runtime_protocol::messages::tcp;
 use mumble_server_runtime_protocol::{
     ControlMessage, UdpMessage, decode_frame, decode_udp, encode_frame, parse_frame,
 };
-use voxloom_shard::{ChannelId, OutboundQueue, ShardCommand, TextTarget};
+use mumble_server_runtime_shard::{ChannelId, OutboundQueue, ShardCommand, TextTarget};
 
 use crate::config::GatewayConfig;
 use crate::handshake;
@@ -122,7 +122,7 @@ pub async fn serve<R: ConnectionRouter>(
     // the connection in the peer table.
     let placeholder = ShardPlane {
         shard,
-        routing: tokio::sync::watch::channel(Arc::new(voxloom_shard::AudioRouting::default())).1,
+        routing: tokio::sync::watch::channel(Arc::new(mumble_server_runtime_shard::AudioRouting::default())).1,
     };
     let peer = Arc::new(Peer::new(
         connection,
@@ -233,7 +233,7 @@ async fn service(
                     Some(ControlMessage::UdpTunnel(raw)) => {
                         for (sealed, to) in tunnelled(voice, peer, &raw) {
                             if let Err(error) = udp.send_to(&sealed, to).await {
-                                eprintln!("voxloom-gateway: UDP send to {to} failed: {error}");
+                                eprintln!("mumble-server-runtime-gateway: UDP send to {to} failed: {error}");
                             }
                         }
                     }
@@ -353,7 +353,7 @@ fn inbound(
                 ShardCommand::InvokedAction {
                     connection: peer.connection(),
                     action: action.action,
-                    session: action.session.map(voxloom_shard::SessionId),
+                    session: action.session.map(mumble_server_runtime_shard::SessionId),
                     channel: action.channel_id.map(ChannelId),
                 },
             );
@@ -534,7 +534,7 @@ fn single_target(text: &tcp::TextMessage) -> Option<TextTarget> {
         text.channel_id.as_slice(),
         text.tree_id.as_slice(),
     ) {
-        ([session], [], []) => Some(TextTarget::Session(voxloom_shard::SessionId(*session))),
+        ([session], [], []) => Some(TextTarget::Session(mumble_server_runtime_shard::SessionId(*session))),
         ([], [channel], []) => Some(TextTarget::Channel(ChannelId(*channel))),
         ([], [], [tree]) => Some(TextTarget::Tree(ChannelId(*tree))),
         _ => None,
@@ -570,7 +570,7 @@ fn user_stats(
         peer.shard(),
         ShardCommand::QueriedUserStats {
             connection: peer.connection(),
-            target: voxloom_shard::SessionId(target),
+            target: mumble_server_runtime_shard::SessionId(target),
         },
     );
     Vec::new()
@@ -724,7 +724,7 @@ fn tunnelled(voice: &Arc<VoicePlane>, peer: &Arc<Peer>, raw: &[u8]) -> Vec<(Vec<
 
     if !limits::is_acceptable_size(raw.len()) {
         eprintln!(
-            "voxloom-gateway: session {:?}: dropping a {}-byte tunnelled packet",
+            "mumble-server-runtime-gateway: session {:?}: dropping a {}-byte tunnelled packet",
             peer.session(),
             raw.len()
         );
@@ -737,14 +737,14 @@ fn tunnelled(voice: &Arc<VoicePlane>, peer: &Arc<Peer>, raw: &[u8]) -> Vec<(Vec<
             // Connectivity pings belong on the UDP socket; one arriving here
             // measures nothing, so it is refused rather than answered.
             eprintln!(
-                "voxloom-gateway: session {:?}: refusing a ping through the tunnel",
+                "mumble-server-runtime-gateway: session {:?}: refusing a ping through the tunnel",
                 peer.session()
             );
             Vec::new()
         }
         Err(error) => {
             eprintln!(
-                "voxloom-gateway: session {:?}: bad tunnelled envelope: {error}",
+                "mumble-server-runtime-gateway: session {:?}: bad tunnelled envelope: {error}",
                 peer.session()
             );
             Vec::new()
@@ -789,7 +789,7 @@ fn permission_denied(peer: &Peer) -> ControlMessage {
 /// Name the drop so it is auditable rather than silent (R6).
 fn refused(kind: &str, peer: &Peer) {
     eprintln!(
-        "voxloom-gateway: session {:?}: refusing {kind}",
+        "mumble-server-runtime-gateway: session {:?}: refusing {kind}",
         peer.session()
     );
 }

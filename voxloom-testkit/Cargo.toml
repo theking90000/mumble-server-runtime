@@ -24,8 +24,8 @@ anyhow = "1"
 # The judge is pointed at the public shard runtime. These stay dev-only: the
 # verifier library itself speaks only the protocol and never imports the
 # implementation it judges.
-voxloom-gateway = { path = "../voxloom-gateway" }
-voxloom-shard = { path = "../voxloom-shard" }
+mumble-server-runtime-gateway = { path = "../mumble-server-runtime-gateway" }
+mumble-server-runtime-shard = { path = "../mumble-server-runtime-shard" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "time", "sync"] }
 
 # This crate is a verifier harness whose contract is to PANIC on protocol

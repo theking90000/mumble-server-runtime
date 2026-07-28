@@ -16,7 +16,7 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
 
 use mumble_server_runtime_protocol::ControlMessage;
-use voxloom_shard::{
+use mumble_server_runtime_shard::{
     ActionKey, ActionTarget, ChannelId, ChannelKey, ConnectionId, DomainId, Effect, Narrow,
     Occupant, On, OutboundQueue, Reply, ScopeSet, SessionId, Shard, ShardBuilder, ShardCommand,
     ShardId, ShardLogic, ShardView, TextTarget, VoiceEvent,
@@ -51,7 +51,7 @@ struct Realms {
 
 impl Realms {
     fn realm_scope(realm: u32) -> ScopeSet {
-        let scope = voxloom_shard::Scope::ROOT.child(realm).expect("depth 1");
+        let scope = mumble_server_runtime_shard::Scope::ROOT.child(realm).expect("depth 1");
         ScopeSet::new(&[scope]).expect("one scope")
     }
 }
@@ -207,7 +207,7 @@ impl Harness {
         Harness { shard, clients }
     }
 
-    fn step(&mut self, context: &str) -> voxloom_shard::ReconcileReport {
+    fn step(&mut self, context: &str) -> mumble_server_runtime_shard::ReconcileReport {
         let report = self.shard.reconcile();
         assert!(report.refused.is_none(), "{context}: {:?}", report.refused);
         for (connection, client) in &mut self.clients {
@@ -334,17 +334,17 @@ async fn the_shard_task_renders_when_its_mailbox_receives_a_command() {
         ..World::default()
     };
     let shard = Shard::new(ShardId(7), Realms { world });
-    let (handle, wake, mailbox) = voxloom_shard::spawn_parts(ShardId(7));
+    let (handle, wake, mailbox) = mumble_server_runtime_shard::spawn_parts(ShardId(7));
 
     let (queue, mut receiver) = OutboundQueue::with_capacity(1024);
     handle
         .send(ShardCommand::attach(ConnectionId(1), Arc::new(queue)))
         .expect("the mailbox has room");
 
-    let task = tokio::spawn(voxloom_shard::run(shard, wake, mailbox));
+    let task = tokio::spawn(mumble_server_runtime_shard::run(shard, wake, mailbox));
 
     // The attach command alone drives one turn.
-    tokio::time::advance(voxloom_shard::MIN_INTERVAL * 2).await;
+    tokio::time::advance(mumble_server_runtime_shard::MIN_INTERVAL * 2).await;
     tokio::task::yield_now().await;
 
     let mut model = ClientModel::new();
@@ -357,7 +357,7 @@ async fn the_shard_task_renders_when_its_mailbox_receives_a_command() {
     );
 
     drop(handle);
-    tokio::time::advance(voxloom_shard::MIN_INTERVAL * 2).await;
+    tokio::time::advance(mumble_server_runtime_shard::MIN_INTERVAL * 2).await;
     let shard = task.await.expect("the task ends when its handles are gone");
     assert!(shard.version() > 0);
 }
@@ -381,7 +381,7 @@ impl ShardLogic for Arrivals {
     }
 
     fn observation(&mut self, _connection: ConnectionId) -> ScopeSet {
-        ScopeSet::new(&[voxloom_shard::Scope::ROOT]).unwrap_or(ScopeSet::NONE)
+        ScopeSet::new(&[mumble_server_runtime_shard::Scope::ROOT]).unwrap_or(ScopeSet::NONE)
     }
 
     fn observe(&mut self, event: &VoiceEvent, _out: &mut Reply) {
@@ -427,7 +427,7 @@ async fn command_bursts_are_observed_immediately_and_published_at_twenty_hertz()
             observed,
         },
     );
-    let (handle, wake, mailbox) = voxloom_shard::spawn_parts(ShardId(8));
+    let (handle, wake, mailbox) = mumble_server_runtime_shard::spawn_parts(ShardId(8));
     let mut receivers = Vec::new();
     let mut first_ready = Vec::new();
 
@@ -438,7 +438,7 @@ async fn command_bursts_are_observed_immediately_and_published_at_twenty_hertz()
         first_ready.push(ready);
     }
 
-    let task = tokio::spawn(voxloom_shard::run(shard, wake, mailbox));
+    let task = tokio::spawn(mumble_server_runtime_shard::run(shard, wake, mailbox));
     for ready in first_ready {
         ready.await.expect("the first burst is published");
     }
@@ -467,7 +467,7 @@ async fn command_bursts_are_observed_immediately_and_published_at_twenty_hertz()
         "the second publication must respect the 50 ms floor"
     );
 
-    tokio::time::advance(voxloom_shard::MIN_INTERVAL).await;
+    tokio::time::advance(mumble_server_runtime_shard::MIN_INTERVAL).await;
     for ready in second_ready {
         ready.await.expect("the second burst is published");
     }
@@ -936,7 +936,7 @@ impl ShardLogic for Menu {
     }
 
     fn observation(&mut self, _connection: ConnectionId) -> ScopeSet {
-        ScopeSet::new(&[voxloom_shard::Scope::ROOT]).expect("one scope")
+        ScopeSet::new(&[mumble_server_runtime_shard::Scope::ROOT]).expect("one scope")
     }
 
     fn observe(&mut self, event: &VoiceEvent, _out: &mut Reply) {
@@ -1134,7 +1134,7 @@ fn what_a_flavor_says_reaches_the_connection_it_named_and_nobody_else() {
             }
         }
         fn observation(&mut self, _connection: ConnectionId) -> ScopeSet {
-            ScopeSet::new(&[voxloom_shard::Scope::ROOT]).expect("one scope")
+            ScopeSet::new(&[mumble_server_runtime_shard::Scope::ROOT]).expect("one scope")
         }
         fn observe(&mut self, event: &VoiceEvent, out: &mut Reply) {
             if let VoiceEvent::RequestedSelfState { connection, .. } = event {
@@ -1225,7 +1225,7 @@ fn a_flavor_asking_for_a_move_reaches_the_runtime_that_wired_the_shard() {
             }
         }
         fn observation(&mut self, _connection: ConnectionId) -> ScopeSet {
-            ScopeSet::new(&[voxloom_shard::Scope::ROOT]).expect("one scope")
+            ScopeSet::new(&[mumble_server_runtime_shard::Scope::ROOT]).expect("one scope")
         }
         fn observe(&mut self, event: &VoiceEvent, out: &mut Reply) {
             if let VoiceEvent::RequestedSelfState { connection, .. } = event {
@@ -1293,7 +1293,7 @@ fn a_shard_wired_to_no_runtime_drops_a_move_rather_than_pretending() {
             );
         }
         fn observation(&mut self, _connection: ConnectionId) -> ScopeSet {
-            ScopeSet::new(&[voxloom_shard::Scope::ROOT]).expect("one scope")
+            ScopeSet::new(&[mumble_server_runtime_shard::Scope::ROOT]).expect("one scope")
         }
         fn observe(&mut self, event: &VoiceEvent, out: &mut Reply) {
             if let VoiceEvent::RequestedSelfState { connection, .. } = event {
@@ -1432,7 +1432,7 @@ fn a_query_is_answered_only_about_what_the_asker_can_see() {
             ControlMessage::UserStats(stats),
         ] => {
             assert_eq!(permissions.channel_id, Some(mine.0));
-            assert_eq!(permissions.permissions, Some(voxloom_shard::perm::DEFAULT));
+            assert_eq!(permissions.permissions, Some(mumble_server_runtime_shard::perm::DEFAULT));
             assert_eq!(stats.session, Some(neighbour.0));
         }
         other => panic!("expected exactly the two answerable questions, got {other:?}"),
@@ -1505,7 +1505,7 @@ fn a_read_only_channel_refuses_out_loud_and_names_the_missing_right() {
         Some([ControlMessage::PermissionDenied(denied)]) => {
             assert_eq!(denied.session, Some(harness.session(1)));
             assert_eq!(denied.channel_id, Some(silent.0));
-            assert_eq!(denied.permission, Some(voxloom_shard::perm::TEXT_MESSAGE));
+            assert_eq!(denied.permission, Some(mumble_server_runtime_shard::perm::TEXT_MESSAGE));
         }
         // Loud, unlike an unseen target: the client is holding this channel and
         // was already told the bit was missing, so there is nothing to leak.
@@ -1615,7 +1615,7 @@ struct Migration {
 
 impl Migration {
     fn new(connection: ConnectionId) -> Migration {
-        let ids = voxloom_shard::SharedIds::new();
+        let ids = mumble_server_runtime_shard::SharedIds::new();
         let world = |label| World {
             realms: [(connection, 0)].into_iter().collect(),
             label,
@@ -1650,7 +1650,7 @@ impl Migration {
         self.source.handle(ShardCommand::Detach {
             connection,
             reason: "moving".to_owned(),
-            handover: Some(voxloom_shard::Handover {
+            handover: Some(mumble_server_runtime_shard::Handover {
                 to: ShardId(2),
                 view,
             }),

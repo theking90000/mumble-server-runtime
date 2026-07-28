@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use tokio::sync::mpsc;
 use mumble_server_runtime_protocol::ControlMessage;
-use voxloom_shard::{
+use mumble_server_runtime_shard::{
     ChannelKey, ConnectionId, DomainId, Narrow, Occupant, OutboundQueue, Reply, Scope, ScopeSet,
     Shard, ShardBuilder, ShardCommand, ShardId, ShardLogic, VoiceEvent,
 };

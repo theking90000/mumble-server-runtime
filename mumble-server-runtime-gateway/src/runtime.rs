@@ -15,7 +15,7 @@ use std::sync::{Arc, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::{JoinHandle, JoinSet};
-use voxloom_shard::{
+use mumble_server_runtime_shard::{
     ConnectionId, Handover, Occupant, SessionId, Shard, ShardCommand, ShardHandle, ShardId,
     ShardLogic, SharedIds,
 };
@@ -155,7 +155,7 @@ impl RuntimeHandle {
     pub fn session_for(
         &self,
         connection: ConnectionId,
-    ) -> Result<SessionId, voxloom_shard::Exhausted> {
+    ) -> Result<SessionId, mumble_server_runtime_shard::Exhausted> {
         self.inner.ids.session(Occupant::Connection(connection))
     }
 
@@ -166,13 +166,13 @@ impl RuntimeHandle {
     /// that will hold it.
     pub fn create_shard<L: ShardLogic>(&self, build: impl FnOnce(ShardHandle) -> L) -> ShardHandle {
         let id = ShardId(self.inner.next_shard.fetch_add(1, Ordering::Relaxed));
-        let (handle, wake, mailbox) = voxloom_shard::spawn_parts(id);
+        let (handle, wake, mailbox) = mumble_server_runtime_shard::spawn_parts(id);
         let logic = build(handle.clone());
         let mut shard = Shard::with_ids(id, logic, self.inner.ids.clone());
         shard.route_effects(self.effects());
         let routing = shard.routing();
         let task = tokio::spawn(async move {
-            let _shard = voxloom_shard::run(shard, wake, mailbox).await;
+            let _shard = mumble_server_runtime_shard::run(shard, wake, mailbox).await;
         });
 
         write(&self.inner.shards).insert(
@@ -199,7 +199,7 @@ impl RuntimeHandle {
             reason: reason.to_owned(),
         });
         if let Err(error) = refused {
-            eprintln!("voxloom-gateway: cannot destroy shard {shard:?}: {error}");
+            eprintln!("mumble-server-runtime-gateway: cannot destroy shard {shard:?}: {error}");
         }
     }
 
@@ -211,19 +211,19 @@ impl RuntimeHandle {
     /// reference here would close that ring, and the runtime would outlive every
     /// handle to it forever. An effect arriving after the runtime is gone has
     /// nothing left to act on, which is exactly what a failed upgrade says.
-    fn effects(&self) -> voxloom_shard::Effects {
+    fn effects(&self) -> mumble_server_runtime_shard::Effects {
         let runtime = Arc::downgrade(&self.inner);
         Arc::new(move |effect| {
             let Some(inner) = runtime.upgrade() else {
                 return;
             };
             match effect {
-                voxloom_shard::Effect::Move { connection, to } => {
+                mumble_server_runtime_shard::Effect::Move { connection, to } => {
                     RuntimeHandle { inner }.move_connection(connection, to);
                 }
                 // The vocabulary is non-exhaustive: a shard that starts asking
                 // for something new must not have it silently ignored.
-                other => eprintln!("voxloom-gateway: no runtime support for {other:?}"),
+                other => eprintln!("mumble-server-runtime-gateway: no runtime support for {other:?}"),
             }
         })
     }
@@ -251,7 +251,7 @@ impl RuntimeHandle {
             .commands
             .try_send(RuntimeCommand::Move { connection, to });
         if let Err(error) = refused {
-            eprintln!("voxloom-gateway: cannot move {connection:?} to {to:?}: {error}");
+            eprintln!("mumble-server-runtime-gateway: cannot move {connection:?} to {to:?}: {error}");
         }
     }
 
@@ -281,7 +281,7 @@ impl RuntimeHandle {
                 connection: peer.connection(),
                 queue: peer.queue(),
                 cursor: peer.cursor_cell(),
-                held: voxloom_shard::ShardView::empty(),
+                held: mumble_server_runtime_shard::ShardView::empty(),
                 ready: Some(ready),
             })
             .map_err(|_full| AttachError::Unreachable(shard))?;
@@ -297,7 +297,7 @@ impl RuntimeHandle {
         // no longer exists, so it is reported rather than swallowed. The next
         // render still cannot reach it: its queue is closed.
         if let Err(error) = handle.send(ShardCommand::detach(connection, reason)) {
-            eprintln!("voxloom-gateway: shard {shard:?} did not take a detach: {error}");
+            eprintln!("mumble-server-runtime-gateway: shard {shard:?} did not take a detach: {error}");
         }
     }
 
@@ -409,7 +409,7 @@ async fn migrate(inner: Arc<RuntimeInner>, connection: ConnectionId, to: ShardId
         (source, destination)
     };
     let Some((destination, plane)) = destination else {
-        eprintln!("voxloom-gateway: {connection:?} cannot move to {to:?}: no such shard");
+        eprintln!("mumble-server-runtime-gateway: {connection:?} cannot move to {to:?}: no such shard");
         return;
     };
 
@@ -457,7 +457,7 @@ async fn migrate(inner: Arc<RuntimeInner>, connection: ConnectionId, to: ShardId
     });
     if handed.is_err() {
         // Attached nowhere and holding a view no shard will ever update.
-        eprintln!("voxloom-gateway: {connection:?} could not be handed to {to:?}");
+        eprintln!("mumble-server-runtime-gateway: {connection:?} could not be handed to {to:?}");
         peer.close();
     }
 }
@@ -467,7 +467,7 @@ fn destroy(inner: &Arc<RuntimeInner>, shard: ShardId, reason: &str) {
     // dealt with first: after this, nothing can render them.
     for peer in inner.peers.on_shard(shard) {
         eprintln!(
-            "voxloom-gateway: closing {:?}: its shard was destroyed ({reason})",
+            "mumble-server-runtime-gateway: closing {:?}: its shard was destroyed ({reason})",
             peer.connection()
         );
         peer.close();

@@ -1,5 +1,5 @@
 [package]
-name = "voxloom-shard"
+name = "mumble-server-runtime-shard"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -9,8 +9,8 @@ authors.workspace = true
 description = "Shard runtime : one render per shard, a versioned journal of scoped deltas, and per-connection composition (filter, splice, collapse). Implements docs/design/guide-implementation.md steps 1 to 7."
 
 [lib]
-name = "voxloom_shard"
-path = "src/voxloom_shard.rs"
+name = "mumble_server_runtime_shard"
+path = "src/mumble_server_runtime_shard.rs"
 
 [dependencies]
 # The shard owns the translation from view mutations to control frames, so it is

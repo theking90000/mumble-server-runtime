@@ -52,13 +52,13 @@ forbid() {
 
 echo "== Gates par-crate (R4) =="
 
-# --- voxloom-shard : logique et publication sans sockets ---
-mapfile -t shard_files < <(crate_src_files voxloom-shard)
+# --- mumble-server-runtime-shard : logique et publication sans sockets ---
+mapfile -t shard_files < <(crate_src_files mumble-server-runtime-shard)
 forbid "shard/no-net" \
        '(std::net|tokio::net|TcpListener|TcpStream|UdpSocket)' "${shard_files[@]}"
 
 # --- Crates centrales : aucun concept du flavor de démonstration ---
-for central in mumble-server-runtime-protocol mumble-server-runtime-crypto voxloom-shard voxloom-gateway; do
+for central in mumble-server-runtime-protocol mumble-server-runtime-crypto mumble-server-runtime-shard mumble-server-runtime-gateway; do
   mapfile -t central_files < <(crate_src_files "$central")
   forbid "$central/no-demo-flavor" \
          '([Aa]urora|[Bb]orealis|voxloom[_-]arena)' "${central_files[@]}"

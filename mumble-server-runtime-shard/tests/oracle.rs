@@ -30,7 +30,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use mumble_server_runtime_protocol::ControlMessage;
-use voxloom_shard::{
+use mumble_server_runtime_shard::{
     ChannelKey, ConnectionId, DomainId, Narrow, Occupant, OutboundQueue, PlanOp, Reply, ScopeSet,
     ShardBuilder, ShardCommand, ShardId, ShardLogic, ShardView, VoiceEvent, collapse, emit, filter,
     plan, plan_elements, splice,
@@ -154,7 +154,7 @@ impl ShardLogic for TestLogic {
         let Some(team) = self.world.team_of(connection) else {
             return ScopeSet::NONE;
         };
-        let scope = voxloom_shard::Scope::ROOT
+        let scope = mumble_server_runtime_shard::Scope::ROOT
             .child(1)
             .and_then(|game| game.child(team));
         scope
@@ -191,7 +191,7 @@ impl Rng {
 }
 
 struct Harness {
-    shard: voxloom_shard::Shard<TestLogic>,
+    shard: mumble_server_runtime_shard::Shard<TestLogic>,
     models: BTreeMap<ConnectionId, ClientModel>,
     receivers: BTreeMap<ConnectionId, tokio::sync::mpsc::Receiver<ControlMessage>>,
 }
@@ -209,7 +209,7 @@ impl Harness {
             label: 0,
         };
 
-        let mut shard = voxloom_shard::Shard::new(ShardId(1), TestLogic { world });
+        let mut shard = mumble_server_runtime_shard::Shard::new(ShardId(1), TestLogic { world });
         let mut models = BTreeMap::new();
         let mut receivers = BTreeMap::new();
         for index in 0..players {
@@ -270,12 +270,12 @@ impl Harness {
 
     /// What the shard believes this connection holds privately. Read back
     /// through the public surface so the test does not model it separately.
-    fn overlay_sent(&self, connection: ConnectionId) -> voxloom_shard::Overlay {
+    fn overlay_sent(&self, connection: ConnectionId) -> mumble_server_runtime_shard::Overlay {
         // Re-render into a throwaway builder is not possible from outside, so
         // the shard exposes the committed overlay through its attached state.
         self.shard
             .connection(connection)
-            .map(voxloom_shard::AttachedConnection::overlay_sent)
+            .map(mumble_server_runtime_shard::AttachedConnection::overlay_sent)
             .cloned()
             .unwrap_or_default()
     }
@@ -369,7 +369,7 @@ fn a_vanished_player_is_visible_to_nobody_but_themselves() {
             .shard
             .view()
             .users
-            .contains_key(&voxloom_shard::SessionId(1)),
+            .contains_key(&mumble_server_runtime_shard::SessionId(1)),
         "a vanished player must not be in the shared view at all"
     );
 
@@ -415,7 +415,7 @@ fn a_scope_change_does_not_flicker_the_shared_ancestors() {
 
 /// Build the two-team situation the mutation tests all reason about: a player
 /// moves from team 0 to team 1, seen by a teammate left behind in team 0.
-fn scope_change_case() -> (Vec<voxloom_shard::PlannedOp>, ScopeSet, ScopeSet) {
+fn scope_change_case() -> (Vec<mumble_server_runtime_shard::PlannedOp>, ScopeSet, ScopeSet) {
     let mut harness = Harness::new(4, 4096);
     harness.step("initial");
     let before = harness.shard.view().clone();
@@ -454,18 +454,18 @@ fn mutation_dropping_the_scope_from_the_diff_key_breaks_class_two() {
 
     // The mutant: a diff keyed on the element alone sees "the same user, whose
     // channel changed" and emits a single MoveUser carrying the NEW scope.
-    let mutant: Vec<voxloom_shard::PlannedOp> = ops
+    let mutant: Vec<mumble_server_runtime_shard::PlannedOp> = ops
         .iter()
         .filter(|planned| !matches!(planned.op, PlanOp::RemoveUser(_)))
         .map(|planned| match &planned.op {
-            PlanOp::AddUser(user) => voxloom_shard::PlannedOp {
+            PlanOp::AddUser(user) => mumble_server_runtime_shard::PlannedOp {
                 op: PlanOp::MoveUser {
                     session: user.session,
                     channel: user.channel,
                 },
                 scope: planned.scope,
             },
-            other => voxloom_shard::PlannedOp {
+            other => mumble_server_runtime_shard::PlannedOp {
                 op: other.clone(),
                 scope: planned.scope,
             },
@@ -485,20 +485,20 @@ fn mutation_dropping_the_scope_from_the_diff_key_breaks_class_two() {
 fn mutation_appending_the_overlay_instead_of_splicing_deletes_an_occupied_channel() {
     // The shared delta removes a channel; the overlay had someone in it and is
     // withdrawing them in the same turn.
-    let mut overlay_before = voxloom_shard::Overlay::default();
-    let doomed = voxloom_shard::ChannelId(4);
+    let mut overlay_before = mumble_server_runtime_shard::Overlay::default();
+    let doomed = mumble_server_runtime_shard::ChannelId(4);
     overlay_before.users.insert(
-        voxloom_shard::SessionId(99),
-        voxloom_shard::User {
+        mumble_server_runtime_shard::SessionId(99),
+        mumble_server_runtime_shard::User {
             occupant: Occupant::Connection(ConnectionId(99)),
-            session: voxloom_shard::SessionId(99),
+            session: mumble_server_runtime_shard::SessionId(99),
             channel: doomed,
-            scope: voxloom_shard::Scope::ROOT,
+            scope: mumble_server_runtime_shard::Scope::ROOT,
             name: "admin".to_owned(),
-            flags: voxloom_shard::UserFlags::default(),
+            flags: mumble_server_runtime_shard::UserFlags::default(),
         },
     );
-    let private = plan_elements(&overlay_before, &voxloom_shard::Overlay::default());
+    let private = plan_elements(&overlay_before, &mumble_server_runtime_shard::Overlay::default());
     let shared = vec![PlanOp::RemoveChannel(doomed)];
 
     // The real composition withdraws the occupant first.
@@ -524,7 +524,7 @@ fn mutation_dropping_collapse_leaves_a_contradictory_pair() {
     // The spectator case: an observation that sees both the old and the new
     // scope receives both halves of the move.
     let spectator =
-        ScopeSet::new(&[voxloom_shard::Scope::ROOT.child(1).expect("depth 1")]).expect("one scope");
+        ScopeSet::new(&[mumble_server_runtime_shard::Scope::ROOT.child(1).expect("depth 1")]).expect("one scope");
 
     let both = filter(&ops, spectator);
     let adds = both.iter().filter(|op| op.added().is_some()).count();
@@ -557,7 +557,7 @@ fn mutation_dropping_collapse_leaves_a_contradictory_pair() {
     );
 }
 
-fn position_of_removal(ops: &[PlanOp], channel: voxloom_shard::ChannelId) -> usize {
+fn position_of_removal(ops: &[PlanOp], channel: mumble_server_runtime_shard::ChannelId) -> usize {
     ops.iter()
         .position(|op| matches!(op, PlanOp::RemoveChannel(id) if *id == channel))
         .expect("the channel removal is present")
@@ -573,7 +573,7 @@ fn position_of_user_removal(ops: &[PlanOp]) -> usize {
 /// change to its signature is caught by the oracle's compilation too.
 #[test]
 fn the_emitter_is_the_path_the_oracle_exercises() {
-    let messages = emit(&[], voxloom_shard::SessionId(1));
+    let messages = emit(&[], mumble_server_runtime_shard::SessionId(1));
     assert!(messages.is_empty());
     let _ = ShardView::empty();
 }

@@ -15,8 +15,8 @@
 >
 > **Topologie courante :** les sections qui découpent l'implémentation en crates
 > P4–P7 décrivent l'architecture exploratoire conservée au tag
-> `legacy-p7-final`. Le runtime actif est `voxloom-shard` +
-> `voxloom-gateway`, selon `docs/design/guide-implementation.md`. Les exigences
+> `legacy-p7-final`. Le runtime actif est `mumble-server-runtime-shard` +
+> `mumble-server-runtime-gateway`, selon `docs/design/guide-implementation.md`. Les exigences
 > protocolaires et les invariants de ce document restent applicables.
 
 ---

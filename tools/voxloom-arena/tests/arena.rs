@@ -3,7 +3,7 @@
 //! These drive the shards by hand - `handle` then `reconcile` - rather than
 //! through sockets, so every assertion is about the model and none of them can
 //! be flaky. The end-to-end path through TLS and UDP is exercised separately, in
-//! `voxloom-gateway/tests/gateway.rs`.
+//! `mumble-server-runtime-gateway/tests/gateway.rs`.
 #![allow(clippy::expect_used)]
 
 use std::collections::BTreeSet;
@@ -13,8 +13,8 @@ use std::sync::atomic::AtomicU64;
 use voxloom_arena::arena::{Arena, Role, Side};
 use voxloom_arena::directory::{Destinations, Directory, Member};
 use voxloom_arena::lobby::{Choices, Intent, Lobby, LobbyUpdate};
-use voxloom_gateway::Runtime;
-use voxloom_shard::{
+use mumble_server_runtime_gateway::Runtime;
+use mumble_server_runtime_shard::{
     ChannelId, ChannelKey, ConnectionId, Handover, OutboundQueue, Reply, ScopeSet, SessionId,
     Shard, ShardCommand, ShardId, ShardLogic, ShardView, VoiceEvent,
 };
@@ -26,7 +26,7 @@ struct World {
     destinations: Arc<Destinations>,
     chosen: Arc<Choices>,
     _runtime: Runtime,
-    runtime_handle: voxloom_gateway::RuntimeHandle,
+    runtime_handle: mumble_server_runtime_gateway::RuntimeHandle,
 }
 
 impl World {

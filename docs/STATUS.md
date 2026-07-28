@@ -9,15 +9,15 @@ chemin de production est :
 application / flavor
         |
         v
-voxloom-gateway -> voxloom-shard -> mumble-server-runtime-protocol
+mumble-server-runtime-gateway -> mumble-server-runtime-shard -> mumble-server-runtime-protocol
         |
         +-----------------------> mumble-server-runtime-crypto
 ```
 
-- `voxloom-shard` possède les portées, le constructeur de rendu, la vue
+- `mumble-server-runtime-shard` possède les portées, le constructeur de rendu, la vue
   partagée, les overlays privés, le diff/plan, le journal, les files bornées et
   la table de routage audio ;
-- `voxloom-gateway` possède TLS/TCP/UDP, le handshake Mumble, le registre de
+- `mumble-server-runtime-gateway` possède TLS/TCP/UDP, le handshake Mumble, le registre de
   connexions, les shards et les migrations ;
 - `tools/voxloom-arena` est le flavor de démonstration et le binaire de
   composition ;

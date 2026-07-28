@@ -18,7 +18,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use mumble_server_runtime_protocol::ControlMessage;
-use voxloom_shard::{Overlay, ScopeSet, ShardView};
+use mumble_server_runtime_shard::{Overlay, ScopeSet, ShardView};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModelChannel {

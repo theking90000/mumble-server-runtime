@@ -8,7 +8,7 @@
 use std::collections::BTreeMap;
 use std::sync::{Mutex, MutexGuard, OnceLock, PoisonError};
 
-use voxloom_shard::{ConnectionId, ShardId, UserFlags};
+use mumble_server_runtime_shard::{ConnectionId, ShardId, UserFlags};
 
 /// What this application knows about one connection.
 #[derive(Debug, Clone, PartialEq, Eq)]

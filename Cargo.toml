@@ -10,8 +10,8 @@ members = [
     "mumble-server-runtime-protocol",
     "mumble-server-runtime-crypto",
     # Runtime courant : logique de shard sans IO, puis gateway TLS/TCP/UDP.
-    "voxloom-shard",
-    "voxloom-gateway",
+    "mumble-server-runtime-shard",
+    "mumble-server-runtime-gateway",
     # Composition et charge de demonstration.
     "tools/voxloom-arena",
     "tools/voxloom-stress",

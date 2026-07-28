@@ -25,7 +25,7 @@ use std::time::{Duration, Instant};
 
 use tokio::sync::watch;
 use mumble_server_runtime_crypto::CryptState;
-use voxloom_shard::{AudioRouting, ConnectionId, OutboundQueue, SessionId, ShardId};
+use mumble_server_runtime_shard::{AudioRouting, ConnectionId, OutboundQueue, SessionId, ShardId};
 
 use crate::limits::{TextBudget, VoiceBudget};
 
@@ -425,7 +425,7 @@ mod tests {
     #![allow(clippy::expect_used)]
 
     use super::*;
-    use voxloom_shard::AudioRouting;
+    use mumble_server_runtime_shard::AudioRouting;
 
     fn plane() -> ShardPlane {
         let (_sender, routing) = watch::channel(Arc::new(AudioRouting::default()));

@@ -17,7 +17,7 @@
 
 use mumble_server_runtime_protocol::ControlMessage;
 use mumble_server_runtime_protocol::messages::tcp;
-use voxloom_shard::SessionId;
+use mumble_server_runtime_shard::SessionId;
 
 use crate::config::GatewayConfig;
 
@@ -26,7 +26,7 @@ use crate::config::GatewayConfig;
 /// Re-exported rather than restated: the shard answers `PermissionQuery` from
 /// the same bits, and two definitions of one constant is one definition too
 /// many.
-pub use voxloom_shard::perm;
+pub use mumble_server_runtime_shard::perm;
 
 /// The server's own `Version`, sent immediately after the TLS handshake
 /// completes and before the client's `Authenticate`.

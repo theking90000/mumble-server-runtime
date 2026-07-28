@@ -125,9 +125,9 @@ cargo run --release -p voxloom-stress -- --clients 200 --duration 30s
 
 Two crates carry the runtime:
 
-- `voxloom-shard` renders and reconciles the shared view, composes the private
+- `mumble-server-runtime-shard` renders and reconciles the shared view, composes the private
   views and publishes an audio routing table. It performs no IO at all.
-- `voxloom-gateway` handles TLS, TCP, UDP, the handshake, connections and
+- `mumble-server-runtime-gateway` handles TLS, TCP, UDP, the handshake, connections and
   migration between shards.
 
 `mumble-server-runtime-protocol` and `mumble-server-runtime-crypto` are the pure foundations: framing,

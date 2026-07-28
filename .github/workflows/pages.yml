@@ -58,8 +58,8 @@ jobs:
           <!doctype html>
           <meta charset="utf-8">
           <title>Mumble Server Runtime API</title>
-          <meta http-equiv="refresh" content="0; url=voxloom_shard/index.html">
-          <a href="voxloom_shard/index.html">Mumble Server Runtime API documentation</a>
+          <meta http-equiv="refresh" content="0; url=mumble_server_runtime_shard/index.html">
+          <a href="mumble_server_runtime_shard/index.html">Mumble Server Runtime API documentation</a>
           HTML
           fi
 

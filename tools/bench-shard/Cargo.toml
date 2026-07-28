@@ -13,7 +13,7 @@ name = "bench-shard"
 path = "src/main.rs"
 
 [dependencies]
-voxloom-shard = { path = "../../voxloom-shard" }
+mumble-server-runtime-shard = { path = "../../mumble-server-runtime-shard" }
 mumble-server-runtime-protocol = { path = "../../mumble-server-runtime-protocol" }
 tokio = { version = "1", features = ["sync"] }
 anyhow = "1"

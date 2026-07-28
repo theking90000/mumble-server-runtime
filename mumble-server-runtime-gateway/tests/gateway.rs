@@ -15,11 +15,11 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use anyhow::Result;
-use voxloom_gateway::tls::Identity;
-use voxloom_gateway::{
+use mumble_server_runtime_gateway::tls::Identity;
+use mumble_server_runtime_gateway::{
     ConnectionIdentity, ConnectionRouter, Gateway, GatewayConfig, RouteDecision,
 };
-use voxloom_shard::{
+use mumble_server_runtime_shard::{
     ActionKey, ActionTarget, ChannelKey, ConnectionId, DomainId, Narrow, Occupant, On, Reply,
     Scope, ScopeSet, ShardBuilder, ShardId, ShardLogic, UserFlags, VoiceEvent,
 };
@@ -849,7 +849,7 @@ async fn a_client_is_told_what_it_may_do_in_a_channel_it_can_see() -> Result<()>
 
     assert_eq!(
         alice.model.permissions.get(&left),
-        Some(&voxloom_shard::perm::DEFAULT),
+        Some(&mumble_server_runtime_shard::perm::DEFAULT),
         "an enterable channel is advertised with the default bits"
     );
     Ok(())

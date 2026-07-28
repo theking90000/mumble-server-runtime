@@ -17,7 +17,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 use mumble_server_runtime_protocol::ControlMessage;
-use voxloom_shard::{
+use mumble_server_runtime_shard::{
     ChannelKey, ConnectionId, DomainId, Narrow, Occupant, OutboundQueue, Reply, Scope, ScopeSet,
     Shard, ShardBuilder, ShardCommand, ShardId, ShardLogic, VoiceEvent,
 };

@@ -13,7 +13,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use tokio::sync::mpsc;
-use voxloom_shard::{
+use mumble_server_runtime_shard::{
     ActionKey, Audience, ChannelKey, ConnectionId, DomainId, Narrow, Occupant, On, Reply, Scope,
     ScopeSet, ShardBuilder, ShardLogic, VoiceEvent,
 };

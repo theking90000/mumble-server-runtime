@@ -2,8 +2,8 @@
 
 use std::sync::Arc;
 
-use voxloom_gateway::{ConnectionIdentity, ConnectionRouter, RouteDecision};
-use voxloom_shard::ConnectionId;
+use mumble_server_runtime_gateway::{ConnectionIdentity, ConnectionRouter, RouteDecision};
+use mumble_server_runtime_shard::ConnectionId;
 
 use crate::directory::{Destinations, Directory, Member};
 

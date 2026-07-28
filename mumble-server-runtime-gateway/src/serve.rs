@@ -85,7 +85,7 @@ impl Gateway {
             let voice = Arc::clone(&voice);
             tokio::spawn(async move {
                 if let Err(error) = voice.run().await {
-                    eprintln!("voxloom-gateway: the voice plane stopped: {error}");
+                    eprintln!("mumble-server-runtime-gateway: the voice plane stopped: {error}");
                 }
             })
         };
@@ -107,7 +107,7 @@ impl Gateway {
                     if let Err(error) =
                         connection::serve(tcp, acceptor, runtime, router, voice, udp, config).await
                     {
-                        eprintln!("voxloom-gateway: connection from {from} ended: {error:#}");
+                        eprintln!("mumble-server-runtime-gateway: connection from {from} ended: {error:#}");
                     }
                 });
             }
@@ -153,7 +153,7 @@ async fn bind_both(address: std::net::SocketAddr) -> Result<(TcpListener, UdpSoc
                 // Dropping the listener releases the TCP port, so the next
                 // attempt is free to draw a different one.
                 drop(listener);
-                eprintln!("voxloom-gateway: UDP {bound} was taken ({error}), trying another port");
+                eprintln!("mumble-server-runtime-gateway: UDP {bound} was taken ({error}), trying another port");
             }
             Err(error) => {
                 return Err(anyhow::Error::from(error))

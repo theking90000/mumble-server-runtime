@@ -10,11 +10,11 @@ use std::net::SocketAddr;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
-use voxloom_gateway::tls::Identity;
-use voxloom_gateway::{
+use mumble_server_runtime_gateway::tls::Identity;
+use mumble_server_runtime_gateway::{
     ConnectionIdentity, ConnectionRouter, Gateway, GatewayConfig, RouteDecision,
 };
-use voxloom_shard::{
+use mumble_server_runtime_shard::{
     ChannelKey, ConnectionId, DomainId, Narrow, Occupant, Reply, Scope, ScopeSet, ShardBuilder,
     ShardHandle, ShardId, ShardLogic, VoiceEvent,
 };

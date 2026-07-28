@@ -25,12 +25,12 @@ use voxloom_arena::arena::Arena;
 use voxloom_arena::directory::{Destinations, Directory};
 use voxloom_arena::lobby::{Choices, Lobby, LobbyUpdate};
 use voxloom_arena::router::ArenaRouter;
-use voxloom_gateway::tls::Identity;
-use voxloom_gateway::{Gateway, GatewayConfig};
+use mumble_server_runtime_gateway::tls::Identity;
+use mumble_server_runtime_gateway::{Gateway, GatewayConfig};
 
 async fn publish_lobby_updates(
     sender: tokio::sync::mpsc::Sender<LobbyUpdate>,
-    handle: voxloom_shard::ShardHandle,
+    handle: mumble_server_runtime_shard::ShardHandle,
 ) -> Result<()> {
     let period = Duration::from_secs(1);
     let mut ticks = tokio::time::interval_at(tokio::time::Instant::now() + period, period);

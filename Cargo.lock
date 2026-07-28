@@ -96,8 +96,8 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "mumble-server-runtime-protocol",
+ "mumble-server-runtime-shard",
  "tokio",
- "voxloom-shard",
 ]
 
 [[package]]
@@ -449,6 +449,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "mumble-server-runtime-gateway"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "mumble-server-runtime-crypto",
+ "mumble-server-runtime-protocol",
+ "mumble-server-runtime-shard",
+ "rcgen",
+ "ring",
+ "rustls",
+ "thiserror 2.0.19",
+ "tokio",
+ "tokio-rustls",
+]
+
+[[package]]
 name = "mumble-server-runtime-protocol"
 version = "0.1.0"
 dependencies = [
@@ -456,6 +472,15 @@ dependencies = [
  "prost-build",
  "protox",
  "thiserror 2.0.19",
+]
+
+[[package]]
+name = "mumble-server-runtime-shard"
+version = "0.1.0"
+dependencies = [
+ "mumble-server-runtime-protocol",
+ "thiserror 2.0.19",
+ "tokio",
 ]
 
 [[package]]
@@ -991,10 +1016,10 @@ name = "voxloom-arena"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "mumble-server-runtime-gateway",
  "mumble-server-runtime-protocol",
+ "mumble-server-runtime-shard",
  "tokio",
- "voxloom-gateway",
- "voxloom-shard",
 ]
 
 [[package]]
@@ -1004,22 +1029,6 @@ dependencies = [
  "anyhow",
  "mumble-server-runtime-crypto",
  "mumble-server-runtime-protocol",
-]
-
-[[package]]
-name = "voxloom-gateway"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "mumble-server-runtime-crypto",
- "mumble-server-runtime-protocol",
- "rcgen",
- "ring",
- "rustls",
- "thiserror 2.0.19",
- "tokio",
- "tokio-rustls",
- "voxloom-shard",
 ]
 
 [[package]]
@@ -1054,15 +1063,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "voxloom-shard"
-version = "0.1.0"
-dependencies = [
- "mumble-server-runtime-protocol",
- "thiserror 2.0.19",
- "tokio",
-]
-
-[[package]]
 name = "voxloom-stress"
 version = "0.1.0"
 dependencies = [
@@ -1081,12 +1081,12 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "mumble-server-runtime-crypto",
+ "mumble-server-runtime-gateway",
  "mumble-server-runtime-protocol",
+ "mumble-server-runtime-shard",
  "rustls",
  "tokio",
  "tokio-rustls",
- "voxloom-gateway",
- "voxloom-shard",
 ]
 
 [[package]]

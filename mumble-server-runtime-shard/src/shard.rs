@@ -193,7 +193,7 @@ pub enum ActionTarget {
 ///
 /// ```no_run
 /// use tokio::sync::mpsc;
-/// use voxloom_shard::{
+/// use mumble_server_runtime_shard::{
 ///     ConnectionId, Reply, ScopeSet, ShardBuilder, ShardHandle, ShardLogic, VoiceEvent,
 /// };
 ///
@@ -732,7 +732,7 @@ impl<L: ShardLogic> Shard<L> {
                 && let Err(refused) = attached.queue.try_send_all(withdrawn)
             {
                 eprintln!(
-                    "voxloom-shard: shard {:?}: {connection:?} leaves with context actions this \
+                    "mumble-server-runtime-shard: shard {:?}: {connection:?} leaves with context actions this \
                      shard could not withdraw: {refused}",
                     self.id
                 );
@@ -794,7 +794,7 @@ impl<L: ShardLogic> Shard<L> {
             // Fail closed and stay audible: an operator seeing this repeatedly
             // is looking at either a stale client or a probe.
             None => eprintln!(
-                "voxloom-shard: shard {:?}: {connection:?} asked for channel {channel:?}, which it \
+                "mumble-server-runtime-shard: shard {:?}: {connection:?} asked for channel {channel:?}, which it \
                  cannot see",
                 self.id
             ),
@@ -874,7 +874,7 @@ impl<L: ShardLogic> Shard<L> {
 
         let Some(key) = crate::emit::action_key(action) else {
             eprintln!(
-                "voxloom-shard: shard {:?}: {connection:?} invoked {action:?}, which is not a name \
+                "mumble-server-runtime-shard: shard {:?}: {connection:?} invoked {action:?}, which is not a name \
                  this server writes",
                 self.id
             );
@@ -886,7 +886,7 @@ impl<L: ShardLogic> Shard<L> {
         // can refuse out loud.
         let Some(offered) = attached.actions_sent.get(&key) else {
             eprintln!(
-                "voxloom-shard: shard {:?}: {connection:?} invoked action {key:?}, which it was \
+                "mumble-server-runtime-shard: shard {:?}: {connection:?} invoked action {key:?}, which it was \
                  never offered",
                 self.id
             );
@@ -915,7 +915,7 @@ impl<L: ShardLogic> Shard<L> {
                 on,
             }),
             None => eprintln!(
-                "voxloom-shard: shard {:?}: {connection:?} invoked action {key:?} on a target it \
+                "mumble-server-runtime-shard: shard {:?}: {connection:?} invoked action {key:?} on a target it \
                  cannot see, or that the action was not offered on",
                 self.id
             ),
@@ -964,7 +964,7 @@ impl<L: ShardLogic> Shard<L> {
         };
         let Some((audience, writable_in)) = resolved else {
             eprintln!(
-                "voxloom-shard: shard {:?}: {connection:?} wrote to {to:?}, which it cannot see",
+                "mumble-server-runtime-shard: shard {:?}: {connection:?} wrote to {to:?}, which it cannot see",
                 self.id
             );
             return;
@@ -1008,7 +1008,7 @@ impl<L: ShardLogic> Shard<L> {
         match self.visible_channel(attached, channel) {
             Some(rendered) => self.answer(attached, crate::emit::permission_query(rendered)),
             None => eprintln!(
-                "voxloom-shard: shard {:?}: {connection:?} queried permissions on channel \
+                "mumble-server-runtime-shard: shard {:?}: {connection:?} queried permissions on channel \
                  {channel:?}, which it cannot see",
                 self.id
             ),
@@ -1024,7 +1024,7 @@ impl<L: ShardLogic> Shard<L> {
             self.answer(attached, crate::emit::user_stats(target));
         } else {
             eprintln!(
-                "voxloom-shard: shard {:?}: {connection:?} queried stats about session {target:?}, \
+                "mumble-server-runtime-shard: shard {:?}: {connection:?} queried stats about session {target:?}, \
                  which it cannot see",
                 self.id
             );
@@ -1040,7 +1040,7 @@ impl<L: ShardLogic> Shard<L> {
     fn answer(&self, attached: &AttachedConnection, message: ControlMessage) {
         if let Err(refused) = attached.queue.try_send_all(vec![message]) {
             eprintln!(
-                "voxloom-shard: shard {:?}: dropping an answer for {:?}: {refused}",
+                "mumble-server-runtime-shard: shard {:?}: dropping an answer for {:?}: {refused}",
                 self.id, attached.id
             );
         }
@@ -1067,7 +1067,7 @@ impl<L: ShardLogic> Shard<L> {
         for (connection, words) in reply.drain() {
             let Some(attached) = self.connections.get(&connection) else {
                 eprintln!(
-                    "voxloom-shard: shard {:?}: dropping {} word(s) for {connection:?}, which is \
+                    "mumble-server-runtime-shard: shard {:?}: dropping {} word(s) for {connection:?}, which is \
                      not attached here",
                     self.id,
                     words.len()
@@ -1082,7 +1082,7 @@ impl<L: ShardLogic> Shard<L> {
             // worth less than the transitions queued ahead of it.
             if let Err(refused) = attached.queue.try_send_all(messages) {
                 eprintln!(
-                    "voxloom-shard: shard {:?}: dropping what the flavor said to {connection:?}: \
+                    "mumble-server-runtime-shard: shard {:?}: dropping what the flavor said to {connection:?}: \
                      {refused}",
                     self.id
                 );
@@ -1097,7 +1097,7 @@ impl<L: ShardLogic> Shard<L> {
             match &self.effects {
                 Some(route) => route(effect),
                 None => eprintln!(
-                    "voxloom-shard: shard {:?}: dropping {effect:?}: this shard belongs to no \
+                    "mumble-server-runtime-shard: shard {:?}: dropping {effect:?}: this shard belongs to no \
                      runtime, so nothing can carry it out",
                     self.id
                 ),
@@ -1131,7 +1131,7 @@ impl<L: ShardLogic> Shard<L> {
             .map(|attached| attached.session);
         if spoken.from.is_some() && speaker.is_none() {
             eprintln!(
-                "voxloom-shard: shard {:?}: dropping a relay from {:?}, which is not attached here",
+                "mumble-server-runtime-shard: shard {:?}: dropping a relay from {:?}, which is not attached here",
                 self.id, spoken.from
             );
             return;
@@ -1142,7 +1142,7 @@ impl<L: ShardLogic> Shard<L> {
         // every connection in the shard.
         let Some(target) = self.resolve(spoken.to) else {
             eprintln!(
-                "voxloom-shard: shard {:?}: dropping a message for {:?}, which names nothing this \
+                "mumble-server-runtime-shard: shard {:?}: dropping a message for {:?}, which names nothing this \
                  shard has rendered",
                 self.id, spoken.to
             );
@@ -1160,7 +1160,7 @@ impl<L: ShardLogic> Shard<L> {
                 && self.seen_user(attached, session).is_none()
             {
                 eprintln!(
-                    "voxloom-shard: shard {:?}: {:?} is in the audience but cannot see session \
+                    "mumble-server-runtime-shard: shard {:?}: {:?} is in the audience but cannot see session \
                      {session:?}, so it is skipped rather than told the message came from nobody",
                     self.id, attached.id
                 );
@@ -1174,7 +1174,7 @@ impl<L: ShardLogic> Shard<L> {
                 &spoken.text,
             )]) {
                 eprintln!(
-                    "voxloom-shard: shard {:?}: dropping a relay to {:?}: {refused}",
+                    "mumble-server-runtime-shard: shard {:?}: dropping a relay to {:?}: {refused}",
                     self.id, attached.id
                 );
             }
@@ -1273,7 +1273,7 @@ impl<L: ShardLogic> Shard<L> {
     ) {
         if !self.connections.contains_key(&connection) {
             eprintln!(
-                "voxloom-shard: shard {:?}: {connection:?} asked to change its own state, but it \
+                "mumble-server-runtime-shard: shard {:?}: {connection:?} asked to change its own state, but it \
                  is not attached here",
                 self.id
             );

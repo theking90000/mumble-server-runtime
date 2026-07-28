@@ -29,7 +29,7 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use voxloom_shard::{
+use mumble_server_runtime_shard::{
     Audience, ChannelKey, ConnectionId, DomainId, Narrow, Occupant, Reply, Scope, ScopeSet,
     ShardBuilder, ShardLogic, VoiceEvent,
 };

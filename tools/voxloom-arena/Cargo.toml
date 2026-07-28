@@ -17,8 +17,8 @@ name = "voxloom_arena"
 path = "src/voxloom_arena.rs"
 
 [dependencies]
-voxloom-shard = { path = "../../voxloom-shard" }
-voxloom-gateway = { path = "../../voxloom-gateway" }
+mumble-server-runtime-shard = { path = "../../mumble-server-runtime-shard" }
+mumble-server-runtime-gateway = { path = "../../mumble-server-runtime-gateway" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "sync", "time"] }
 anyhow = "1"
 

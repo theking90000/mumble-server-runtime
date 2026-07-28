@@ -1,7 +1,7 @@
 //! The front door of the shard runtime: sockets, shards, and the path a voice
 //! packet takes between them.
 //!
-//! [`voxloom_shard`] is pure in the way that matters: it renders, plans and
+//! [`mumble_server_runtime_shard`] is pure in the way that matters: it renders, plans and
 //! composes, and it never learns what a socket is. This crate is everything it
 //! deliberately does not know.
 //!
@@ -20,14 +20,14 @@
 //!
 //! **A shard task never waits for IO, and the voice plane never waits for a
 //! shard.** The two planes meet at exactly two places: a routing table published
-//! by [`voxloom_shard::Shard`] and read without a shard's help, and a per
+//! by [`mumble_server_runtime_shard::Shard`] and read without a shard's help, and a per
 //! connection cursor the shard advances and the voice plane compares against.
 //! Everything else is separate by construction rather than by discipline.
 //!
 //! **Identifiers are runtime-wide, not per shard.** A connection that moves
 //! keeps its session, and two shards never hand the same wire number to two
 //! different things. Both properties are load-bearing for migration, and the
-//! reason is in [`voxloom_shard::IdAllocator`].
+//! reason is in [`mumble_server_runtime_shard::IdAllocator`].
 //!
 //! **A migration is not a disconnect followed by a connect.** The source hands
 //! the destination the view the client still holds, and the destination plans

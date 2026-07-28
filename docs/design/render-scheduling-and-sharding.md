@@ -3,7 +3,7 @@
 > **Document historique.** Il conserve le diagnostic et le raisonnement qui ont
 > mené au runtime à shards. La carte de crates proposée au §13 était une étape
 > intermédiaire et n'a pas été retenue telle quelle. L'implémentation courante
-> est `voxloom-shard` + `voxloom-gateway`, décrite intégralement dans
+> est `mumble-server-runtime-shard` + `mumble-server-runtime-gateway`, décrite intégralement dans
 > `guide-implementation.md`, qui fait foi.
 >
 > **Statut : RAISONNEMENT ARCHIVÉ — implémentation achevée ailleurs.**
