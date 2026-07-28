@@ -27,4 +27,6 @@ edit-url-template = "https://github.com/theking90000/mumble-server-runtime/edit/
 
 [output.html.fold]
 enable = true
-level = 1
+# Les deux niveaux ouverts : replier les sous-chapitres ne laisserait que les
+# titres de chapitre dans la barre latérale. Les flèches restent disponibles.
+level = 2

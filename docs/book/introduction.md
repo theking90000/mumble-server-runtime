@@ -172,12 +172,13 @@ At a high level:
 
 The documentation is divided into the following parts:
 
-- **Boundaries** states what the runtime does not do, and which values are fixed
-  rather than configurable.
-- **The model** defines views, scopes, overlays, audio relations, deltas and
-  propagation cost. No types or code appear there.
-- **Building an application** covers the demonstration application, the render
-  function, connection routing and configuration. Types and code appear there.
+- [Boundaries](boundaries.md) states what the runtime does not do, and which
+  values are fixed rather than configurable.
+- [The model](model/index.md) defines views, scopes, overlays, audio relations,
+  deltas and propagation cost. No types or code appear there.
+- [Building an application](build/index.md) covers the demonstration
+  application, the render function, connection routing and configuration. Types
+  and code appear there.
 
 Generated API documentation is published separately. See
 [API documentation](reference/api.md).
