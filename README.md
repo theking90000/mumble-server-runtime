@@ -12,10 +12,9 @@ No plugin, custom client or protocol extension is required. Instead of a channel
 tree you configure, channels, visibility and audibility are computed live from
 your application's state.
 
-> **Preliminary.** The runtime works and ships with a runnable demo, but this
-> README is ahead of its documentation. The published API is still work-in-progress,
-> there is no integration guide, and no ready-made plugin for any game. See
-> [Status](#status) for what is real and what is not.
+> **Preliminary.** The runtime works and ships with a runnable demo. The
+> published API is still work-in-progress, and there is no ready-made plugin for
+> any game. See [Status](#status) for what is real and what is not.
 
 > **AI-assisted development.** Most of Mumble Server Runtime's implementation was delegated
 > to AI coding agents. See the [AI development notice](#ai-assisted-development)
@@ -35,6 +34,49 @@ difference from what each connected client currently holds, and sends only that.
 Move a player to a game, end a round, promote someone to spectator: change your
 state, and the voice session follows on the next render. There is no second model
 to keep in sync, because there is no second model.
+
+### Example
+
+Two teams that cannot see each other, from one render:
+
+```rust
+impl ShardLogic for Match {
+    /// What the voice session should look like *now*. Rendered once for the
+    /// whole shard, whatever the number of connections.
+    fn render(&mut self, out: &mut ShardBuilder<'_>) {
+        let root = out.root("Match");
+        let red = out.channel(root, RED_BASE, "Red Base", Narrow::Into(1));
+        let blue = out.channel(root, BLUE_BASE, "Blue Base", Narrow::Into(2));
+
+        for (connection, side) in &self.players {
+            let base = if *side == Side::Red { red } else { blue };
+            let who = Occupant::Connection(*connection);
+            out.user(base, who, &self.name_of(*connection), Narrow::Same);
+        }
+
+        // Silence is the default. Each team hears itself, and nothing else.
+        out.audio_domain(RED_VOICE, &self.team(Side::Red));
+        out.audio_domain(BLUE_VOICE, &self.team(Side::Blue));
+    }
+
+    /// A red player observes the red scope. Blue Base is not filtered out of
+    /// their view after the fact: it never enters it.
+    fn observation(&mut self, connection: ConnectionId) -> ScopeSet {
+        match self.players.get(&connection) {
+            Some(side) => side.scope(),
+            None => ScopeSet::NONE,
+        }
+    }
+
+    /// A client asked for something. Nothing has moved: change your state, and
+    /// the next render carries it.
+    fn observe(&mut self, event: &VoiceEvent, out: &mut Reply) { /* ... */ }
+}
+```
+
+The runnable version of this, with spectators, a vanished admin and a migration
+between two shards, is the
+[arena demo](tools/mumble-server-runtime-arena).
 
 ## The BungeeCord of voice
 
@@ -119,8 +161,9 @@ cargo run --release -p mumble-server-runtime-stress -- --clients 200 --duration 
 
 **Not there yet**
 
-- API documentation still in progress, though `cargo doc` already builds it.
-- No integration guide.
+- API documentation is generated and published, but its coverage is uneven.
+- The book documents the model and how to build on it. Protocol compatibility
+  and the development chapters are not written yet.
 - No plugin or bridge for any game, Minecraft included. Today you write Rust
   against the runtime directly.
 - No distributed topology: every shard lives in one runtime.
@@ -145,6 +188,27 @@ The architecture reference is
 Detailed state lives in [`docs/STATUS.md`](docs/STATUS.md) and the working rules
 in [`AGENT.md`](AGENT.md). The earlier exploratory pipeline remains readable at
 the `legacy-p7-final` tag.
+
+## Documentation
+
+- **[The book](https://theking90000.github.io/mumble-server-runtime/)**: what the
+  runtime is, then how to build on it. Start at
+  [The model](https://theking90000.github.io/mumble-server-runtime/model/) for
+  the concepts, or
+  [Building an application](https://theking90000.github.io/mumble-server-runtime/build/)
+  to write one.
+- **[API documentation](https://theking90000.github.io/mumble-server-runtime/api/)**:
+  generated from the doc comments, every public item of every crate.
+- **[`tools/mumble-server-runtime-arena/`](tools/mumble-server-runtime-arena)**:
+  the worked example, about 1200 lines. Every fragment in the book comes from it.
+
+The first two are published from `main` by the `Pages` workflow. To build them
+locally:
+
+```sh
+mdbook serve --open                                    # the book
+cargo doc --workspace --no-deps --all-features --open  # the API
+```
 
 ## Development
 
