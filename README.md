@@ -1,47 +1,137 @@
 # Voxloom
 
-Runtime vocal déclaratif compatible Mumble : un serveur qui parle le protocole
-Mumble au fil, mais dont les snapshots métier fournis par ses flavors, les vues
-par connexion et le routage audio sont indépendants du protocole. Voxloom ne
-possède pas l'état métier. Voir `docs/` pour la spécification et la roadmap.
+**A Mumble-compatible voice server your application drives.**
 
-**Statut : phases P0 à P4 closes** (infrastructure de vérité, codec pur, proxy
-oracle, serveur minimal, routage audio) ; deux vrais clients Mumble se
-connectent, se voient et s'entendent, en UDP comme en repli tunnel TCP. Le cœur
-pur de P5 (moteur de vues) est fait. P6 est close : les vues divergentes,
-transitions à chaud, préférences locales et routes audio ont été validées en CI
-et sur des clients officiels macOS et Windows. P7 est en cours : T1 fournit le
-contrat statique de flavor et ses sorties sémantiques ; T2 rend un snapshot
-opaque pour toutes les connexions ; T3 valide intégralement la génération avant
-tout effet. Prochaine tranche : publication atomique T4.
-L'avancement détaillé fait foi dans `docs/STATUS.md` ; les règles de travail sont
-dans `AGENT.md`.
+Voxloom speaks the Mumble protocol to unmodified clients. No plugin, no custom
+client, no protocol extension. What it does not have is a channel tree you
+configure: the channels, who sees whom and who hears whom are all computed from
+your application's state, live.
 
-## Structure
+> **Preliminary.** The runtime works and ships with a runnable demo, but this
+> README is ahead of its documentation. There is no published API reference yet,
+> no integration guide, and no ready-made plugin for any game. See
+> [Status](#status) for what is real and what is not.
 
+## The idea
+
+A conventional Mumble server has one channel tree shared by everyone, defined in
+configuration and edited by hand, by admins or by scripts. Voice structure ends
+up being maintained alongside your game state, and drifting from it.
+
+Voxloom inverts that. You write a render function. It describes what the voice
+session should look like _right now_, given your state. Voxloom works out the
+difference from what each connected client currently holds, and sends only that.
+
+Move a player to a cave, end a round, promote someone to spectator: change your
+state, and the voice session follows on the next render. There is no second model
+to keep in sync, because there is no second model.
+
+## The BungeeCord of voice
+
+Players connect once. After that, your application moves them.
+
+When a player leaves the hub for a match, their voice session is handed from one
+shard to another. This is not a disconnect followed by a reconnect. The source
+hands over the view the client still holds, the destination plans a single
+transition onto it, and the client keeps one continuous connection, its session,
+and every local setting it has attached to it. The world changes around it.
+
+If you run a Minecraft network, this is roughly what BungeeCord and Velocity give
+you for game servers, applied to voice instead.
+
+One caveat, stated plainly because it is the kind of thing a README should not
+blur: shards are units of rendering inside a single Voxloom runtime, not separate
+machines. Moving a player between shards is implemented and covered by tests.
+Spreading shards across hosts behind voice proxies is designed and not built.
+
+## Views differ per connection
+
+Two clients on the same server can be sent entirely different channel trees, at
+the same instant, and each one is an ordinary Mumble session as far as the client
+is concerned.
+
+A red player sees red. A blue player sees blue. A spectator sees both. Staff see
+a structure nobody else knows exists. None of this is permissions filtering a
+shared tree after the fact: the trees are genuinely different.
+
+## Visibility and audibility are separate
+
+Being visible does not imply being audible, and audio is directional.
+
+That is what lets you express things a single shared tree cannot: two teams
+hidden from each other while sharing a pre-match lobby, spectators who hear both
+teams and are heard by neither, an admin who is invisible until they address a
+group, proximity voice derived from distance rather than from channel membership.
+
+## Try it
+
+```sh
+cargo run -p voxloom-arena -- 127.0.0.1:64738
 ```
-AGENT.md                     contrat de travail (règles R1–R6, gates, phases)
-Cargo.toml                   workspace virtuel (membres ajoutés au fil des phases)
-ci/                          gates R2/R4 exécutables en local et en CI
-docs/                        spécification, roadmap, décisions (ADR), STATUS
-references/                  sources protocolaires vendored (Mumble, pinné)
-fixtures/corpus/             captures binaires réelles annotées (zone vérificateur)
-conformance/                 tests de conformité (zone vérificateur, R2)
-fuzz/                        cibles cargo-fuzz (workspace détaché, nightly)
-tools/                       binaires d'outillage (proxys, décodeur de corpus)
-voxloom-protocol/            framing, protobuf, enveloppe UDP        (pur)
-voxloom-crypto/              OCB2-AES128, CryptState                 (pur)
-voxloom-render/              vue normalisée, normalize, validate     (pur)
-voxloom-reconcile/           diff, planificateur, ViewIdMapping      (pur)
-voxloom-audio/               routage audio : compile, may_receive    (pur)
-voxloom-session/             vue engagée d'une connexion, plan → wire (pur)
-voxloom-flavor/              contrat statique et sorties sémantiques (pur)
-voxloom-control/             rendu et validation des snapshots flavor (pur)
-voxloom-server/              serveur minimal + routage voix
-voxloom-testkit/             client simulé et juge des invariants (R2)
+
+Then point a Mumble client at `127.0.0.1`, port `64738`. Use the IP address, not
+`localhost`, which resolves to IPv6 first and finds nothing listening.
+
+The demo is a lobby and an arena running as two shards, and each of the runtime's
+three visibility mechanisms is used for exactly one thing:
+
+- teams as scopes, so a red player cannot see that blue exists,
+- a vanished admin as a private overlay,
+- spectators as one-way listeners, hearing both teams and heard by neither.
+
+Double-click **> Enter the Arena** to migrate between the two shards without
+losing the connection. Connect a third client with `overwatch` in the password
+field to join as invisible staff.
+
+To load-test it, raise the admission ceiling and point the stress tool at it:
+
+```sh
+cargo run -p voxloom-arena -- 127.0.0.1:64738 500
+cargo run --release -p voxloom-stress -- --clients 200 --duration 30s
 ```
 
-## Développement
+## Status
+
+**Works today.** Unmodified Mumble clients connect, see divergent trees, and hear
+each other over UDP or through the TCP tunnel when UDP is blocked. Migration
+between shards keeps the connection. Text, context menu actions, self-mute and
+self-deafen are routed through your application.
+
+All of that is covered by tests that open real TLS and UDP sockets, plus an
+independent simulated client that applies the protocol and refuses any violation
+of its model. Official Mumble clients have been used throughout development, but
+the signed human checklists in this repository predate the current runtime, so
+treat them as history rather than as proof about the code you would run.
+
+**Not there yet.** No published API documentation, though `cargo doc` works. No
+integration guide. No plugin or bridge for any game, Minecraft included: today
+you write Rust against the runtime directly. No distributed topology. Opus only,
+and voice payloads are forwarded without ever being decoded, so no server-side
+mixing.
+
+## How it fits together
+
+Two crates carry the runtime:
+
+- `voxloom-shard` renders and reconciles the shared view, composes the private
+  views and publishes an audio routing table. It performs no IO at all.
+- `voxloom-gateway` handles TLS, TCP, UDP, the handshake, connections and
+  migration between shards.
+
+`voxloom-protocol` and `voxloom-crypto` are the pure foundations: framing,
+protobuf, UDP envelopes, OCB2. `tools/voxloom-arena` is the demo above.
+`voxloom-testkit` is the independent judge, a simulated Mumble client that
+applies the protocol and refuses any violation of its strict model.
+
+The architecture reference is
+[`docs/design/guide-implementation.md`](docs/design/guide-implementation.md).
+Detailed state lives in [`docs/STATUS.md`](docs/STATUS.md) and the working rules
+in [`AGENT.md`](AGENT.md). The earlier exploratory pipeline remains readable at
+the `legacy-p7-final` tag.
+
+## Development
+
+<<<<<<< Updated upstream
 
 ```bash
 ci/gates.sh                  # interdictions structurelles R4
@@ -51,4 +141,18 @@ ci/cargo-gate.sh cargo test --workspace   # tests
 ci/bench-audio.sh            # coût par destinataire du routeur (P4)
 ```
 
-Toolchain pinnée dans `rust-toolchain.toml` (Rust 1.93, édition 2024).
+# Toolchain pinnée dans `rust-toolchain.toml` (Rust 1.93, édition 2024).
+
+```sh
+ci/gates.sh
+ci/dep-direction.sh
+ci/verifier-boundary.sh
+cargo fmt --all --check
+cargo clippy --workspace --all-targets --all-features
+cargo test --workspace --all-features
+ci/bench-shard.sh
+```
+
+The toolchain is pinned in `rust-toolchain.toml` (Rust 1.93, edition 2024).
+
+> > > > > > > Stashed changes
