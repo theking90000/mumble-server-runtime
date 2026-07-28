@@ -34,7 +34,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - uses: peaceiris/actions-mdbook@v2
         with:
-          mdbook-version: latest
+          mdbook-version: "0.5.4"
 
       - name: mdbook build
         run: mdbook build

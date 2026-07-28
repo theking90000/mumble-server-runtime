@@ -1,6 +1,6 @@
 # Boundaries
 
-What Mumble Server Runtime does not do, and what is fixed rather than configurable. Stated
+What the runtime does not do, and what is fixed rather than configurable. Stated
 early, because most of it follows from one decision: a client asks, and only the
 application decides.
 
@@ -32,9 +32,9 @@ rather than queued.
 Matches, teams, roles, positions and the rules deriving from them stay in the
 application. None of it is inspected, stored or interpreted by the runtime.
 
-Nothing outlives the process on Mumble Server Runtime's side. Channels and participants exist
-as the current render produces them, so persistence is the application's concern
-alone.
+Nothing outlives the process on the runtime's side. Channels and participants
+exist as the current render produces them, so persistence is the application's
+concern alone.
 
 Positional audio is not provided. Position may still reach the client through
 Mumble Link, which is a separate and local mechanism.

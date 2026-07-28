@@ -40,8 +40,8 @@ parallel with the game state.
 
 ## Mumble Server Runtime
 
-Mumble Server Runtime is a Mumble-compatible server runtime for application-controlled voice
-sessions.
+Mumble Server Runtime is a Mumble-compatible server for application-controlled
+voice sessions.
 
 The channel structure, participant visibility and audio routing are derived
 from authoritative state held by another system. That authority may be a game
@@ -57,9 +57,10 @@ maintained channel model.
 Connections are accepted from unmodified Mumble clients. No plugin, custom
 client or protocol extension is required.
 
-Mumble Link and Mumble Server Runtime address separate parts of game integration. Positional
-metadata may still be provided through Mumble Link, while server-controlled
-visibility, grouping and audio routing are derived through Mumble Server Runtime.
+Mumble Link and Mumble Server Runtime address separate parts of game
+integration. Positional metadata may still be provided through Mumble Link,
+while server-controlled visibility, grouping and audio routing are derived
+through the runtime.
 
 ## Application-controlled voice
 
@@ -128,8 +129,8 @@ channel moves requires additional special cases for each role.
 
 ## Responsibility boundary
 
-Application state remains outside the Mumble Server Runtime runtime. Domain concepts such as
-players, matches, teams, roles and locations are not inspected by the runtime.
+Application state remains outside the runtime. Domain concepts such as players,
+matches, teams, roles and locations are not inspected.
 
 Runtime ownership is limited to Mumble-specific state:
 
@@ -171,14 +172,10 @@ At a high level:
 
 The documentation is divided into the following parts:
 
-- **What Mumble Server Runtime does** describes the available capabilities and their limits
-  without types or implementation details.
+- **Boundaries** states what the runtime does not do, and which values are fixed
+  rather than configurable.
 - **The model** defines views, scopes, overlays, audio relations, deltas and
-  propagation cost.
-- **Mumble compatibility** documents the implemented protocol surface and the
-  compatibility validation method.
-- **Building an application** covers the render function, shards, connection
-  routing and server configuration.
+  propagation cost. No types or code appear there.
 
-Generated API documentation is published separately and referenced from the
-appropriate sections. See [API documentation](reference/api.md).
+Generated API documentation is published separately. See
+[API documentation](reference/api.md).

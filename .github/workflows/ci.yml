@@ -52,3 +52,18 @@ jobs:
         env:
           RUSTDOCFLAGS: "-D warnings"
         run: ci/cargo-gate.sh cargo doc --workspace --no-deps --all-features
+
+  # Le livre est publié depuis main par le workflow Pages. Le construire ici
+  # aussi fait échouer la PR plutôt que le déploiement : avec
+  # `create-missing = false`, une entrée de SUMMARY.md sans fichier est une
+  # erreur de construction.
+  book:
+    name: mdbook
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: peaceiris/actions-mdbook@v2
+        with:
+          mdbook-version: "0.5.4"
+      - name: mdbook build
+        run: mdbook build
