@@ -18,14 +18,35 @@
 //! the moment it double-clicks that team's base.
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::{Context, Result};
 use voxloom_arena::arena::Arena;
 use voxloom_arena::directory::{Destinations, Directory};
-use voxloom_arena::lobby::{Choices, Lobby};
+use voxloom_arena::lobby::{Choices, Lobby, LobbyUpdate};
 use voxloom_arena::router::ArenaRouter;
 use voxloom_gateway::tls::Identity;
 use voxloom_gateway::{Gateway, GatewayConfig};
+
+async fn publish_lobby_updates(
+    sender: tokio::sync::mpsc::Sender<LobbyUpdate>,
+    handle: voxloom_shard::ShardHandle,
+) -> Result<()> {
+    let period = Duration::from_secs(1);
+    let mut ticks = tokio::time::interval_at(tokio::time::Instant::now() + period, period);
+    ticks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let mut counter = 0_u64;
+
+    loop {
+        ticks.tick().await;
+        counter = counter.saturating_add(1);
+        sender
+            .send(LobbyUpdate::Counter(counter))
+            .await
+            .context("sending the lobby counter update")?;
+        handle.wake();
+    }
+}
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -71,11 +92,16 @@ async fn main() -> Result<()> {
 
     // Both shards exist before the first connection can be accepted, which is
     // what makes the router's "attach to the lobby" answer always true.
-    let lobby = runtime.create_shard(|_handle| {
+    let (lobby_updates, lobby_inbox) = tokio::sync::mpsc::channel(1);
+    let lobby_directory = Arc::clone(&directory);
+    let lobby_destinations = Arc::clone(&destinations);
+    let lobby_chosen = Arc::clone(&chosen);
+    let lobby = runtime.create_shard(move |_handle| {
         Lobby::new(
-            Arc::clone(&directory),
-            Arc::clone(&destinations),
-            Arc::clone(&chosen),
+            lobby_directory,
+            lobby_destinations,
+            lobby_chosen,
+            lobby_inbox,
         )
     });
     let arena = runtime.create_shard(|_handle| {
@@ -101,8 +127,26 @@ async fn main() -> Result<()> {
     println!("  admission ceiling: {max_users} clients");
     println!("  password 'overwatch' joins as vanished staff");
 
-    gateway
-        .serve(ArenaRouter::new(directory, destinations))
-        .await
-        .context("serving")
+    let mut lobby_updates_task = tokio::spawn(publish_lobby_updates(lobby_updates, lobby.clone()));
+    tokio::select! {
+        // Cancellation-safe for shutdown: this branch owns the gateway, and
+        // dropping the other future does not detach the update task because it
+        // is explicitly aborted and joined below.
+        result = gateway.serve(ArenaRouter::new(directory, destinations)) => {
+            lobby_updates_task.abort();
+            match lobby_updates_task.await {
+                Err(error) if error.is_cancelled() => result.context("serving"),
+                Ok(Ok(())) => result.context("serving"),
+                Ok(Err(error)) => Err(error.context("publishing lobby updates")),
+                Err(error) => Err(error).context("joining the lobby update task"),
+            }
+        }
+        // Cancellation-safe: awaiting a JoinHandle by mutable reference leaves
+        // the task and its output available when the other branch wins.
+        result = &mut lobby_updates_task => match result {
+            Ok(Ok(())) => anyhow::bail!("the lobby update task stopped unexpectedly"),
+            Ok(Err(error)) => Err(error.context("publishing lobby updates")),
+            Err(error) => Err(error).context("joining the lobby update task"),
+        },
+    }
 }

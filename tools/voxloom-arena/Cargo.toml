@@ -19,7 +19,7 @@ path = "src/voxloom_arena.rs"
 [dependencies]
 voxloom-shard = { path = "../../voxloom-shard" }
 voxloom-gateway = { path = "../../voxloom-gateway" }
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "sync", "time"] }
 anyhow = "1"
 
 [dev-dependencies]

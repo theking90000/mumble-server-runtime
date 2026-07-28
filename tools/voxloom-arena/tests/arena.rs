@@ -12,7 +12,7 @@ use std::sync::atomic::AtomicU64;
 
 use voxloom_arena::arena::{Arena, Role, Side};
 use voxloom_arena::directory::{Destinations, Directory, Member};
-use voxloom_arena::lobby::{Choices, Intent, Lobby};
+use voxloom_arena::lobby::{Choices, Intent, Lobby, LobbyUpdate};
 use voxloom_gateway::Runtime;
 use voxloom_shard::{
     ChannelId, ChannelKey, ConnectionId, Handover, OutboundQueue, Reply, ScopeSet, SessionId,
@@ -73,15 +73,22 @@ impl World {
     }
 
     fn lobby(&self) -> Shard<Lobby> {
-        Shard::with_ids(
+        self.lobby_with_updates().1
+    }
+
+    fn lobby_with_updates(&self) -> (tokio::sync::mpsc::Sender<LobbyUpdate>, Shard<Lobby>) {
+        let (updates, inbox) = tokio::sync::mpsc::channel(4);
+        let lobby = Shard::with_ids(
             ShardId(1),
             Lobby::new(
                 Arc::clone(&self.directory),
                 Arc::clone(&self.destinations),
                 Arc::clone(&self.chosen),
+                inbox,
             ),
             self.runtime_handle.ids().clone(),
-        )
+        );
+        (updates, lobby)
     }
 }
 
@@ -153,6 +160,33 @@ fn settle<L: ShardLogic>(shard: &mut Shard<L>) {
 }
 
 // ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn the_lobby_drains_external_updates_before_rendering() {
+    let world = World::new();
+    let (updates, mut lobby) = world.lobby_with_updates();
+    settle(&mut lobby);
+    let before = lobby.version();
+
+    updates
+        .try_send(LobbyUpdate::Counter(7))
+        .expect("the update channel has room");
+    updates
+        .try_send(LobbyUpdate::Counter(8))
+        .expect("the update channel has room");
+    settle(&mut lobby);
+
+    let root = lobby
+        .view()
+        .channels
+        .get(&ChannelId::ROOT)
+        .expect("the lobby renders a root");
+    assert_eq!(root.name, "Voxloom Arena | update 8");
+    assert!(
+        lobby.version() > before,
+        "the latest external update must produce a new shared view"
+    );
+}
 
 #[tokio::test]
 async fn a_team_cannot_see_the_other_teams_base() {

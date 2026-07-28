@@ -5,11 +5,14 @@
 //! for a mechanism because it exists.
 //!
 //! Its whole job is to let a player state an intent by double-clicking a
-//! channel, and to hand them to the arena when they ask for it.
+//! channel, and to hand them to the arena when they ask for it. A small external
+//! counter also demonstrates how business work reaches a shard: the producer
+//! sends an update, wakes the shard, and `render` drains the flavor-owned inbox.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+use tokio::sync::mpsc;
 use voxloom_shard::{
     ActionKey, ChannelKey, ConnectionId, DomainId, Narrow, Occupant, On, Reply, Scope, ScopeSet,
     ShardBuilder, ShardLogic, VoiceEvent,
@@ -52,6 +55,12 @@ impl Intent {
     }
 }
 
+/// A business update produced outside the shard runtime.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LobbyUpdate {
+    Counter(u64),
+}
+
 /// The lobby shard's logic.
 pub struct Lobby {
     directory: Arc<Directory>,
@@ -59,6 +68,8 @@ pub struct Lobby {
     waiting: BTreeMap<ConnectionId, Intent>,
     /// What each connection asked for, read by the arena when it takes them.
     chosen: Arc<Choices>,
+    updates: mpsc::Receiver<LobbyUpdate>,
+    counter: u64,
 }
 
 /// The intent a player carried into the arena.
@@ -105,12 +116,15 @@ impl Lobby {
         directory: Arc<Directory>,
         destinations: Arc<Destinations>,
         chosen: Arc<Choices>,
+        updates: mpsc::Receiver<LobbyUpdate>,
     ) -> Lobby {
         Lobby {
             directory,
             destinations,
             waiting: BTreeMap::new(),
             chosen,
+            updates,
+            counter: 0,
         }
     }
 
@@ -131,7 +145,14 @@ impl Lobby {
 
 impl ShardLogic for Lobby {
     fn render(&mut self, out: &mut ShardBuilder<'_>) {
-        let root = out.root("Voxloom Arena");
+        while let Ok(update) = self.updates.try_recv() {
+            match update {
+                LobbyUpdate::Counter(counter) => self.counter = counter,
+            }
+        }
+
+        let root_name = format!("Voxloom Arena | update {}", self.counter);
+        let root = out.root(&root_name);
         // Every channel stays at the root scope: one group, one view, and the
         // whole lobby is a single delta for everyone.
         let red = out.channel(root, RED, "Red Team", Narrow::Same);
