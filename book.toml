@@ -21,7 +21,7 @@ create-missing = false
 
 [output.html]
 default-theme = "rust"
-preferred-dark-theme = "ayu"
+preferred-dark-theme = "navy"
 git-repository-url = "https://github.com/theking90000/voxloom"
 edit-url-template = "https://github.com/theking90000/voxloom/edit/main/{path}"
 
