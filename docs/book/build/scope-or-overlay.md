@@ -69,8 +69,8 @@ observed scope is usually describing individuals with a group mechanism.
 
 | mechanism | cost |
 | --- | --- |
-| shared view and scopes | `O(W)` once, plus `O(|D|)` per connection |
-| overlay | `O(|overlay|)` per connection, every turn |
+| shared view and scopes | `O(W)` once, plus `O(\|D\|)` per connection |
+| overlay | `O(\|overlay\|)` per connection, every turn |
 | audio relation | `O(N + edges)` |
 
 A scope is rendered once whatever the number of observers. An overlay is
