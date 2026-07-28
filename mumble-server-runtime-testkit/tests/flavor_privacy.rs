@@ -8,13 +8,13 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use tokio::sync::mpsc;
 use mumble_server_runtime_protocol::ControlMessage;
 use mumble_server_runtime_shard::{
     ChannelKey, ConnectionId, DomainId, Narrow, Occupant, OutboundQueue, Reply, Scope, ScopeSet,
     Shard, ShardBuilder, ShardCommand, ShardId, ShardLogic, VoiceEvent,
 };
-use voxloom_testkit::ClientModel;
+use mumble_server_runtime_testkit::ClientModel;
+use tokio::sync::mpsc;
 
 const TEAMS: u32 = 2;
 

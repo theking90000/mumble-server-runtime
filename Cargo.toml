@@ -17,7 +17,7 @@ members = [
     "tools/mumble-server-runtime-stress",
     "tools/bench-shard",
     # Verificateur indépendant : client Mumble simule et modele strict.
-    "voxloom-testkit",
+    "mumble-server-runtime-testkit",
 ]
 
 [workspace.package]
@@ -25,7 +25,7 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.93"
 license = "AGPL-3.0-or-later"
-repository = "https://github.com/theking90000/voxloom"
+repository = "https://github.com/theking90000/mumble-server-runtime"
 authors = ["Mumble Server Runtime contributors"]
 
 # Lints partagés — encodent une partie de R4 au niveau du compilateur. Chaque

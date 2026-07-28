@@ -1,7 +1,7 @@
 # fixtures/corpus/ — captures binaires réelles (zone vérificateur, R2)
 
 > **Zone vérificateur (R2).** Modifiable uniquement par des tâches de vérification.
-> Un diff qui touche ce répertoire ET une implémentation (`voxloom-*/src`) est
+> Un diff qui touche ce répertoire ET une implémentation (`mumble-server-runtime-*/src`) est
 > refusé par `ci/verifier-boundary.sh`.
 
 Transcripts binaires de sessions réelles **client officiel ↔ Murmur**, enregistrés

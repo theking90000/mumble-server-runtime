@@ -2,8 +2,8 @@
 #
 # verifier-boundary.sh — enforce la séparation implémenteur / vérificateur (R2).
 #
-# Les zones vérificateur (conformance/, fixtures/, voxloom-testkit/) ne peuvent
-# pas être modifiées dans le même diff qu'une implémentation (voxloom-*/src, hors
+# Les zones vérificateur (conformance/, fixtures/, mumble-server-runtime-testkit/) ne peuvent
+# pas être modifiées dans le même diff qu'une implémentation (mumble-server-runtime-*/src, hors
 # testkit). Toute modification d'un test de conformité passe par une revue humaine.
 #
 # Usage :
@@ -34,18 +34,18 @@ touches_impl=0
 while IFS= read -r f; do
   [ -n "$f" ] || continue
   case "$f" in
-    conformance/*|fixtures/*|voxloom-testkit/*)
+    conformance/*|fixtures/*|mumble-server-runtime-testkit/*)
       touches_verifier=1 ;;
-    voxloom-*/src/*)
+    mumble-server-runtime-*/src/*)
       # le testkit est une zone vérificateur, déjà couverte au-dessus.
-      case "$f" in voxloom-testkit/*) ;; *) touches_impl=1 ;; esac ;;
+      case "$f" in mumble-server-runtime-testkit/*) ;; *) touches_impl=1 ;; esac ;;
   esac
 done <<< "$CHANGED"
 
 if [ "$touches_verifier" -eq 1 ] && [ "$touches_impl" -eq 1 ]; then
   echo "✗ verifier-boundary.sh : un même diff touche à la fois une zone"
-  echo "  vérificateur (conformance/ | fixtures/ | voxloom-testkit/) et une"
-  echo "  implémentation (voxloom-*/src). Interdit par R2 — séparer les diffs."
+  echo "  vérificateur (conformance/ | fixtures/ | mumble-server-runtime-testkit/) et une"
+  echo "  implémentation (mumble-server-runtime-*/src). Interdit par R2 — séparer les diffs."
   echo "  Fichiers :"
   echo "$CHANGED" | sed 's/^/    /'
   exit 1

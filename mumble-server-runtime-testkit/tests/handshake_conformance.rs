@@ -18,7 +18,7 @@ use mumble_server_runtime_shard::{
     ChannelKey, ConnectionId, DomainId, Narrow, Occupant, Reply, Scope, ScopeSet, ShardBuilder,
     ShardHandle, ShardId, ShardLogic, VoiceEvent,
 };
-use voxloom_testkit::SimulatedMumbleClient;
+use mumble_server_runtime_testkit::SimulatedMumbleClient;
 
 const LEFT: ChannelKey = ChannelKey(1);
 const RIGHT: ChannelKey = ChannelKey(2);

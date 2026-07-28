@@ -1,5 +1,5 @@
 [package]
-name = "voxloom-testkit"
+name = "mumble-server-runtime-testkit"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -9,8 +9,8 @@ authors.workspace = true
 description = "Verifier toolkit (Phase 3) : a strict SimulatedMumbleClient that applies server messages to a local model and panics on any spec §20 invariant violation, as the official client would reject them. The judge for later phases (R2)."
 
 [lib]
-name = "voxloom_testkit"
-path = "src/voxloom_testkit.rs"
+name = "mumble_server_runtime_testkit"
+path = "src/mumble_server_runtime_testkit.rs"
 
 [dependencies]
 mumble-server-runtime-protocol = { path = "../mumble-server-runtime-protocol" }

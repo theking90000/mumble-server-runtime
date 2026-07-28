@@ -6,15 +6,15 @@ use std::net::SocketAddr;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
-use tokio::io::{AsyncReadExt, AsyncWriteExt, ReadHalf, WriteHalf};
-use tokio::net::{TcpStream, UdpSocket};
-use tokio_rustls::TlsConnector;
-use tokio_rustls::client::TlsStream;
 use mumble_server_runtime_crypto::{BLOCK_SIZE, CryptState, KEY_SIZE};
 use mumble_server_runtime_protocol::messages::{tcp, udp};
 use mumble_server_runtime_protocol::{
     ControlMessage, UdpMessage, decode_frame, decode_udp, encode_frame, encode_udp, parse_frame,
 };
+use tokio::io::{AsyncReadExt, AsyncWriteExt, ReadHalf, WriteHalf};
+use tokio::net::{TcpStream, UdpSocket};
+use tokio_rustls::TlsConnector;
+use tokio_rustls::client::TlsStream;
 
 use crate::model::ClientModel;
 use crate::tls;
@@ -71,7 +71,7 @@ impl SimulatedMumbleClient {
 
         client
             .send(&ControlMessage::Version(tcp::Version {
-                release: Some("voxloom-testkit".to_string()),
+                release: Some("mumble-server-runtime-testkit".to_string()),
                 // Advertise 1.5.0 so the server treats us as a protobuf-UDP client.
                 version_v2: Some((1u64 << 48) | (5u64 << 32)),
                 ..Default::default()
