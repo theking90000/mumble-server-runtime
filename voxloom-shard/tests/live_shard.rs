@@ -1321,3 +1321,129 @@ fn a_query_is_answered_only_about_what_the_asker_can_see() {
         other => panic!("expected exactly the two answerable questions, got {other:?}"),
     }
 }
+
+// ---------------------------------------------------------------------------
+// Migration: the handover must survive whatever arrives before the first turn
+// ---------------------------------------------------------------------------
+
+/// One connection, two shards, and the client's model carried across the move.
+///
+/// Both shards share one allocator, as the runtime's do: with two of them the
+/// same key would be handed the same identifier in each shard, and a migration
+/// would look like a rename instead of a tree being replaced.
+struct Migration {
+    source: Shard<Realms>,
+    destination: Shard<Realms>,
+    client: Client,
+    /// The sending half the connection task owns. It outlives the move, which is
+    /// what makes the two shards write into one ordered stream.
+    queue: Arc<OutboundQueue>,
+}
+
+impl Migration {
+    fn new(connection: ConnectionId) -> Migration {
+        let ids = voxloom_shard::SharedIds::new();
+        let world = |label| World {
+            realms: [(connection, 0)].into_iter().collect(),
+            label,
+            ..World::default()
+        };
+        let mut source = Shard::with_ids(ShardId(1), Realms { world: world(0) }, ids.clone());
+        let destination = Shard::with_ids(ShardId(2), Realms { world: world(1) }, ids);
+
+        let (queue, receiver) = OutboundQueue::with_capacity(1024);
+        let queue = Arc::new(queue);
+        source.handle(ShardCommand::attach(connection, Arc::clone(&queue)));
+        let mut client = Client {
+            receiver,
+            model: ClientModel::new(),
+        };
+        let report = source.reconcile();
+        assert!(report.refused.is_none(), "the source must render");
+        client.drain("the source's first turn");
+
+        Migration {
+            source,
+            destination,
+            client,
+            queue,
+        }
+    }
+
+    /// Hand the connection over, exactly as `RuntimeHandle::move_connection`
+    /// does: detach with a handover, then attach the view that came back.
+    fn hand_over(&mut self, connection: ConnectionId) {
+        let (view, mut awaited) = tokio::sync::oneshot::channel();
+        self.source.handle(ShardCommand::Detach {
+            connection,
+            reason: "moving".to_owned(),
+            handover: Some(voxloom_shard::Handover {
+                to: ShardId(2),
+                view,
+            }),
+        });
+        let held = awaited.try_recv().expect("the source hands its view over");
+        self.client.drain("what the source queued on its way out");
+
+        self.destination.handle(ShardCommand::Attach {
+            connection,
+            queue: self.client_queue(),
+            cursor: Arc::new(AtomicU64::new(0)),
+            held,
+            ready: None,
+        });
+    }
+
+    /// The queue half the connection task owns, which both shards write into.
+    fn client_queue(&self) -> Arc<OutboundQueue> {
+        Arc::clone(&self.queue)
+    }
+}
+
+#[test]
+fn a_migrated_connection_is_told_to_tear_the_source_tree_down() {
+    let connection = ConnectionId(1);
+    let mut migration = Migration::new(connection);
+    assert!(migration.client.model.channel_id_named("Realm 0 0").is_some());
+
+    migration.hand_over(connection);
+    let report = migration.destination.reconcile();
+    assert!(report.refused.is_none(), "the destination must render");
+    migration.client.drain("the destination's first turn");
+
+    let model = &migration.client.model;
+    assert!(
+        model.channel_id_named("Realm 0 1").is_some(),
+        "the destination's tree must have arrived"
+    );
+    assert_eq!(
+        model.channel_id_named("Realm 0 0"),
+        None,
+        "the source's tree must be gone"
+    );
+}
+
+#[test]
+fn a_drain_before_the_first_turn_does_not_lose_the_handed_over_view() {
+    let connection = ConnectionId(1);
+    let mut migration = Migration::new(connection);
+    migration.hand_over(connection);
+
+    // The connection task is still flushing what the source queued, so it
+    // reports its queue drained against the shard it now points at. That report
+    // is about the past and must not be mistaken for a turn on this shard: the
+    // fast path would find nothing to replay, commit, and drop the very view the
+    // handover exists to carry.
+    migration
+        .destination
+        .handle(ShardCommand::Drained(connection));
+    let report = migration.destination.reconcile();
+    assert!(report.refused.is_none(), "the destination must render");
+    migration.client.drain("the destination's first turn");
+
+    assert_eq!(
+        migration.client.model.channel_id_named("Realm 0 0"),
+        None,
+        "the source's channels survived the migration, so the client holds two trees at once"
+    );
+}

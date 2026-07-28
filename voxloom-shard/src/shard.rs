@@ -1023,9 +1023,26 @@ impl<L: ShardLogic> Shard<L> {
     }
 
     /// Retry one connection whose queue drained, without touching the others.
+    ///
+    /// A retry is the **fast path and nothing else**: it replays the shared
+    /// journal from the connection's cursor. A connection that still holds a view
+    /// this shard did not produce - a fresh attach, or one just handed over by a
+    /// migration - has no cursor into this journal that means anything, and the
+    /// transition it is owed is a replan against the render. So it is left alone
+    /// here, and [`Shard::reconcile`] does it: `held` keeps it in `moved` every
+    /// turn until the transition actually lands.
+    ///
+    /// Pushing it anyway is not merely early, it is destructive: the replay from
+    /// `cursor` to `head` is empty, `push` concludes there is nothing to send and
+    /// commits, and committing drops `held`. The view the client really holds is
+    /// then gone, the replan plans from an empty one, and every element of the
+    /// source shard survives the migration with nothing left to remove it.
     fn retry(&mut self, connection: ConnectionId) {
         let head = self.journal.head();
         if let Some(attached) = self.connections.get_mut(&connection) {
+            if attached.held.is_some() {
+                return;
+            }
             // The private parts are whatever it last received: a retry replays the
             // shared journal, and any private change will arrive with the next
             // render. Cloning here keeps `push` free of a self-borrow.
