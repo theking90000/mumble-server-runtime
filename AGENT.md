@@ -1,10 +1,11 @@
 # AGENT.md — guide opérationnel pour agents d'implémentation
 
 Ce dépôt implémente **Voxloom**, un runtime vocal déclaratif compatible Mumble.
-Ce fichier est le contrat de travail. La roadmap (`docs/voxloom-roadmap-agents-v0_1.md`)
-et la spécification (`docs/voxloom-specification-technique-v0.1.md`) font autorité ;
-en cas de conflit, la spec l'emporte, et un détail protocolaire non tranché
-**s'arrête et se signale**, il ne s'invente pas.
+Ce fichier est le contrat de travail. Le guide d'implémentation
+(`docs/design/guide-implementation.md`) fait autorité sur l'architecture courante ;
+la spécification (`docs/voxloom-specification-technique-v0.1.md`) reste l'autorité
+protocolaire. Un détail protocolaire non tranché **s'arrête et se signale**, il ne
+s'invente pas.
 
 ## Principe directeur
 
@@ -58,9 +59,8 @@ par-crate) et `ci/dep-direction.sh` (via `cargo metadata`) :
 
 | Zone                         | Interdit |
 |------------------------------|----------|
-| `voxloom-audio/src`          | `Mutex`, `RwLock`, `.await` (chemin par-paquet), `Box<dyn Fn>`, dépendre de `voxloom-render` / `voxloom-flavor` |
-| `voxloom-render/src`         | importer `voxloom-protocol` (le renderer ignore le wire format) |
-| `voxloom-flavor/src`         | types protocolaires Mumble, importer `voxloom-protocol` ou définir un métier concret |
+| `voxloom-shard/src`          | sockets (`std::net`, `tokio::net`, `TcpListener`, `TcpStream`, `UdpSocket`) |
+| crates centraux              | importer le flavor de démonstration `voxloom-arena` |
 | `voxloom-protocol`, `voxloom-crypto` | `tokio`, IO (`std::net`, `std::fs`) — crates purs |
 | tout le workspace            | `.unwrap()` hors tests, `static mut`, `unsafe` sans commentaire `// SAFETY:` |
 
@@ -78,40 +78,33 @@ ci/gates.sh && ci/dep-direction.sh && ci/verifier-boundary.sh
 Arêtes interdites dans le graphe cargo (`ci/dep-direction.sh`) :
 
 ```
-voxloom-audio    -/->  voxloom-render      voxloom-render   -/->  voxloom-protocol
-voxloom-audio    -/->  voxloom-flavor      voxloom-flavor   -/->  voxloom-protocol
-voxloom-protocol -/->  tokio               voxloom-crypto   -/->  tokio
+voxloom-protocol -/-> tokio                voxloom-crypto -/-> tokio
+voxloom-shard    -/-> voxloom-gateway      voxloom-shard  -/-> voxloom-crypto
+crates centraux  -/-> voxloom-arena        crates centraux -/-> voxloom-testkit
 ```
 
-## Carte des crates (spec §7.1) — remplis-les au fil des phases, jamais avant
+## Carte des crates courants
 
-`voxloom-protocol` (framing/protobuf/UDP) · `voxloom-crypto` (OCB2/nonces/rejeu) ·
-`voxloom-transport` (TLS/sockets) · `voxloom-session` · `voxloom-auth` ·
-`voxloom-flavor` (contrat de snapshot/rendu métier opaque) · `voxloom-render` (VDOM/rendu) ·
-`voxloom-reconcile` (diff/plan) · `voxloom-audio` (routage) · `voxloom-control` ·
-`voxloom-observe` · `voxloom-testkit` (client simulé/proptest/fuzz) ·
-`voxloom-shard` (runtime à shards : portées, journal de deltas, composition par
-connexion — étapes 1 à 7 de `docs/design/guide-implementation.md`) ·
-`voxloom-gateway` (la porte d'entrée du même runtime : plan de contrôle TLS,
-routeur de connexions, registre multi-shards, migration, plan vocal UDP —
-étapes 8 à 10). Les deux coexistent avec le pipeline P5–P7 qu'ils visent à
-remplacer ; `voxloom-server` est encore sur l'ancien.
+`voxloom-protocol` (framing/protobuf/UDP) · `voxloom-crypto`
+(OCB2/nonces/rejeu) · `voxloom-shard` (portées, rendu, diff/plan, journal,
+composition, routage, file bornée) · `voxloom-gateway` (TLS/TCP/UDP, handshake,
+registre multi-shards, migration) · `voxloom-testkit` (client simulé et modèle
+strict indépendant).
+
+`tools/voxloom-arena` est le flavor de démonstration et le binaire de composition.
+Les anciens crates par connexion P4–P7 ont été retirés ; leur dernier état reste
+consultable au tag `legacy-p7-final`.
 
 Le métier concret appartient aux flavors compilés avec l'application, jamais au
 runtime Voxloom. La décision `docs/decisions/0002-flavor-owns-business-state.md`
 fait autorité sur cette frontière.
 
-## Ordre des phases (résumé)
+## État
 
-`P0 corpus/refs → P1 codec → P2 proxy oracle → P3 serveur minimal → P4 hot path`,
-avec `P5 moteur de vues pur` parallélisable dès P2. Détail et critères de « done »
-dans `docs/voxloom-roadmap-agents-v0_1.md`. **P0 à P4 sont closes** (checkpoints
-humains signés pour P0, P2, P3 et P4) ; le cœur pur de P5 est fait et P6 est
-close, **et P7 aussi** (checkpoint humain signé le 2026-07-27 : le flavor de
-référence tourne en live à travers la seule API publique).
-**Phase courante : P8 (flavor Minecraft).**
-État détaillé et reprise :
-**`docs/STATUS.md`**, qui fait foi sur l'avancement.
+Les étapes 1 à 10 du guide d'implémentation sont le runtime courant. Les phases
+P0–P7 et leurs checklists décrivent l'historique exploratoire ; elles restent
+consultables comme preuves, pas comme carte de code active. État détaillé :
+**`docs/STATUS.md`**.
 
 ## Points de contrôle humains
 

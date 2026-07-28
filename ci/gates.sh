@@ -2,11 +2,10 @@
 #
 # gates.sh — interdictions structurelles R4 de la roadmap Voxloom.
 #
-# Ces gates encodent les ADR 001, 002 et 005. Ils sont volontairement actifs
-# AVANT la première ligne de logique (Phase 0) : ils ne trouvent rien tant que
-# les crates n'existent pas, et échouent dès qu'un agent introduit un motif
-# interdit. Si un agent doit contourner un gate, c'est l'architecture qui a un
-# problème, pas le gate (R4).
+# Ces gates encodent les frontières du guide d'implémentation et les ADR encore
+# actifs. Ils échouent dès qu'un agent introduit un motif interdit. Si un agent
+# doit contourner un gate, c'est l'architecture qui a un problème, pas le gate
+# (R4).
 #
 # Sortie : exit 0 si aucune violation, exit 1 sinon, avec un rapport lisible.
 #
@@ -53,34 +52,16 @@ forbid() {
 
 echo "== Gates par-crate (R4) =="
 
-# --- voxloom-audio : hot path sans lock, sans await, sans callback, isolé ---
-mapfile -t audio_files < <(crate_src_files voxloom-audio)
-forbid "audio/no-Mutex"        '\b(Mutex|RwLock)\b'                "${audio_files[@]}"
-forbid "audio/no-await"        '\.await\b'                          "${audio_files[@]}"
-forbid "audio/no-boxed-fn"     'Box<dyn +Fn'                        "${audio_files[@]}"
-forbid "audio/no-render-dep"   'voxloom[_-]render'                  "${audio_files[@]}"
-forbid "audio/no-flavor-dep"   'voxloom[_-]flavor'                  "${audio_files[@]}"
+# --- voxloom-shard : logique et publication sans sockets ---
+mapfile -t shard_files < <(crate_src_files voxloom-shard)
+forbid "shard/no-net" \
+       '(std::net|tokio::net|TcpListener|TcpStream|UdpSocket)' "${shard_files[@]}"
 
-# --- voxloom-render : ignore le wire format ---
-mapfile -t render_files < <(crate_src_files voxloom-render)
-forbid "render/no-protocol"    'voxloom[_-]protocol'                "${render_files[@]}"
-
-# --- voxloom-flavor : contrat générique sans types protocolaires Mumble ---
-mapfile -t flavor_files < <(crate_src_files voxloom-flavor)
-forbid "flavor/no-protocol"    'voxloom[_-]protocol'                "${flavor_files[@]}"
-forbid "flavor/no-domain"      '([Mm]inecraft|[Rr]ealm|[Pp]layer|[Tt]eam|[Pp]osition|[Rr]adio)' \
-                                                                    "${flavor_files[@]}"
-
-# --- Crates centrales : aucun concept du flavor de référence (P7 T8) ---
-# L'extraction Aurora/Borealis est faite ; ces noms ne doivent plus jamais
-# revenir dans le runtime, sous peine de recréer la branche métier que P7 a
-# supprimée. Le binaire de composition (tools/) est le seul endroit qui a le
-# droit de nommer un flavor concret.
-for central in voxloom-protocol voxloom-crypto voxloom-render voxloom-reconcile \
-               voxloom-audio voxloom-session voxloom-flavor voxloom-control voxloom-server; do
+# --- Crates centrales : aucun concept du flavor de démonstration ---
+for central in voxloom-protocol voxloom-crypto voxloom-shard voxloom-gateway; do
   mapfile -t central_files < <(crate_src_files "$central")
-  forbid "$central/no-reference-flavor" \
-         '([Aa]urora|[Bb]orealis|voxloom[_-]flavor[_-]reference)' "${central_files[@]}"
+  forbid "$central/no-demo-flavor" \
+         '([Aa]urora|[Bb]orealis|voxloom[_-]arena)' "${central_files[@]}"
 done
 
 # --- voxloom-protocol / voxloom-crypto : crates purs, sans runtime ni IO ---
@@ -93,7 +74,7 @@ done
 
 echo "== Gates globaux (tout le workspace) =="
 
-mapfile -t all_files < <(find . -path ./target -prune -o -name '*.rs' ! -path '*/tests/*' ! -name '*_test.rs' -print 2>/dev/null || true)
+mapfile -t all_files < <(find . -type d -name target -prune -o -name '*.rs' ! -path '*/tests/*' ! -name '*_test.rs' -print 2>/dev/null || true)
 if [ "${#all_files[@]}" -gt 0 ]; then
   forbid "no-unwrap"           '\.unwrap\(\)'                       "${all_files[@]}"
   forbid "no-static-mut"       '\bstatic +mut\b'                    "${all_files[@]}"

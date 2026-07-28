@@ -2,19 +2,16 @@
 #
 # dep-direction.sh — vérifie la direction des dépendances entre crates (R4).
 #
-# Règles interdites (arêtes qui ne doivent JAMAIS exister dans le graphe cargo) :
-#   voxloom-audio    -> voxloom-render     (le hot path ne connaît pas la vue)
-#   voxloom-audio    -> voxloom-flavor     (le hot path ne connaît pas le métier)
-#   voxloom-render   -> voxloom-protocol   (le renderer ignore le wire format)
-#   voxloom-flavor   -> voxloom-protocol   (le contrat flavor est indépendant de Mumble)
-#   voxloom-protocol -> tokio              (crate pur)
-#   voxloom-crypto   -> tokio              (crate pur)
-#   <crate centrale> -> voxloom-flavor-reference
-#                                          (P7 T8 : seul un binaire de
-#                                           composition nomme un flavor concret)
+# Graphe autorisé du runtime :
 #
-# S'appuie sur `cargo metadata`. Sur un workspace vide (Phase 0), il n'y a aucun
-# crate voxloom : le script passe trivialement.
+#   arena -> gateway -> shard -> protocol
+#                  \-> crypto
+#
+# `protocol` et `crypto` restent purs. Le shard ne connaît ni sockets ni
+# chiffrement, et aucun crate central ne dépend de la démonstration ou du
+# verificateur.
+#
+# S'appuie sur `cargo metadata`.
 
 set -euo pipefail
 
@@ -30,21 +27,22 @@ META="$(cargo metadata --format-version 1 --no-deps 2>/dev/null || echo '{"packa
 
 # Arêtes interdites : "<from>|<to>".
 FORBIDDEN=(
-  "voxloom-audio|voxloom-render"
-  "voxloom-audio|voxloom-flavor"
-  "voxloom-render|voxloom-protocol"
-  "voxloom-flavor|voxloom-protocol"
   "voxloom-protocol|tokio"
   "voxloom-crypto|tokio"
-  "voxloom-protocol|voxloom-flavor-reference"
-  "voxloom-crypto|voxloom-flavor-reference"
-  "voxloom-render|voxloom-flavor-reference"
-  "voxloom-reconcile|voxloom-flavor-reference"
-  "voxloom-audio|voxloom-flavor-reference"
-  "voxloom-session|voxloom-flavor-reference"
-  "voxloom-flavor|voxloom-flavor-reference"
-  "voxloom-control|voxloom-flavor-reference"
-  "voxloom-server|voxloom-flavor-reference"
+  "voxloom-protocol|voxloom-shard"
+  "voxloom-protocol|voxloom-gateway"
+  "voxloom-crypto|voxloom-shard"
+  "voxloom-crypto|voxloom-gateway"
+  "voxloom-shard|voxloom-crypto"
+  "voxloom-shard|voxloom-gateway"
+  "voxloom-protocol|voxloom-arena"
+  "voxloom-crypto|voxloom-arena"
+  "voxloom-shard|voxloom-arena"
+  "voxloom-gateway|voxloom-arena"
+  "voxloom-protocol|voxloom-testkit"
+  "voxloom-crypto|voxloom-testkit"
+  "voxloom-shard|voxloom-testkit"
+  "voxloom-gateway|voxloom-testkit"
 )
 
 violations=0

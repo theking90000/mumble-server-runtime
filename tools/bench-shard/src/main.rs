@@ -1,18 +1,13 @@
 //! What one shard turn costs.
 //!
-//! The deliberate counterpart of `bench-publication`: same business change (move
-//! one member to the other realm), same connection counts, same statistic. The
-//! two tables are meant to be read side by side, because the whole argument for
-//! the shard model is a claim about how they differ as N grows.
-//!
 //! A turn here is the complete cold path of a state change: render the shard
 //! once, plan the shared delta once, journal it, republish the audio routing
 //! table, then for every connection filter that delta, splice its overlay,
 //! collapse, encode and push.
 //!
 //! Draining the queues is a connection task's work, not the shard's, so it
-//! happens outside the timed section - exactly as `bench-publication` measures
-//! the pipeline and not the socket.
+//! happens outside the timed section so the result measures the publication
+//! pipeline rather than the socket.
 //!
 //! REF: docs/design/guide-implementation.md 13 (the cost law)
 
@@ -27,8 +22,7 @@ use voxloom_shard::{
     Shard, ShardBuilder, ShardCommand, ShardId, ShardLogic, VoiceEvent,
 };
 
-/// Connection counts to measure, identical to `bench-publication` so the two
-/// tables line up row for row.
+/// Connection counts to measure.
 const SIZES: [u32; 5] = [2, 10, 50, 200, 500];
 
 /// Turns timed per size. The reported figure is the median, so a run under an
@@ -135,7 +129,7 @@ fn percentile(sorted: &[Duration], percent: usize) -> Option<Duration> {
 }
 
 // ---------------------------------------------------------------------------
-// The same two-realm world bench-publication uses
+// A two-realm world with one member moving between realms
 // ---------------------------------------------------------------------------
 
 struct World {

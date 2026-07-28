@@ -21,7 +21,6 @@ cargo-fuzz = true
 libfuzzer-sys = "0.4"
 voxloom-protocol = { path = "../voxloom-protocol" }
 voxloom-crypto = { path = "../voxloom-crypto" }
-voxloom-audio = { path = "../voxloom-audio" }
 
 [[bin]]
 name = "framing"
@@ -54,13 +53,6 @@ bench = false
 [[bin]]
 name = "udp_roundtrip"
 path = "fuzz_targets/udp_roundtrip.rs"
-test = false
-doc = false
-bench = false
-
-[[bin]]
-name = "audio_route"
-path = "fuzz_targets/audio_route.rs"
 test = false
 doc = false
 bench = false
