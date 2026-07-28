@@ -30,8 +30,8 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use voxloom_shard::{
-    ChannelKey, ConnectionId, DomainId, Narrow, Occupant, Reply, Scope, ScopeSet, ShardBuilder,
-    ShardLogic, VoiceEvent,
+    Audience, ChannelKey, ConnectionId, DomainId, Narrow, Occupant, Reply, Scope, ScopeSet,
+    ShardBuilder, ShardLogic, VoiceEvent,
 };
 
 use crate::directory::{Destinations, Directory};
@@ -64,6 +64,14 @@ impl Side {
         match self {
             Side::Red => 1,
             Side::Blue => 2,
+        }
+    }
+
+    /// The base this side occupies.
+    const fn base(self) -> ChannelKey {
+        match self {
+            Side::Red => RED_BASE,
+            Side::Blue => BLUE_BASE,
         }
     }
 }
@@ -188,6 +196,10 @@ impl ShardLogic for Arena {
         out.channel_position(deck, 3);
         out.channel_position(neutral, 4);
         out.channel_position(back, 5);
+
+        // A door is not a room: the client greys its chat box out here rather
+        // than letting someone type into something nobody is standing in.
+        out.channel_can_text(back, false);
 
         for (connection, role) in &self.roles {
             let name = self.directory.name(*connection);
@@ -325,12 +337,60 @@ impl ShardLogic for Arena {
             } => self
                 .directory
                 .set_self_state(*connection, *self_mute, *self_deaf),
+            VoiceEvent::Said {
+                connection,
+                to,
+                text,
+            } => self.said(*connection, *to, text, out),
             other => eprintln!("voxloom-arena: the arena ignores {other:?}"),
         }
     }
 }
 
 impl Arena {
+    /// Where a role may write, and what happens when it writes elsewhere.
+    ///
+    /// The runtime already drops a recipient who cannot see the sender, so a
+    /// spectator typing into Red Base would reach nobody and hear nothing back.
+    /// Refusing out loud is the difference between a rule and a bug: the writer
+    /// learns why, instead of watching their message evaporate.
+    ///
+    /// A private message is left alone. Its audience is one person, the runtime
+    /// checks that person can see the sender, and there is nothing a team rule
+    /// could add.
+    fn said(&mut self, connection: ConnectionId, to: Audience, text: &str, out: &mut Reply) {
+        if matches!(to, Audience::User(_)) {
+            out.relay(connection, to, text);
+            return;
+        }
+
+        let Some(role) = self.roles.get(&connection).copied() else {
+            return;
+        };
+        let heard_in = match role {
+            Role::Player(side) => side.base(),
+            Role::Spectator => DECK,
+            // Addressing a side is what puts staff in its base, in an overlay,
+            // and being visible there is exactly what a relay needs.
+            Role::Admin {
+                addressing: Some(side),
+            } => side.base(),
+            Role::Admin { addressing: None } => {
+                out.refuse(
+                    connection,
+                    "Pick a base to address before writing into the arena.",
+                );
+                return;
+            }
+        };
+
+        if to == Audience::Channel(heard_in) {
+            out.relay(connection, to, text);
+        } else {
+            out.refuse(connection, "You can only write where you are heard.");
+        }
+    }
+
     fn requested(&mut self, connection: ConnectionId, channel: ChannelKey, out: &mut Reply) {
         if channel == BACK {
             // Remember what they were before the lobby takes them back, so a

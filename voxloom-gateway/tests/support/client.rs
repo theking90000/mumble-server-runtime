@@ -320,6 +320,33 @@ impl Client {
         .await
     }
 
+    /// Type into the chat bar with a channel selected.
+    ///
+    /// REF: references/mumble/src/mumble/ServerHandler.cpp :
+    ///   `sendChannelTextMessage` fills one `channel_id`, or one `tree_id` when
+    ///   the message is aimed at the whole subtree.
+    pub async fn say_in_channel(&mut self, channel: u32, message: &str) -> Result<()> {
+        self.send(&ControlMessage::TextMessage(tcp::TextMessage {
+            channel_id: vec![channel],
+            message: message.to_owned(),
+            ..Default::default()
+        }))
+        .await
+    }
+
+    /// Write privately to somebody, the way the user menu does.
+    ///
+    /// REF: references/mumble/src/mumble/ServerHandler.cpp :
+    ///   `sendUserTextMessage`.
+    pub async fn say_to_user(&mut self, session: u32, message: &str) -> Result<()> {
+        self.send(&ControlMessage::TextMessage(tcp::TextMessage {
+            session: vec![session],
+            message: message.to_owned(),
+            ..Default::default()
+        }))
+        .await
+    }
+
     /// Ask what may be done in a channel, the way selecting it does.
     ///
     /// REF: references/mumble/src/mumble/ServerHandler.cpp :

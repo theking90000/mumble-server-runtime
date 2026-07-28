@@ -128,6 +128,7 @@ mod tests {
             name: format!("channel-{id}"),
             position: 0,
             can_enter: true,
+            can_text: true,
             links: BTreeSet::new(),
         }
     }

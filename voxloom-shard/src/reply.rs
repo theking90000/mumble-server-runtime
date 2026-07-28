@@ -12,16 +12,19 @@
 //! returned, which keeps a flavor free of any borrow on the shard and lets a
 //! test drive `observe` with a scratch `Reply` and read back what came out.
 //!
-//! Two of the three verbs need nothing but the outbound queues the shard already
-//! owns. The third, [`Reply::switch`], is an orchestration between two shards
-//! that only a runtime can carry out, so it is recorded as an [`Effect`] and
-//! handed to whoever wired the shard up. A shard that belongs to no runtime says
-//! so out loud rather than pretending the move happened.
+//! Most of the verbs need nothing but the outbound queues the shard already
+//! owns. [`Reply::relay`] and [`Reply::announce`] need one thing more - the view,
+//! to turn an [`Audience`] into the connections that make it up - which is why
+//! they record what to deliver rather than to whom, and the shard expands them
+//! when it drains. [`Reply::switch`] is an orchestration between two shards that
+//! only a runtime can carry out, so it is recorded as an [`Effect`] and handed to
+//! whoever wired the shard up. A shard that belongs to no runtime says so out
+//! loud rather than pretending the move happened.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use crate::ids::{ConnectionId, ShardId};
+use crate::ids::{ChannelKey, ConnectionId, Occupant, ShardId};
 
 /// One thing a flavor said to one connection.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -30,6 +33,34 @@ pub enum Word {
     Say(String),
     /// A refusal, shown wherever the client reports denials.
     Refuse(String),
+}
+
+/// Who a message is for, in the flavor's own vocabulary.
+///
+/// Keys and occupants rather than wire identifiers, exactly like
+/// [`crate::shard::ActionTarget`]: the flavor names what it rendered, and the
+/// shard is what turns that into the sessions and channel ids a client holds.
+///
+/// Expanding an audience needs the view, which a [`Reply`] deliberately does not
+/// have, so the expansion happens when the shard drains what was said.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Audience {
+    /// Everyone shown in that channel.
+    Channel(ChannelKey),
+    /// Everyone shown in that channel or in any channel below it.
+    Tree(ChannelKey),
+    /// One occupant, privately.
+    User(Occupant),
+}
+
+/// One message a flavor asked to have delivered to an audience.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Spoken {
+    /// Who it is attributed to. `None` means the server itself, which is what
+    /// makes the client label it as coming from the server rather than a user.
+    pub from: Option<ConnectionId>,
+    pub to: Audience,
+    pub text: String,
 }
 
 /// Something a flavor asked for that its shard cannot carry out alone.
@@ -57,6 +88,7 @@ pub type Effects = Arc<dyn Fn(Effect) + Send + Sync>;
 #[derive(Debug, Default)]
 pub struct Reply {
     words: BTreeMap<ConnectionId, Vec<Word>>,
+    spoken: Vec<Spoken>,
     effects: Vec<Effect>,
 }
 
@@ -81,6 +113,42 @@ impl Reply {
             .push(Word::Refuse(reason.to_owned()));
     }
 
+    /// Deliver `text` to `to`, attributed to `from`.
+    ///
+    /// The answer to a [`crate::shard::VoiceEvent::Said`] a flavor is willing to
+    /// carry out, and the one place a client's own words reach other clients.
+    /// The flavor stays in charge of the audience: relaying somewhere other than
+    /// where the message was aimed is a rewrite, not a workaround.
+    ///
+    /// Two rules the shard applies when it expands this, both borrowed from
+    /// elsewhere in the model rather than invented here:
+    ///
+    /// - The sender never receives its own message.
+    /// - A recipient that cannot see `from` is skipped. That is the audio
+    ///   coupling rule - a receiver must see the sender - applied to text, and
+    ///   naming a session the recipient does not hold would break the view
+    ///   invariants anyway. Use [`Reply::announce`] for something everyone
+    ///   should read whoever said it.
+    pub fn relay(&mut self, from: ConnectionId, to: Audience, text: &str) {
+        self.spoken.push(Spoken {
+            from: Some(from),
+            to,
+            text: text.to_owned(),
+        });
+    }
+
+    /// Deliver `text` to `to`, in the server's own name.
+    ///
+    /// [`Reply::say`] addressed to a group: no actor, so no recipient is skipped
+    /// for not seeing one.
+    pub fn announce(&mut self, to: Audience, text: &str) {
+        self.spoken.push(Spoken {
+            from: None,
+            to,
+            text: text.to_owned(),
+        });
+    }
+
     /// Hand a connection to another shard.
     ///
     /// Not a disconnect followed by a connect: the source hands over the view the
@@ -93,7 +161,7 @@ impl Reply {
 
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.words.is_empty() && self.effects.is_empty()
+        self.words.is_empty() && self.spoken.is_empty() && self.effects.is_empty()
     }
 
     /// What was said, per connection, in the order it was said. Empties the
@@ -101,6 +169,13 @@ impl Reply {
     #[must_use]
     pub fn drain(&mut self) -> BTreeMap<ConnectionId, Vec<Word>> {
         std::mem::take(&mut self.words)
+    }
+
+    /// What was addressed to an audience, in the order it was said. Empties the
+    /// reply.
+    #[must_use]
+    pub fn drain_spoken(&mut self) -> Vec<Spoken> {
+        std::mem::take(&mut self.spoken)
     }
 
     /// What the flavor asked the runtime for, in the order it asked. Empties the
@@ -114,6 +189,7 @@ impl Reply {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ids::ChannelKey;
 
     #[test]
     fn words_keep_their_order_within_a_connection() {
@@ -134,6 +210,34 @@ mod tests {
             drained.get(&ConnectionId(2)),
             Some(&vec![Word::Refuse("not here".to_owned())])
         );
+    }
+
+    #[test]
+    fn an_audience_keeps_what_it_was_told_and_who_said_it() {
+        let mut reply = Reply::default();
+        reply.relay(
+            ConnectionId(1),
+            Audience::Channel(ChannelKey(7)),
+            "hello team",
+        );
+        reply.announce(Audience::Tree(ChannelKey(0)), "the round is over");
+
+        assert_eq!(
+            reply.drain_spoken(),
+            vec![
+                Spoken {
+                    from: Some(ConnectionId(1)),
+                    to: Audience::Channel(ChannelKey(7)),
+                    text: "hello team".to_owned(),
+                },
+                Spoken {
+                    from: None,
+                    to: Audience::Tree(ChannelKey(0)),
+                    text: "the round is over".to_owned(),
+                },
+            ]
+        );
+        assert!(reply.is_empty(), "draining must not leave a copy behind");
     }
 
     #[test]

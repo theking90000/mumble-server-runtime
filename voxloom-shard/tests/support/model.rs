@@ -124,6 +124,31 @@ impl ClientModel {
             ControlMessage::UserRemove(remove) => {
                 self.users.remove(&remove.session);
             }
+            // Carries no view state, but every identifier in it is a claim about
+            // what this client holds, and a claim about something it does not
+            // hold is the leak this whole model exists to catch (spec 20,
+            // invariants 14 and 15).
+            ControlMessage::TextMessage(text) => {
+                if let Some(actor) = text.actor
+                    && !self.users.contains_key(&actor)
+                {
+                    return Err(format!("a message names actor {actor}, who is not visible"));
+                }
+                for session in &text.session {
+                    if !self.users.contains_key(session) {
+                        return Err(format!(
+                            "a message is addressed to session {session}, who is not visible"
+                        ));
+                    }
+                }
+                for channel in text.channel_id.iter().chain(&text.tree_id) {
+                    if !self.channels.contains_key(channel) {
+                        return Err(format!(
+                            "a message is addressed to channel {channel}, which is not visible"
+                        ));
+                    }
+                }
+            }
             // Nothing else carries view state.
             _ => {}
         }
