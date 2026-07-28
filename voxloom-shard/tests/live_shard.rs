@@ -1404,7 +1404,13 @@ impl Migration {
 fn a_migrated_connection_is_told_to_tear_the_source_tree_down() {
     let connection = ConnectionId(1);
     let mut migration = Migration::new(connection);
-    assert!(migration.client.model.channel_id_named("Realm 0 0").is_some());
+    assert!(
+        migration
+            .client
+            .model
+            .channel_id_named("Realm 0 0")
+            .is_some()
+    );
 
     migration.hand_over(connection);
     let report = migration.destination.reconcile();
