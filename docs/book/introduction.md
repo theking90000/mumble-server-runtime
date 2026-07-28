@@ -176,6 +176,8 @@ The documentation is divided into the following parts:
   rather than configurable.
 - **The model** defines views, scopes, overlays, audio relations, deltas and
   propagation cost. No types or code appear there.
+- **Building an application** covers the demonstration application, the render
+  function, connection routing and configuration. Types and code appear there.
 
 Generated API documentation is published separately. See
 [API documentation](reference/api.md).

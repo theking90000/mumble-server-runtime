@@ -14,6 +14,10 @@
 - [Cost](model/cost.md)
 - [Refusals](model/refusals.md)
 
+# Building an application
+
+- [Running the arena](build/arena.md)
+
 # Reference
 
 - [API documentation](reference/api.md)
@@ -28,8 +32,7 @@ Plan du livre. Une entrée est décommentée quand la page est écrite : avec
 - [The voice plane](mumble/voice-plane.md)
 - [Establishing compatibility](mumble/oracles.md)
 
-# Building an application
-- [Running the arena](build/arena.md)
+# Building an application (suite)
 - [Anatomy of an application](build/anatomy.md)
 - [The render function](build/render.md)
 - [Scope or overlay](build/scope-or-overlay.md)
