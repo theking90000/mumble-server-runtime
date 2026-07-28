@@ -12,6 +12,19 @@ that reading the code answers which mechanism fits which problem:
 - a vanished admin as a private overlay,
 - spectators as one-way listeners, hearing both teams and heard by neither.
 
+Everything is driven from a stock Mumble client by double-clicking channels.
+
+```text
+  lobby                             arena
+
+  Arena                             The Arena
+  |- Red Team                       |- Red Base            scope /1
+  |- Blue Team                      |- Blue Base           scope /2
+  |- Spectators                     |- Observation Deck    scope /3
+  `- > Enter the Arena  ----------> |- Neutral Ground      scope /
+                        <---------- `- < Back to the Lobby scope /
+```
+
 ## Starting it
 
 ```console
@@ -106,6 +119,11 @@ teams' views.
 Neutral Ground and the door back to the lobby stay at the root scope, which is
 what makes them the only two things every occupant can act on.
 
+Every action a player takes is a channel request. Stepping onto Neutral Ground
+turns a player into a spectator, which widens their observation to the whole
+tree; picking a base from there narrows it again. Both directions are reachable
+by hand from a stock client.
+
 ## The three mechanisms, side by side
 
 **Teams are scopes.** A player observes one team scope. Membership of the other
@@ -126,6 +144,20 @@ Opening that edge and adding the overlay entry are one decision, not a
 convention. A render placing an audio edge onto a receiver who cannot see the
 sender is refused, because the Mumble client discards audio from a session it
 does not know. See [Seeing the speaker](../model/coupling.md).
+
+## Text
+
+Text is routed by the same rules as everything else, and the two shards make
+opposite uses of that.
+
+The lobby is one group, so whatever is typed is relayed in one line. The arena
+refuses anything aimed outside the place the writer is heard in. Every recipient
+who cannot see the writer would have been dropped anyway, and a message that
+evaporates silently is worse than a refusal stating why.
+
+Both doors, `> Enter the Arena` and `< Back to the Lobby`, are declared
+read-only. The client greys their chat box out rather than offering a box whose
+answer is a denial.
 
 ## What to try
 
