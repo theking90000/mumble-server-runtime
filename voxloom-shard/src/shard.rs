@@ -159,6 +159,86 @@ pub enum ActionTarget {
 /// `Send + 'static` and deliberately **not** `Sync`: the runtime never needs to
 /// share the logic, so it imposes no synchronization. A concrete flavor may
 /// happen to be `Sync` if it holds one, which is its own business.
+///
+/// # External business input
+///
+/// [`ShardHandle::send`] is deliberately limited to [`ShardCommand`]: those are
+/// runtime commands, not an extensible business mailbox. A concrete flavor owns
+/// the transport for its own vocabulary instead. For an ordered event stream,
+/// keep an `mpsc::Receiver<Event>` in the logic and give its senders to the
+/// integration. For last-value-wins state, the same boundary can use a
+/// `watch::Receiver` holding an immutable snapshot.
+///
+/// Slow or asynchronous work happens on the producer side. Once it has produced
+/// an owned event or snapshot, the producer publishes it and then calls
+/// [`ShardHandle::wake`]:
+///
+/// ```no_run
+/// use tokio::sync::mpsc;
+/// use voxloom_shard::{
+///     ConnectionId, Reply, ScopeSet, ShardBuilder, ShardHandle, ShardLogic, VoiceEvent,
+/// };
+///
+/// struct Notification;
+/// struct GameEvent;
+/// struct GameState;
+///
+/// impl GameState {
+///     fn apply(&mut self, _event: GameEvent) {}
+///
+///     fn render(&self, _out: &mut ShardBuilder<'_>) {}
+/// }
+///
+/// struct GameLogic {
+///     inbox: mpsc::Receiver<GameEvent>,
+///     state: GameState,
+/// }
+///
+/// fn build_logic() -> (mpsc::Sender<GameEvent>, GameLogic) {
+///     let (sender, inbox) = mpsc::channel(64);
+///     (sender, GameLogic { inbox, state: GameState })
+/// }
+///
+/// impl ShardLogic for GameLogic {
+///     fn render(&mut self, out: &mut ShardBuilder<'_>) {
+///         while let Ok(event) = self.inbox.try_recv() {
+///             self.state.apply(event);
+///         }
+///         self.state.render(out);
+///     }
+///
+///     fn observation(&mut self, _connection: ConnectionId) -> ScopeSet {
+///         ScopeSet::NONE
+///     }
+///
+///     fn observe(&mut self, _event: &VoiceEvent, _out: &mut Reply) {}
+/// }
+///
+/// async fn calculate(_notification: Notification) -> GameEvent {
+///     GameEvent
+/// }
+///
+/// async fn publish(
+///     notification: Notification,
+///     sender: &mpsc::Sender<GameEvent>,
+///     handle: &ShardHandle,
+/// ) -> Result<(), mpsc::error::SendError<GameEvent>> {
+///     let event = calculate(notification).await;
+///     sender.send(event).await?;
+///     handle.wake();
+///     Ok(())
+/// }
+/// ```
+///
+/// `wake` carries no data. It only says that the desired state may have
+/// changed, so several wake-ups may be coalesced into one reconciliation. The
+/// channel or snapshot remains the source of truth. Publishing before waking
+/// ensures that the next [`ShardLogic::render`] can observe the change.
+///
+/// Keeping `render` synchronous is intentional: it must not wait for I/O or
+/// perform blocking work. Its `&mut self` receiver lets it drain the
+/// flavor-owned channel and update local state without a lock. Any `.await`
+/// belongs before publication, outside the shard task, as in the example.
 pub trait ShardLogic: Send + 'static {
     /// Build the shared view, the private overlays and the audio relation.
     ///
