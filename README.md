@@ -165,6 +165,19 @@ Mumble Server Runtime is licensed under the
 The protocol references and test vectors under `references/vendored/` retain
 their upstream licenses and provenance.
 
+## Acknowledgements
+
+Mumble Server Runtime is an independent implementation of the
+[Mumble](https://www.mumble.info/) protocol. It is not affiliated with or
+endorsed by the Mumble project.
+
+Protocol compatibility work relies on the Mumble project's source code and
+message schemas, developed by the Mumble Developers and distributed under a
+BSD-style license. The excerpts and test vectors kept under
+`references/vendored/` retain the upstream copyright and license; see
+[`references/vendored/LICENSE`](references/vendored/LICENSE) and
+[`references/vendored/PROVENANCE.md`](references/vendored/PROVENANCE.md).
+
 ## AI-assisted development
 
 Mumble Server Runtime was designed by a human and implemented almost entirely by AI coding
