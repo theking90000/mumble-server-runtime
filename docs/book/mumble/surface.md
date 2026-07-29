@@ -1,106 +1,122 @@
-# Supported surface
+# What a client can do
 
-Every Mumble message type decodes. The protocol layer parses the whole register,
-and an unknown type code or a malformed payload is an error rather than a
-silently accepted message.
+An unmodified Mumble client connects, moves between the channels it can see,
+talks, types, and uses the menu entries an application offers it. It cannot
+create a channel, kick anyone, whisper, or display an avatar.
 
-The narrowing happens one level up. A decoded message meets one of three fates:
-acted on, refused with a reason, or accepted and ignored.
+The line between the two is the one drawn in [Boundaries](../boundaries.md).
+Anything that would change the voice session directly is refused, because the
+session is rendered. Anything that reports an intention is forwarded to the
+application, which decides.
 
-## What a client may send
+## What works
 
-| message | fate |
+| the client does | result |
 | --- | --- |
-| `Version` | accepted and ignored, like any pre-authentication traffic |
+| connect | accepted up to the ceiling; name and password reach the application |
+| enter a channel it can see | forwarded as a request, granted by the next render |
+| talk | delivered to the receivers the application declared |
+| mute or deafen itself | forwarded as a request, shown to others once rendered |
+| type into a channel, or to one person | relayed if the application accepts it |
+| use a menu entry offered to it | forwarded, along with what it was invoked on |
+| ask what it may do in a channel | answered from the view it currently holds |
+| ask for its own statistics | answered in full |
+| ask about someone else | answered with a name and nothing more |
+| measure latency | answered, with the counters its transport needs |
+
+Entering a channel is the one worth reading twice. The client reports that it
+would like to move. Nothing has happened when the request arrives, and the move
+becomes real when the application renders it, or never. See
+[Client interactions](../build/interactions.md).
+
+## What is refused
+
+| the client tries to | why |
+| --- | --- |
+| create, rename, move or remove a channel | the tree is rendered, never edited |
+| kick, ban or move another participant | moderation belongs to the application |
+| edit access control lists | there is no stored permission model |
+| register a whisper or shout target | audio destinations come from the render |
+| set an avatar, a comment or a texture | no blob is stored or served |
+| register an account, or list registered users | nothing outlives the process |
+| announce that it is recording | the recording flag is advisory only |
+| renegotiate its encryption | resynchronisation is not implemented |
+
+A refusal reaches the client as a denial it displays. Nothing is acknowledged
+silently: a change that will never appear in any view is refused rather than
+accepted and forgotten.
+
+Two exceptions match the reference server. A message over the rate limit is
+dropped without an answer, because answering a flood is participating in it. An
+empty message is dropped because there is nothing to deliver.
+
+## What the client shows as a result
+
+The permissions advertised to a client cover traversal, entry, speech and text.
+Channel and administration rights are deliberately withheld, so the
+corresponding menus do not appear at all rather than appearing and failing.
+
+Avatars and comments stay empty, since the requests that would fetch them are
+refused. Whisper and shout keys produce nothing, since the target they would
+address was never registered.
+
+Permissions are not a stored model. A question about a channel is answered from
+the render that produced it, and an entry is validated again when it arrives.
+
+## Text
+
+A typed message is dropped if it arrives faster than one per second with a burst
+of five, if it is empty, if it is longer than the advertised limit, or if it
+carries markup on a server configured to refuse it. A server that forbids markup
+refuses it rather than rewriting it, because stripping markup correctly means
+running a parser on client input.
+
+Those four are properties of the message. Whether the connection may address
+that channel or that person at all is a separate question, answered by the
+application. See [Refusals](../model/refusals.md).
+
+## The messages behind it
+
+Every Mumble message type decodes, and an unknown type code or a malformed
+payload is an error rather than something silently accepted. What varies is what
+happens next.
+
+| inbound | handling |
+| --- | --- |
 | `Authenticate` | opens the session: name, credential, certificate hash |
+| `UserState` | two intents only: channel entry, self-mute and self-deafen |
+| `TextMessage` | relayed, subject to the four checks above |
+| `ContextAction` | forwarded to the application |
+| `PermissionQuery`, `UserStats` | answered from the published view |
 | `Ping` | answered with the timestamp and the decryption counters |
-| `UserState` | two intents only, see below |
-| `PermissionQuery` | answered from the published render, for the asker alone |
-| `UserStats` | about itself, in full; about anyone else, a name and nothing more |
-| `TextMessage` | relayed, subject to four checks |
-| `ContextAction` | forwarded to the application, which knows what it offered |
 | `UdpTunnel` | carried as voice |
-| anything else | refused, with the refusal logged |
+| `Version` | accepted and ignored, like any pre-authentication traffic |
+| anything else | refused, and logged |
 
 A name longer than 64 characters is truncated, and an absent one becomes
 `Guest`. The password field is an opaque credential: nothing is inspected, and
 what it is worth is decided when the connection is routed.
 
-## The two intents in `UserState`
-
-A `UserState` naming its own session is read for exactly two things: a request
-to enter a channel, and a change of self-mute or self-deafen. Both are forwarded
-as requests.
-
-A `UserState` naming another session is refused. So is one carrying a recording
+A `UserState` naming another session is refused, as is one carrying a recording
 announcement, a plugin context, a listener registration or an access token.
-None of them is mirrored into a view, and acknowledging a change that will never
-happen would be a lie.
 
-## What the server sends
-
-| message | when |
+| outbound | when |
 | --- | --- |
-| `Version` | immediately after the TLS handshake, before authentication |
+| `Version` | after the TLS handshake, before authentication |
 | `CryptSetup`, `CodecVersion` | before the first view |
 | `ChannelState`, `ChannelRemove` | a channel enters, changes or leaves the view |
 | `UserState`, `UserRemove` | a participant enters, changes or leaves the view |
 | `ServerSync`, `ServerConfig` | the view is complete, the session is usable |
 | `Reject` | the connection is refused, with a reason |
-| `Ping` | in answer to a client ping |
-| `PermissionQuery` | in answer to a query, never unprompted |
-| `UserStats` | in answer to a request |
+| `Ping`, `PermissionQuery`, `UserStats` | in answer to a client, never unprompted |
 | `TextMessage` | a message the application relayed |
-| `PermissionDenied` | any refusal |
 | `ContextActionModify` | a menu entry is offered or withdrawn |
+| `PermissionDenied` | any refusal |
 | `UdpTunnel` | voice for a connection with no usable UDP path |
 
-Nine message types are never sent: `Acl`, `BanList`, `QueryUsers`, `UserList`,
+Nine types are never sent: `Acl`, `BanList`, `QueryUsers`, `UserList`,
 `VoiceTarget`, `SuggestConfig`, `PluginDataTransmission`, `RequestBlob` and
 `ContextAction`.
-
-## Client features that do not work
-
-Refusing a message is visible in the client, so the list is worth stating
-plainly.
-
-- **Channel administration.** Creating, renaming, moving or removing a channel
-  is refused. The tree is rendered.
-- **Moderation.** Kicking, banning, moving another participant and editing
-  access control lists are refused.
-- **Whisper and shout.** Registering a voice target is refused, so audio
-  addressed to anything but the current channel or the local loopback is
-  dropped.
-- **Avatars, comments and textures.** Blob requests are refused, so a client
-  shows none of them.
-- **Registration and the user list.** There is no stored account model.
-- **Encryption renegotiation.** A resynchronisation request is refused.
-
-## Permissions
-
-The permission bits advertised to a client cover traversal, entry, speech,
-whisper and text. Channel and administration rights are deliberately withheld,
-so a client does not render buttons whose only possible answer is a refusal.
-
-Permissions are not a stored model. A query about a channel is answered from the
-render that produced it, and an actual entry is validated again when it arrives.
-
-## Refusals carry a reason
-
-A refused message is answered with a denial naming its kind, except in two
-cases the reference server also treats differently: a message over the rate
-limit is dropped without an answer, since answering a flood is participating in
-it, and an empty message is dropped because there is nothing to deliver.
-
-Text is subject to four checks in order: the rate limit, emptiness, the
-advertised length, and the presence of markup on a server that forbids it. A
-server that forbids markup refuses it rather than rewriting it, because
-stripping markup correctly means running a parser on client input.
-
-Whether the connection may address that target at all is a separate question,
-decided by the application. See [Refusals](../model/refusals.md).
-
-## Idle accounting
 
 Pings, permission queries, statistics requests, codec announcements, blob
 requests and target registrations do not count as activity. A client sending

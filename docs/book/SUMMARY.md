@@ -23,7 +23,7 @@
   - [Configuration and limits](build/configuration.md)
   - [Load testing](build/load-testing.md)
 - [Mumble compatibility](mumble/index.md)
-  - [Supported surface](mumble/surface.md)
+  - [What a client can do](mumble/surface.md)
   - [The control plane](mumble/control-plane.md)
   - [The voice plane](mumble/voice-plane.md)
   - [Establishing compatibility](mumble/oracles.md)

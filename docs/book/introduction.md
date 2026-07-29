@@ -179,8 +179,8 @@ The documentation is divided into the following parts:
 - [Building an application](build/index.md) covers the demonstration
   application, the render function, connection routing and configuration. Types
   and code appear there.
-- [Mumble compatibility](mumble/index.md) states what an unmodified client
-  gets, message by message, and how the implementation is judged.
+- [Mumble compatibility](mumble/index.md) covers what an unmodified client
+  gets, what it is refused, and what backs the word compatible.
 
 Generated API documentation is published separately. See
 [API documentation](reference/api.md).

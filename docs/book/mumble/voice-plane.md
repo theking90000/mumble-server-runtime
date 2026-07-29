@@ -1,100 +1,79 @@
 # The voice plane
 
-Audio travels over UDP, encrypted per connection, and falls back to the control
-connection when UDP does not work. No shard takes part in it: a shard publishes
-a routing table, and the voice plane reads it.
+A client speaks, and the people the application put within earshot hear it. This
+page covers what happens between those two facts, and the handful of cases where
+a client behaves differently from what its own interface suggests.
 
-## Opus, never decoded
+## Opus, carried and not opened
 
-The payload is Opus and is forwarded verbatim. Decoding it would only be needed
-for mixing, transcoding or content analysis, none of which happen here.
+The audio a client sends is Opus, and it is forwarded exactly as it arrived.
+Nothing decodes it, so there is no mixing, no transcoding and no server-side
+analysis of what anyone said.
 
-The codec announcement sent before the first view disables the legacy codecs and
-leaves Opus alone, which is the reference server's reset state.
+The codec announcement sent before the first view leaves Opus alone and disables
+the legacy codecs, which is the reference server's own reset state.
 
-## Association
+## Two ways to the server, chosen by the client
 
-A connection's UDP address is learned from a datagram it sends, and only from
-one that decrypts under its own key. Association is therefore a cryptographic
-proof rather than a claim, and a client that never sends a datagram has no UDP
-address on the server side.
+Voice normally travels over UDP. A client whose UDP path does not work sends its
+voice through the control connection instead, and receives it the same way.
 
-Until that proof arrives, the connection has no UDP path and is served through
-the tunnel.
+Neither side negotiates the switch. A client that tunnels its voice is stating
+that UDP failed, and is served through the tunnel from then on. Any datagram
+arriving over UDP puts it back on the fast path.
 
-## The path of a packet
+The choice is per connection, so a client on UDP and a client on the tunnel hear
+each other with nothing special happening. The sender's transport never enters
+into how a receiver is served.
 
-```text
-  1. receive the datagram
-  2. find the connection that owns the source address
-  3. decrypt under that connection's key alone
-  4. read the routing table its shard published
-  5. per receiver, re-encrypt under the receiver's key and send
-```
+A client that has never sent a datagram has no UDP address on the server side.
+Its address is learned from a datagram that decrypts under its own key, which
+makes association a proof rather than a claim.
 
-Each connection holds its own cipher state, so a packet is decrypted once and
-re-encrypted once per receiver. A sender never learns who receives it.
+## Who hears whom
 
-## A receiver hears only what it can see
+The application declares the audio relation, and the runtime applies it. See
+[Audio as a relation](../model/audio.md).
 
-A receiver is given a speaker's audio only once it has been told the speaker
-exists. A client discards audio from a session it does not know, so delivering
-it earlier would be delivering silence.
+One rule sits underneath and is not the application's to set: a receiver is
+given a speaker's audio only once it has been told the speaker exists. A Mumble
+client discards audio from a session it does not know, so delivering it earlier
+would be delivering silence.
 
-The check is conservative on purpose. A receiver lagging behind its shard loses
-audio from speakers it already knew about, which is at worst a fraction of a
-second of silence for a client already in trouble. The reverse, hearing someone
-who is not in the view, is never possible. See
+The check errs on the side of silence. A client lagging behind loses audio from
+speakers it already knew about, at worst a fraction of a second. Hearing someone
+absent from the view is never possible. See
 [Seeing the speaker](../model/coupling.md).
 
-Revocation needs no check at all. A shard publishes its routing table before it
-pushes any view, so a route that is gone is simply absent. Cutting early is
-always safe.
+Withdrawing audibility needs no such care. A route that is gone is simply
+absent, and cutting early is always safe.
 
-## The tunnel
+## Where speech goes
 
-A connection with no usable UDP path receives its audio through the control
-connection instead.
+Two destinations are accepted: normal speech, and the loopback a client uses to
+test its own microphone. Loopback is answered directly to the speaker and is
+never a route to anyone else.
 
-The switch happens in both directions without negotiation. A client that sends
-its voice through the control connection is stating that its UDP does not work,
-and is served through the tunnel from then on. Any datagram arriving over UDP
-puts it back on the fast path.
+Every other destination is dropped. Registering a whisper or shout target is
+refused, so a target the server never granted means nothing, and treating it as
+normal speech would deliver voice to people the client never addressed.
 
-Delivery branches per receiver, so a client on UDP and a client on the tunnel
-hear each other with no special case: the sender's transport never enters into
-the decision.
+## What is removed on the way
 
-Voice pushed onto a saturated queue is dropped rather than queued. A gap is
-preferable to voice arriving late.
+Positional data is stripped from every forwarded packet. Passing on coordinates
+the application never authorised would tell everyone in earshot where the
+speaker is. Position may still reach a client through Mumble Link, which is
+local to each participant and never reaches the server.
 
-## Targets
+The volume adjustment a sender attaches is cleared. How loud someone is heard is
+not the speaker's decision.
 
-Two targets are accepted: normal speech, and the local loopback a client uses to
-test its own microphone. Loopback is answered directly and is not a route, since
-the audio relation never contains an edge from a participant to itself.
+## Before connecting
 
-Every other target is dropped. Registering a voice target is refused, so a
-target the server never granted means nothing, and routing it as normal speech
-would deliver voice to receivers the client never addressed.
-
-## What is stripped
-
-Two fields are cleared on every forwarded packet.
-
-Positional data is removed. Forwarding coordinates the application never
-authorised would leak position to everyone in earshot. Position may still reach
-a client through Mumble Link, which is local to each participant.
-
-The volume adjustment a sender attaches is cleared. Audibility is decided by the
-application, not by the speaker.
-
-## Pings before anything
-
-A connectivity ping is answered before any association exists, in plaintext,
-reporting the version, the current and maximum user counts and the bandwidth
-ceiling. This is how a client measures a server before connecting to it, and how
-a server list probes one.
+A connectivity ping is answered before any session exists, reporting the
+version, the current and maximum user counts and the bandwidth ceiling. This is
+how a client measures a server before connecting, and how a server list probes
+one.
 
 ## Limits
 
@@ -102,8 +81,10 @@ Voice limits are fixed and per connection: a maximum packet size, a sustained
 packet rate with a burst allowance, and a bandwidth window billed with the same
 per-packet overhead the reference server uses.
 
-A connection exceeding them has packets dropped rather than being disconnected.
-Both entry paths share one rule, so tunnelling voice is not a way around it.
+A connection exceeding them has packets dropped rather than being disconnected,
+and both paths into the server share one rule, so tunnelling voice is not a way
+around it.
 
-A datagram that fails to decrypt is dropped and counted. There is no
-resynchronisation.
+Voice pushed onto a saturated queue is dropped. A gap is preferable to voice
+arriving late. A datagram that fails to decrypt is dropped and counted; there is
+no resynchronisation.
