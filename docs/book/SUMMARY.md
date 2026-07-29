@@ -22,6 +22,11 @@
   - [Migration between shards](build/migration.md)
   - [Configuration and limits](build/configuration.md)
   - [Load testing](build/load-testing.md)
+- [Mumble compatibility](mumble/index.md)
+  - [Supported surface](mumble/surface.md)
+  - [The control plane](mumble/control-plane.md)
+  - [The voice plane](mumble/voice-plane.md)
+  - [Establishing compatibility](mumble/oracles.md)
 - [API documentation](reference/api.md)
 
 <!--
@@ -31,11 +36,6 @@ Plan du livre. Une entrée est décommentée quand la page est écrite : avec
 Un chapitre parent a besoin de son propre fichier : sans lui mdBook en fait un
 « draft », affiché en grisé et non cliquable.
 
-- [Mumble compatibility](mumble/index.md)
-  - [Supported surface](mumble/surface.md)
-  - [The control plane](mumble/control-plane.md)
-  - [The voice plane](mumble/voice-plane.md)
-  - [Establishing compatibility](mumble/oracles.md)
 - [Development](dev/index.md)
   - [Building and testing](dev/building.md)
   - [Structural gates](dev/gates.md)
