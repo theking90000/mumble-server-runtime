@@ -84,6 +84,6 @@ pub use routing::{AudioRelation, AudioRouting, DomainId, Silence, compile};
 pub use scope::{MAX_DEPTH, MAX_OBSERVED, Scope, ScopeSet, TooManyScopes};
 pub use shard::{
     ActionTarget, AttachedConnection, Handover, MIN_INTERVAL, ReconcileReport, Shard, ShardCommand,
-    ShardHandle, ShardLogic, VoiceEvent, run, spawn_parts,
+    ShardHandle, ShardLogic, VoiceEvent, run, run_with_reports, spawn_parts,
 };
 pub use view::{Action, Actions, Channel, On, Overlay, ShardView, User, UserFlags};

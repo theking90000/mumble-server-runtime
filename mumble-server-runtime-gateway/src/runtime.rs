@@ -14,8 +14,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use mumble_server_runtime_shard::{
-    ConnectionId, Handover, Occupant, SessionId, Shard, ShardCommand, ShardHandle, ShardId,
-    ShardLogic, SharedIds,
+    ConnectionId, Handover, Occupant, ReconcileReport, SessionId, Shard, ShardCommand, ShardHandle,
+    ShardId, ShardLogic, SharedIds,
 };
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::{JoinHandle, JoinSet};
@@ -165,6 +165,23 @@ impl RuntimeHandle {
     /// owns it - are resolved by a closure: the handle exists before the logic
     /// that will hold it.
     pub fn create_shard<L: ShardLogic>(&self, build: impl FnOnce(ShardHandle) -> L) -> ShardHandle {
+        self.create_shard_with_reports(build, |_report| {})
+    }
+
+    /// Create a shard and observe every reconciliation outcome.
+    ///
+    /// The observer runs on the shard task immediately after a turn, including
+    /// valid turns with no delta and refused renders. It must return immediately
+    /// and publish any application data through a non-blocking primitive.
+    pub fn create_shard_with_reports<L, O>(
+        &self,
+        build: impl FnOnce(ShardHandle) -> L,
+        observer: O,
+    ) -> ShardHandle
+    where
+        L: ShardLogic,
+        O: FnMut(&ReconcileReport) + Send + 'static,
+    {
         let id = ShardId(self.inner.next_shard.fetch_add(1, Ordering::Relaxed));
         let (handle, wake, mailbox) = mumble_server_runtime_shard::spawn_parts(id);
         let logic = build(handle.clone());
@@ -172,7 +189,8 @@ impl RuntimeHandle {
         shard.route_effects(self.effects());
         let routing = shard.routing();
         let task = tokio::spawn(async move {
-            let _shard = mumble_server_runtime_shard::run(shard, wake, mailbox).await;
+            let _shard =
+                mumble_server_runtime_shard::run_with_reports(shard, wake, mailbox, observer).await;
         });
 
         write(&self.inner.shards).insert(
