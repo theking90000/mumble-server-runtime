@@ -45,7 +45,9 @@
  *         ParticipantId.of(playerUuid.toString()),
  *         ParticipantSpec.builder(SpaceKey.of("lobby"), "Alex").build());
  *
- * session.start().thenCompose(ignored -> player.whenOwned());
+ * session.start()
+ *     .thenCompose(ignored -> player.whenMumbleJoinTokenAvailable())
+ *     .thenAccept(token -> givePasswordToPlayer(token.value()));
  * }</pre>
  */
 package be.theking90000.mumble.controller;

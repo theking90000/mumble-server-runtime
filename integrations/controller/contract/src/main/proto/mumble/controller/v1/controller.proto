@@ -138,6 +138,7 @@ message ParticipantOwnershipGranted {
   uint64 accepted_spec_revision = 5;
   uint64 applied_spec_revision = 6;
   uint64 published_generation = 7;
+  string mumble_join_token = 8;
 }
 
 enum OwnershipRevocationReason {

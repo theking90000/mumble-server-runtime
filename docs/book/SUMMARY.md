@@ -27,6 +27,8 @@
   - [The control plane](mumble/control-plane.md)
   - [The voice plane](mumble/voice-plane.md)
   - [Establishing compatibility](mumble/oracles.md)
+- [Controller integration](controller/index.md)
+  - [Java SDK and protocol](controller/java.md)
 - [API documentation](reference/api.md)
 
 <!--

@@ -26,8 +26,8 @@ Minecraft adapters without nesting them below an implementation-specific runtime
 `adapter-rust` is intentionally absent. A production adapter from the contract to
 a concrete Rust flavor is a separate vertical slice.
 
-The protocol lifecycle and its executable Java reducer are described in
-[`docs/design/controller-integration.md`](../../docs/design/controller-integration.md).
+The protocol model and its executable Java reducer are described in the
+[`Controller integration`](../../docs/book/controller/index.md) section of the book.
 
 Run the integration checks from this directory:
 

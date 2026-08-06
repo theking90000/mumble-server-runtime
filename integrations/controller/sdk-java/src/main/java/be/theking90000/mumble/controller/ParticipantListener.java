@@ -25,6 +25,18 @@ public interface ParticipantListener {
     }
 
     /**
+     * Called when the runtime grants or rotates the participant's Mumble join credential.
+     *
+     * <p>The token is a bearer password and must not be logged. A rotation invalidates the value
+     * delivered by an earlier invocation.</p>
+     *
+     * @param participant handle associated with the credential
+     * @param token current Mumble join credential
+     */
+    default void onMumbleJoinTokenChanged(ParticipantHandle participant, MumbleJoinToken token) {
+    }
+
+    /**
      * Called once when this handle permanently loses ownership.
      *
      * <p>A fresh call to {@link ControllerSession#registerParticipant(ParticipantId,

@@ -759,8 +759,13 @@ public final class ControllerSession {
             failPermanently(new ControllerException("ownership grant contains an empty token"));
             return;
         }
+        if (granted.getMumbleJoinToken().isEmpty()) {
+            failPermanently(new ControllerException("ownership grant contains an empty Mumble join token"));
+            return;
+        }
         handle.ownershipGranted(
                 granted.getOwnershipToken(),
+                granted.getMumbleJoinToken(),
                 granted.getClientSpecRevision(),
                 granted.getAcceptedSpecRevision(),
                 granted.getAppliedSpecRevision(),

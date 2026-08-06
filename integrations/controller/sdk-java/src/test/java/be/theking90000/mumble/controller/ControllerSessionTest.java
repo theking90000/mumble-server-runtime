@@ -32,6 +32,7 @@ final class ControllerSessionTest {
     private static final ByteString RESUME_TOKEN = ByteString.copyFromUtf8("resume-token");
     private static final ByteString CONTROL_EPOCH = ByteString.copyFromUtf8("control-epoch");
     private static final ByteString OWNERSHIP_TOKEN = ByteString.copyFromUtf8("ownership-token");
+    private static final String MUMBLE_JOIN_TOKEN = "mumble-join-token";
 
     @Test
     void initialSnapshotBecomesActiveOnlyAfterReadyAndReconciliation() {
@@ -68,6 +69,9 @@ final class ControllerSessionTest {
         assertTrue(observed.isDone());
         assertEquals(ParticipantHandleState.OWNED, participant.state());
         assertTrue(participant.whenOwned().isDone());
+        assertEquals(MUMBLE_JOIN_TOKEN, participant.whenMumbleJoinTokenAvailable().join().value());
+        assertEquals(MUMBLE_JOIN_TOKEN, participant.mumbleJoinToken().get().value());
+        assertFalse(participant.mumbleJoinToken().get().toString().contains(MUMBLE_JOIN_TOKEN));
     }
 
     @Test
@@ -111,6 +115,28 @@ final class ControllerSessionTest {
         assertEquals(8L, first.join().publishedGeneration());
         assertEquals(firstOpen.getOpenSession().getControllerInstanceId(),
                 reconnect.getOpenSession().getControllerInstanceId());
+        assertEquals(MUMBLE_JOIN_TOKEN, participant.mumbleJoinToken().get().value());
+    }
+
+    @Test
+    void aReacquisitionRotatesTheMumbleJoinTokenAndNotifiesListeners() {
+        Fixture fixture = new Fixture();
+        ParticipantHandle participant = fixture.session.registerParticipant(
+                ParticipantId.of("player-1"), spec("lobby", "One"));
+        final java.util.List<String> observed = new java.util.ArrayList<String>();
+        participant.addListener(new ParticipantListener() {
+            @Override
+            public void onMumbleJoinTokenChanged(ParticipantHandle ignored, MumbleJoinToken token) {
+                observed.add(token.value());
+            }
+        });
+        fixture.startAndActivate(participant);
+
+        fixture.grant(participant, participant.clientSpecRevision(), "rotated-token");
+
+        assertEquals(Arrays.asList(MUMBLE_JOIN_TOKEN, "rotated-token"), observed);
+        assertEquals("rotated-token", participant.mumbleJoinToken().get().value());
+        assertEquals(MUMBLE_JOIN_TOKEN, participant.whenMumbleJoinTokenAvailable().join().value());
     }
 
     @Test
@@ -131,6 +157,7 @@ final class ControllerSessionTest {
                 .build());
 
         assertEquals(ParticipantHandleState.REVOKED, participant.state());
+        assertFalse(participant.mumbleJoinToken().isPresent());
         assertFalse(fixture.session.participant(participant.participantId()).isPresent());
         CompletionException failure = assertThrows(CompletionException.class, update::join);
         assertTrue(failure.getCause() instanceof OwnershipLostException);
@@ -499,11 +526,16 @@ final class ControllerSessionTest {
         }
 
         private void grant(ParticipantHandle participant, long clientRevision) {
+            grant(participant, clientRevision, MUMBLE_JOIN_TOKEN);
+        }
+
+        private void grant(ParticipantHandle participant, long clientRevision, String joinToken) {
             transport().emit(ServerFrame.newBuilder()
                     .setParticipantOwnershipGranted(ParticipantOwnershipGranted.newBuilder()
                             .setParticipantId(participant.participantId().value())
                             .setRegistrationId(participant.registrationId())
                             .setOwnershipToken(OWNERSHIP_TOKEN)
+                            .setMumbleJoinToken(joinToken)
                             .setClientSpecRevision(clientRevision)
                             .setAcceptedSpecRevision(10L)
                             .setAppliedSpecRevision(9L)
