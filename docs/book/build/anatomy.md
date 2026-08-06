@@ -144,6 +144,20 @@ An ordered stream of events suits an `mpsc::Receiver`. State where the last
 value wins suits a `watch::Receiver` holding an immutable snapshot. Either way
 the channel remains the source of truth, since wake-ups may be coalesced.
 
+## Observing publication
+
+Most applications only need `create_shard`. A composition that must distinguish
+an accepted business update from an applied or published Mumble generation can
+use `create_shard_with_reports` instead. Its observer receives the
+`ReconcileReport` immediately after every turn, including a valid render with no
+delta and a refused render that kept the previous view.
+
+The observer is not a fourth `ShardLogic` method. It belongs to the composition,
+runs on the shard task and must publish through a non-blocking primitive. The
+logic may record the application revision it consumed in shared local state;
+the observer reads that revision before another render can replace it and pairs
+it with the runtime report.
+
 ## Routing
 
 A router answers where an arrival begins, not where a player belongs. The second

@@ -13,7 +13,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
-use std::sync::atomic::AtomicU64;
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
 use mumble_server_runtime_protocol::ControlMessage;
 use mumble_server_runtime_shard::{
@@ -362,6 +362,105 @@ async fn the_shard_task_renders_when_its_mailbox_receives_a_command() {
     tokio::time::advance(mumble_server_runtime_shard::MIN_INTERVAL * 2).await;
     let shard = task.await.expect("the task ends when its handles are gone");
     assert!(shard.version() > 0);
+}
+
+struct ReportedRender {
+    desired_revision: Arc<AtomicU64>,
+    rendered_revision: Arc<AtomicU64>,
+}
+
+impl ShardLogic for ReportedRender {
+    fn render(&mut self, out: &mut ShardBuilder<'_>) {
+        let revision = self.desired_revision.load(Ordering::SeqCst);
+        self.rendered_revision.store(revision, Ordering::SeqCst);
+        if revision != 2 {
+            out.root(&format!("revision-{revision}"));
+        }
+    }
+
+    fn observation(&mut self, _connection: ConnectionId) -> ScopeSet {
+        ScopeSet::NONE
+    }
+
+    fn observe(&mut self, _event: &VoiceEvent, _out: &mut Reply) {}
+}
+
+#[tokio::test(start_paused = true)]
+async fn reconciliation_reports_cover_publication_noop_refusal_and_coalescing() {
+    let desired_revision = Arc::new(AtomicU64::new(1));
+    let rendered_revision = Arc::new(AtomicU64::new(0));
+    let shard = Shard::new(
+        ShardId(9),
+        ReportedRender {
+            desired_revision: Arc::clone(&desired_revision),
+            rendered_revision: Arc::clone(&rendered_revision),
+        },
+    );
+    let (handle, wake, mailbox) = mumble_server_runtime_shard::spawn_parts(ShardId(9));
+    let calls = Arc::new(AtomicUsize::new(0));
+    let (reported, mut reports) =
+        tokio::sync::watch::channel((0, mumble_server_runtime_shard::ReconcileReport::default()));
+    let task = tokio::spawn(mumble_server_runtime_shard::run_with_reports(
+        shard,
+        wake,
+        mailbox,
+        {
+            let rendered_revision = Arc::clone(&rendered_revision);
+            let calls = Arc::clone(&calls);
+            move |report| {
+                calls.fetch_add(1, Ordering::SeqCst);
+                let _previous = reported
+                    .send_replace((rendered_revision.load(Ordering::SeqCst), report.clone()));
+            }
+        },
+    ));
+
+    handle.wake();
+    reports
+        .changed()
+        .await
+        .expect("the first report is published");
+    assert_eq!(reports.borrow().0, 1);
+    assert!(reports.borrow().1.published);
+    assert_eq!(reports.borrow().1.version, 1);
+
+    handle.wake();
+    tokio::time::advance(mumble_server_runtime_shard::MIN_INTERVAL).await;
+    reports
+        .changed()
+        .await
+        .expect("the no-op report is published");
+    assert_eq!(reports.borrow().0, 1);
+    assert!(!reports.borrow().1.published);
+    assert!(reports.borrow().1.refused.is_none());
+
+    desired_revision.store(2, Ordering::SeqCst);
+    handle.wake();
+    tokio::time::advance(mumble_server_runtime_shard::MIN_INTERVAL).await;
+    reports
+        .changed()
+        .await
+        .expect("the refusal report is published");
+    assert_eq!(reports.borrow().0, 2);
+    assert!(reports.borrow().1.refused.is_some());
+    assert_eq!(reports.borrow().1.version, 1);
+
+    desired_revision.store(3, Ordering::SeqCst);
+    handle.wake();
+    desired_revision.store(4, Ordering::SeqCst);
+    handle.wake();
+    tokio::time::advance(mumble_server_runtime_shard::MIN_INTERVAL).await;
+    reports
+        .changed()
+        .await
+        .expect("the coalesced report is published");
+    assert_eq!(reports.borrow().0, 4);
+    assert!(reports.borrow().1.published);
+    assert_eq!(reports.borrow().1.version, 2);
+    assert_eq!(calls.load(Ordering::SeqCst), 4);
+
+    drop(handle);
+    let _shard = task.await.expect("the task ends when its handles are gone");
 }
 
 struct Arrivals {

@@ -1694,10 +1694,29 @@ const MAILBOX_DEPTH: usize = 256;
 /// Takes the driver halves produced by [`spawn_parts`] and gives the shard back,
 /// so a caller that wants to inspect or migrate it can.
 pub async fn run<L: ShardLogic>(
+    shard: Shard<L>,
+    wake: Arc<Notify>,
+    mailbox: mpsc::Receiver<ShardCommand>,
+) -> Shard<L> {
+    run_with_reports(shard, wake, mailbox, |_report| {}).await
+}
+
+/// Drive a shard and report the outcome of every reconciliation turn.
+///
+/// The observer runs on the shard task immediately after [`Shard::reconcile`]
+/// and before another turn can begin. It must not block or wait for IO. This is
+/// a composition hook for publication tracking and operator telemetry; it does
+/// not add lifecycle callbacks to [`ShardLogic`].
+pub async fn run_with_reports<L, O>(
     mut shard: Shard<L>,
     wake: Arc<Notify>,
     mut mailbox: mpsc::Receiver<ShardCommand>,
-) -> Shard<L> {
+    mut observer: O,
+) -> Shard<L>
+where
+    L: ShardLogic,
+    O: FnMut(&ReconcileReport) + Send,
+{
     let mut dirty = false;
     let mut mailbox_open = true;
     let mut next_reconcile = Instant::now();
@@ -1705,7 +1724,8 @@ pub async fn run<L: ShardLogic>(
     loop {
         if dirty && (!mailbox_open || Instant::now() >= next_reconcile) {
             mailbox_open = drain_commands(&mut shard, &mut mailbox);
-            let _report = shard.reconcile();
+            let report = shard.reconcile();
+            observer(&report);
             dirty = false;
             next_reconcile = Instant::now() + MIN_INTERVAL;
             if !mailbox_open {
