@@ -6,11 +6,11 @@ plugins {
     id("com.google.protobuf") version "0.9.5"
 }
 
-group = "io.github.theking90000"
+group = "be.theking90000.mumble"
 version = "0.1.0-SNAPSHOT"
 
 base {
-    archivesName.set("mumble-server-runtime-controller-sdk")
+    archivesName.set("controller")
 }
 
 java {
@@ -77,8 +77,10 @@ tasks.withType<JavaCompile>().configureEach {
 
 tasks.withType<Javadoc>().configureEach {
     options.encoding = "UTF-8"
-    exclude("io/github/theking90000/mumbleserverruntime/controller/internal/**")
-    (options as StandardJavadocDocletOptions).addStringOption("Xdoclint:all,-missing", "-quiet")
+    exclude("be/theking90000/mumble/controller/internal/**")
+    val docletOptions = options as StandardJavadocDocletOptions
+    docletOptions.addBooleanOption("Xdoclint:all", true)
+    docletOptions.addBooleanOption("Werror", true)
 }
 
 tasks.test {
@@ -116,7 +118,7 @@ tasks.check {
 publishing {
     publications {
         create<MavenPublication>("mavenJava") {
-            artifactId = "mumble-server-runtime-controller-sdk"
+            artifactId = "controller"
             from(components["java"])
         }
     }

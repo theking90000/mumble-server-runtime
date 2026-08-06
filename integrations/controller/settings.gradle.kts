@@ -12,5 +12,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "mumble-server-runtime-controller"
+rootProject.name = "mumble-controller"
 include("sdk-java")

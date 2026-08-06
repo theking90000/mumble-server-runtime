@@ -2,5 +2,5 @@ plugins {
     base
 }
 
-group = "io.github.theking90000"
+group = "be.theking90000.mumble"
 version = "0.1.0-SNAPSHOT"

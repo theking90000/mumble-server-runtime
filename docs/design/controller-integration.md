@@ -1,4 +1,4 @@
-# Controller integration state machines
+# Mumble Controller state machines
 
 This document specifies the controller contract implemented by
 `integrations/controller/sdk-java`. The Mermaid diagrams replace the earlier
