@@ -183,16 +183,14 @@ protobuf, UDP envelopes, OCB2. `tools/mumble-server-runtime-arena` is the demo a
 `mumble-server-runtime-testkit` is the independent judge, a simulated Mumble client that
 applies the protocol and refuses any violation of its strict model.
 
-`integrations/controller` contains an experimental, language-neutral gRPC
-contract and a Java 8 controller SDK. It is a tested client-side foundation, not
-a runnable bridge: the Rust adapter that would connect it to a concrete flavor
-does not exist yet.
+`integrations/controller` contains the language-neutral gRPC contract, the Java
+8 `ControllerSession` SDK and the composed Rust server. Controller sessions own
+participants, while dynamic Spaces are materialized as runtime shards without
+exposing shard identifiers to Java.
 
-The architecture reference is
-[`docs/design/guide-implementation.md`](docs/design/guide-implementation.md).
-Detailed state lives in [`docs/STATUS.md`](docs/STATUS.md) and the working rules
-in [`AGENT.md`](AGENT.md). The earlier exploratory pipeline remains readable at
-the `legacy-p7-final` tag.
+The current architecture reference is the [`docs/book/`](docs/book) source. The
+working rules live in [`AGENT.md`](AGENT.md). The earlier exploratory pipeline
+remains readable at the `legacy-p7-final` tag.
 
 ## Documentation
 
@@ -231,6 +229,7 @@ RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --all-features
 RUSTFLAGS="-D warnings" cargo test --workspace --all-features
 cargo run --release -p bench-shard   # cost of one shard turn
 (cd integrations/controller && ./gradlew check) # controller contract + Java 8 SDK
+ci/controller-interop.sh       # real Java SDK -> Rust server -> Mumble path
 ```
 
 The live tests open loopback sockets. The toolchain is pinned in

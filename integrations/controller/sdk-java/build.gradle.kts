@@ -92,6 +92,20 @@ tasks.test {
     })
 }
 
+tasks.register<JavaExec>("controllerInterop") {
+    dependsOn(tasks.testClasses)
+    classpath = sourceSets.test.get().runtimeClasspath
+    mainClass.set("be.theking90000.mumble.controller.ControllerInteropMain")
+    javaLauncher.set(javaToolchains.launcherFor {
+        languageVersion.set(JavaLanguageVersion.of(8))
+    })
+    args(
+        providers.gradleProperty("interopEndpoint").get(),
+        providers.gradleProperty("interopTokenFile").get()
+    )
+    standardInput = System.`in`
+}
+
 val verifyControllerDescriptor = tasks.register("verifyControllerDescriptor") {
     dependsOn(tasks.named("generateProto"))
     val descriptor = layout.buildDirectory.file("descriptors/controller-v1.pb")
