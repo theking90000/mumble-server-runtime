@@ -15,6 +15,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 
 const DEADLINE: Duration = Duration::from_secs(20);
+const JAVA_START_DEADLINE: Duration = Duration::from_secs(120);
 const SILENCE_DEADLINE: Duration = Duration::from_millis(150);
 const NORMAL_TARGET: u32 = 0;
 
@@ -54,7 +55,9 @@ impl JavaController {
             input,
             output: BufReader::new(output),
         };
-        controller.wait_for("CONTROLLER_INTEROP_READY").await;
+        controller
+            .wait_for_with_deadline("CONTROLLER_INTEROP_READY", JAVA_START_DEADLINE)
+            .await;
         controller
     }
 
@@ -68,7 +71,11 @@ impl JavaController {
     }
 
     async fn wait_for(&mut self, expected: &str) {
-        tokio::time::timeout(DEADLINE, async {
+        self.wait_for_with_deadline(expected, DEADLINE).await;
+    }
+
+    async fn wait_for_with_deadline(&mut self, expected: &str, deadline: Duration) {
+        tokio::time::timeout(deadline, async {
             loop {
                 let mut line = String::new();
                 let read = self
