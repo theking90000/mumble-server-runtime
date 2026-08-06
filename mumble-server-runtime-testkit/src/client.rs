@@ -44,6 +44,26 @@ impl SimulatedMumbleClient {
     /// Connect to a server, send `Version` and `Authenticate`, but do not yet
     /// read the handshake — call [`SimulatedMumbleClient::drive_handshake`].
     pub async fn connect(server: SocketAddr, username: &str) -> Result<Self> {
+        Self::connect_inner(server, username, None).await
+    }
+
+    /// Connect with an opaque credential in `Authenticate.password`.
+    ///
+    /// REF: `references/mumble/src/Mumble.proto:Authenticate.password` defines
+    /// the password field used by Mumble clients for server authentication.
+    pub async fn connect_with_credential(
+        server: SocketAddr,
+        username: &str,
+        credential: &str,
+    ) -> Result<Self> {
+        Self::connect_inner(server, username, Some(credential)).await
+    }
+
+    async fn connect_inner(
+        server: SocketAddr,
+        username: &str,
+        credential: Option<&str>,
+    ) -> Result<Self> {
         tls::install_crypto_provider();
         let tcp = TcpStream::connect(server)
             .await
@@ -80,6 +100,7 @@ impl SimulatedMumbleClient {
         client
             .send(&ControlMessage::Authenticate(tcp::Authenticate {
                 username: Some(username.to_string()),
+                password: credential.map(str::to_owned),
                 opus: Some(true),
                 ..Default::default()
             }))
