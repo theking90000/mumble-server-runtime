@@ -1,0 +1,240 @@
+syntax = "proto3";
+
+package mumble_server_runtime.controller.v1;
+
+import "google/protobuf/duration.proto";
+
+option java_multiple_files = true;
+option java_outer_classname = "ControllerProtocol";
+option java_package = "io.github.theking90000.mumbleserverruntime.controller.internal.protocol.v1";
+
+service ControllerService {
+  rpc Connect(stream ClientFrame) returns (stream ServerFrame);
+}
+
+message ClientFrame {
+  bytes request_id = 1;
+  oneof payload {
+    OpenSession open_session = 10;
+    RenewLease renew_lease = 11;
+    SyncDesiredState sync_desired_state = 12;
+    RegisterParticipant register_participant = 13;
+    SetParticipantSpec set_participant_spec = 14;
+    ReleaseParticipant release_participant = 15;
+    ReplaceObservedSpaces replace_observed_spaces = 16;
+    FetchSpace fetch_space = 17;
+    CloseSession close_session = 18;
+  }
+}
+
+message ServerFrame {
+  bytes request_id = 1;
+  oneof payload {
+    SessionReady session_ready = 10;
+    DesiredStateReconciled desired_state_reconciled = 11;
+    ParticipantOwnershipGranted participant_ownership_granted = 12;
+    ParticipantOwnershipRevoked participant_ownership_revoked = 13;
+    ParticipantSpecAccepted participant_spec_accepted = 14;
+    ParticipantStatusChanged participant_status_changed = 15;
+    ObservedSpacesAccepted observed_spaces_accepted = 16;
+    SpaceSnapshot space_snapshot = 17;
+    SpaceClosed space_closed = 18;
+    FetchSpaceResult fetch_space_result = 19;
+    ResyncRequired resync_required = 20;
+    CommandRejected command_rejected = 21;
+    SessionClosing session_closing = 22;
+  }
+}
+
+message OpenSession {
+  string controller_id = 1;
+  bytes controller_instance_id = 2;
+  bytes resume_token = 3;
+  DesiredStateSnapshot desired_state = 4;
+}
+
+message RenewLease {
+  bytes session_token = 1;
+  uint64 desired_state_revision = 2;
+}
+
+message SyncDesiredState {
+  bytes session_token = 1;
+  DesiredStateSnapshot desired_state = 2;
+}
+
+message DesiredStateSnapshot {
+  uint64 desired_state_revision = 1;
+  repeated ParticipantRegistration participants = 2;
+  repeated string observed_space_keys = 3;
+}
+
+message ParticipantRegistration {
+  string participant_id = 1;
+  bytes registration_id = 2;
+  bytes ownership_token = 3;
+  uint64 client_spec_revision = 4;
+  ParticipantSpec spec = 5;
+}
+
+message RegisterParticipant {
+  bytes session_token = 1;
+  ParticipantRegistration participant = 2;
+}
+
+message SetParticipantSpec {
+  bytes session_token = 1;
+  string participant_id = 2;
+  bytes ownership_token = 3;
+  uint64 client_spec_revision = 4;
+  ParticipantSpec spec = 5;
+}
+
+message ReleaseParticipant {
+  bytes session_token = 1;
+  string participant_id = 2;
+  bytes registration_id = 3;
+  bytes ownership_token = 4;
+}
+
+message ReplaceObservedSpaces {
+  bytes session_token = 1;
+  uint64 observed_spaces_revision = 2;
+  repeated string space_keys = 3;
+}
+
+message FetchSpace {
+  bytes session_token = 1;
+  string space_key = 2;
+}
+
+message CloseSession {
+  bytes session_token = 1;
+}
+
+message ParticipantSpec {
+  string space_key = 1;
+  string display_name = 2;
+  bool server_mute = 3;
+  bool server_deaf = 4;
+}
+
+message SessionReady {
+  bytes session_token = 1;
+  bytes resume_token = 2;
+  bytes control_epoch = 3;
+  google.protobuf.Duration lease_duration = 4;
+}
+
+message DesiredStateReconciled {
+  uint64 desired_state_revision = 1;
+}
+
+message ParticipantOwnershipGranted {
+  string participant_id = 1;
+  bytes registration_id = 2;
+  bytes ownership_token = 3;
+  uint64 client_spec_revision = 4;
+  uint64 accepted_spec_revision = 5;
+  uint64 applied_spec_revision = 6;
+  uint64 published_generation = 7;
+}
+
+enum OwnershipRevocationReason {
+  OWNERSHIP_REVOCATION_REASON_UNSPECIFIED = 0;
+  OWNERSHIP_REPLACED = 1;
+  SESSION_EXPIRED = 2;
+  PARTICIPANT_RELEASED = 3;
+  REGISTRATION_REJECTED = 4;
+}
+
+message ParticipantOwnershipRevoked {
+  string participant_id = 1;
+  bytes registration_id = 2;
+  OwnershipRevocationReason reason = 3;
+}
+
+message ParticipantSpecAccepted {
+  string participant_id = 1;
+  uint64 client_spec_revision = 2;
+  uint64 accepted_spec_revision = 3;
+  uint64 applied_spec_revision = 4;
+  uint64 published_generation = 5;
+}
+
+message ParticipantStatus {
+  bool mumble_connected = 1;
+  string applied_space_key = 2;
+  bool self_mute = 3;
+  bool self_deaf = 4;
+  uint64 accepted_spec_revision = 5;
+  uint64 applied_spec_revision = 6;
+  uint64 published_generation = 7;
+  string application_error = 8;
+}
+
+message ParticipantStatusChanged {
+  string participant_id = 1;
+  ParticipantStatus status = 2;
+}
+
+message ObservedSpacesAccepted {
+  uint64 observed_spaces_revision = 1;
+}
+
+message SpaceParticipant {
+  string participant_id = 1;
+  string display_name = 2;
+  bool server_mute = 3;
+  bool server_deaf = 4;
+  bool mumble_connected = 5;
+}
+
+message SpaceSnapshot {
+  string space_key = 1;
+  bytes incarnation_id = 2;
+  uint64 space_revision = 3;
+  repeated SpaceParticipant participants = 4;
+  uint64 published_generation = 5;
+}
+
+message SpaceClosed {
+  string space_key = 1;
+  bytes incarnation_id = 2;
+  uint64 final_space_revision = 3;
+}
+
+message FetchSpaceResult {
+  oneof result {
+    SpaceSnapshot snapshot = 1;
+    SpaceAbsent absent = 2;
+  }
+}
+
+message SpaceAbsent {
+  string space_key = 1;
+}
+
+message ResyncRequired {
+  string reason = 1;
+}
+
+enum CommandErrorCode {
+  COMMAND_ERROR_CODE_UNSPECIFIED = 0;
+  INVALID_ARGUMENT = 1;
+  NOT_FOUND = 2;
+  OWNERSHIP_LOST = 3;
+  STALE_REVISION = 4;
+  SESSION_EXPIRED_ERROR = 5;
+  RESOURCE_EXHAUSTED = 6;
+  INTERNAL_ERROR = 7;
+}
+
+message CommandRejected {
+  CommandErrorCode code = 1;
+  string message = 2;
+}
+
+message SessionClosing {
+  string reason = 1;
+}
