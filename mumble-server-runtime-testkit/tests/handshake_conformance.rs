@@ -31,6 +31,7 @@ const LATENCY_BUDGET: Duration = Duration::from_millis(500);
 #[derive(Debug, Clone)]
 struct Person {
     name: String,
+    credential: Option<String>,
     room: u32,
 }
 
@@ -40,8 +41,15 @@ struct World {
 }
 
 impl World {
-    fn record(&self, connection: ConnectionId, name: String) {
-        self.guard().insert(connection, Person { name, room: 0 });
+    fn record(&self, connection: ConnectionId, identity: &ConnectionIdentity) {
+        self.guard().insert(
+            connection,
+            Person {
+                name: identity.name.clone(),
+                credential: identity.credential.clone(),
+                room: 0,
+            },
+        );
     }
 
     fn forget(&self, connection: ConnectionId) {
@@ -50,6 +58,13 @@ impl World {
 
     fn person(&self, connection: ConnectionId) -> Option<Person> {
         self.guard().get(&connection).cloned()
+    }
+
+    fn credential_named(&self, name: &str) -> Option<Option<String>> {
+        self.guard()
+            .values()
+            .find(|person| person.name == name)
+            .map(|person| person.credential.clone())
     }
 
     fn move_named(&self, name: &str, room: u32) {
@@ -141,7 +156,7 @@ impl ConnectionRouter for Router {
         connection: ConnectionId,
         identity: &ConnectionIdentity,
     ) -> RouteDecision {
-        self.world.record(connection, identity.name.clone());
+        self.world.record(connection, identity);
         RouteDecision::Attach(self.shard)
     }
 }
@@ -203,6 +218,7 @@ async fn simulated_clients_replay_the_gateway_handshake_without_violation() {
         .await
         .expect("alice connect");
     alice.drive_handshake().await.expect("alice handshake");
+    assert_eq!(server.world.credential_named("alice"), Some(None));
 
     let mut bob = SimulatedMumbleClient::connect(server.address, "bob")
         .await
@@ -221,6 +237,27 @@ async fn simulated_clients_replay_the_gateway_handshake_without_violation() {
     assert!(alice.model().channels.contains_key(&0), "root must exist");
     assert!(alice.model().users.contains_key(&alice_session));
     assert!(bob.model().users.contains_key(&alice_session));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn credentialed_clients_deliver_the_exact_authenticate_password() {
+    let server = TestServer::start(1).await;
+    let mut client = SimulatedMumbleClient::connect_with_credential(
+        server.address,
+        "credentialed-client",
+        "opaque-controller-join-token",
+    )
+    .await
+    .expect("credentialed client connects");
+    client
+        .drive_handshake()
+        .await
+        .expect("credentialed client handshake");
+
+    assert_eq!(
+        server.world.credential_named("credentialed-client"),
+        Some(Some("opaque-controller-join-token".to_owned()))
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
