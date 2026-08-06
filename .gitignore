@@ -18,3 +18,7 @@ Cargo.lock.orig
 *.swp
 .idea/
 .vscode/
+
+# Java / Gradle controller integration
+**/.gradle/
+**/build/
