@@ -1,8 +1,8 @@
 # API documentation
 
-The generated API documentation is published alongside this book, under
-[`/api/`](../api/index.html). It is produced by `cargo doc` from the doc
-comments in the workspace, and covers every public item of every crate.
+The generated Rust API documentation is published alongside this book, under
+[`/api/`](../api/index.html). It is produced by `cargo doc` from the doc comments
+in the workspace, and covers every public item of every crate.
 
 Entry points, in the order a reader is likely to need them:
 
@@ -16,8 +16,14 @@ Entry points, in the order a reader is likely to need them:
 A broken intra-doc link fails the build, so every link in the generated
 documentation resolves.
 
+The Java 8 controller SDK has a separate generated
+[`JavaDoc entry point`](../controller/index.html). It documents the declarative
+participant model, ownership lifecycle, read-only spaces and asynchronous
+completion semantics exposed by `be.theking90000.mumble.controller`.
+
 To build the same documentation locally:
 
 ```console
 $ cargo doc --workspace --no-deps --all-features --open
+$ cd integrations/controller && ./gradlew javadoc
 ```

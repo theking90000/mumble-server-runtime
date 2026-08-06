@@ -16,6 +16,9 @@ The Java API uses the package `be.theking90000.mumble.controller` and is publish
 be.theking90000.mumble:controller
 ```
 
+The generated public API reference is published as
+[Mumble Controller JavaDoc](https://theking90000.github.io/mumble-server-runtime/controller/).
+
 The shorter integration name is deliberately separate from the Mumble Server Runtime project
 name. It also leaves sibling namespaces such as `be.theking90000.mumble.bukkit` available to
 Minecraft adapters without nesting them below an implementation-specific runtime package.

@@ -73,8 +73,8 @@ jobs:
           java-version: "17"
           cache: gradle
           cache-dependency-path: integrations/controller/**/*.gradle.kts
-      - name: SDK checks on a Java 8 test runtime
-        run: ./gradlew --no-daemon -Dorg.gradle.java.installations.paths="$JAVA_HOME,$JAVA8_HOME" check
+      - name: SDK build and checks on a Java 8 test runtime
+        run: ./gradlew --no-daemon -Dorg.gradle.java.installations.paths="$JAVA_HOME,$JAVA8_HOME" build
 
   # Le livre est publié depuis main par le workflow Pages. Le construire ici
   # aussi fait échouer la PR plutôt que le déploiement : avec

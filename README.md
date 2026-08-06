@@ -206,6 +206,8 @@ the `legacy-p7-final` tag.
   states what an unmodified client gets, and how that claim is checked.
 - **[API documentation](https://theking90000.github.io/mumble-server-runtime/api/)**:
   generated from the doc comments, every public item of every crate.
+- **[Mumble Controller JavaDoc](https://theking90000.github.io/mumble-server-runtime/controller/)**:
+  the Java 8 SDK data model, lifecycle and complete public API.
 - **[`tools/mumble-server-runtime-arena/`](tools/mumble-server-runtime-arena)**:
   the worked example, about 1200 lines. Every fragment in the book comes from it.
 
