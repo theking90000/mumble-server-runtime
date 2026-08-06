@@ -24,31 +24,63 @@ final class SerializingExecutor implements Executor {
             }
         }
         if (schedule) {
-            delegate.execute(new Runnable() {
-                @Override
-                public void run() {
-                    drain();
+            boolean submitted = false;
+            try {
+                delegate.execute(new Runnable() {
+                    @Override
+                    public void run() {
+                        drain();
+                    }
+                });
+                submitted = true;
+            } catch (RuntimeException failure) {
+                // A delegate that refuses the drain must not leave the queue claimed forever;
+                // the queued tasks stay pending and the next execute() schedules a fresh drain.
+                report(failure);
+            } finally {
+                if (!submitted) {
+                    release();
                 }
-            });
+            }
         }
     }
 
     private void drain() {
-        while (true) {
-            Runnable task;
-            synchronized (tasks) {
-                task = tasks.poll();
-                if (task == null) {
-                    running = false;
-                    return;
+        boolean drained = false;
+        try {
+            while (true) {
+                Runnable task;
+                synchronized (tasks) {
+                    task = tasks.poll();
+                    if (task == null) {
+                        running = false;
+                        drained = true;
+                        return;
+                    }
+                }
+                try {
+                    task.run();
+                } catch (RuntimeException failure) {
+                    report(failure);
                 }
             }
-            try {
-                task.run();
-            } catch (RuntimeException failure) {
-                Thread current = Thread.currentThread();
-                current.getUncaughtExceptionHandler().uncaughtException(current, failure);
+        } finally {
+            // An Error thrown by a listener escapes to the delegate's thread, but it may not
+            // strand the queue in the claimed state.
+            if (!drained) {
+                release();
             }
         }
+    }
+
+    private void release() {
+        synchronized (tasks) {
+            running = false;
+        }
+    }
+
+    private static void report(Throwable failure) {
+        Thread current = Thread.currentThread();
+        current.getUncaughtExceptionHandler().uncaughtException(current, failure);
     }
 }
