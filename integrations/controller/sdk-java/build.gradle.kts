@@ -63,7 +63,9 @@ protobuf {
                     .asFile
                     .absolutePath
                 descriptorSetOptions.includeImports = true
-                descriptorSetOptions.includeSourceInfo = true
+                // Source info carries comments and spans, which would make the pinned digest
+                // change on edits that cannot break a single wire field.
+                descriptorSetOptions.includeSourceInfo = false
             }
         }
     }
