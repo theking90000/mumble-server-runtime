@@ -290,6 +290,136 @@ final class ControllerSessionTest {
     }
 
     @Test
+    void observationDeclaredBeforeStartCompletesOnTheReconciliationBarrier() {
+        Fixture fixture = new Fixture();
+        CompletableFuture<Void> observed = fixture.session.observeSpace(SpaceKey.of("staff"));
+
+        fixture.session.start();
+        ClientFrame open = fixture.transport().lastSent();
+        assertEquals(Arrays.asList("staff"),
+                open.getOpenSession().getDesiredState().getObservedSpaceKeysList());
+
+        fixture.emitReady(open.getRequestId());
+        fixture.reconcile(open.getOpenSession().getDesiredState().getDesiredStateRevision());
+
+        assertEquals(ControllerSessionState.ACTIVE, fixture.session.state());
+        assertTrue(observed.isDone());
+    }
+
+    @Test
+    void observationPendingAcrossAReconnectCompletesOnTheNewBarrier() {
+        Fixture fixture = new Fixture();
+        fixture.startAndActivate(null);
+        fixture.transport().disconnect(true);
+
+        CompletableFuture<Void> observed = fixture.session.observeSpace(SpaceKey.of("staff"));
+        assertFalse(observed.isDone());
+
+        fixture.scheduler.runNext();
+        ClientFrame reopen = fixture.transport().lastSent();
+        assertEquals(Arrays.asList("staff"),
+                reopen.getOpenSession().getDesiredState().getObservedSpaceKeysList());
+        fixture.emitReady(reopen.getRequestId());
+        fixture.reconcile(reopen.getOpenSession().getDesiredState().getDesiredStateRevision());
+
+        assertTrue(observed.isDone());
+    }
+
+    @Test
+    void disconnectFailsFetchesThatTheNewStreamCannotAnswer() {
+        Fixture fixture = new Fixture();
+        fixture.startAndActivate(null);
+
+        CompletableFuture<SpaceSnapshot> fetched = fixture.session.fetchSpace(SpaceKey.of("game"));
+        assertFalse(fetched.isDone());
+
+        fixture.transport().disconnect(true);
+
+        assertTrue(fetched.isCompletedExceptionally());
+        assertThrows(CompletionException.class, fetched::join);
+    }
+
+    @Test
+    void disconnectDropsTheSpaceCacheItCanNoLongerVerify() {
+        Fixture fixture = new Fixture();
+        fixture.startAndActivate(null);
+        fixture.transport().emit(ServerFrame.newBuilder()
+                .setSpaceSnapshot(wireSpace("game", "incarnation-a", 2L, "Player"))
+                .build());
+        assertFalse(fixture.session.spaces().isEmpty());
+
+        fixture.transport().disconnect(true);
+
+        assertTrue(fixture.session.spaces().isEmpty());
+    }
+
+    @Test
+    void anExpiredLeaseRenewalReconnectsInsteadOfFailingTheSession() {
+        Fixture fixture = new Fixture();
+        fixture.startAndActivate(null);
+        fixture.scheduler.runNext();
+
+        ClientFrame renew = fixture.transport().lastSent();
+        assertEquals(ClientFrame.PayloadCase.RENEW_LEASE, renew.getPayloadCase());
+        fixture.transport().emit(ServerFrame.newBuilder()
+                .setRequestId(renew.getRequestId())
+                .setCommandRejected(CommandRejected.newBuilder()
+                        .setCode(CommandErrorCode.SESSION_EXPIRED_ERROR)
+                        .setMessage("lease deadline elapsed")
+                        .build())
+                .build());
+
+        assertEquals(ControllerSessionState.RECONNECTING, fixture.session.state());
+    }
+
+    @Test
+    void staleOwnershipGrantCannotDetachAnotherRegistration() {
+        Fixture fixture = new Fixture();
+        ParticipantHandle participant = fixture.session.registerParticipant(
+                ParticipantId.of("player-1"), spec("lobby", "One"));
+        fixture.startAndActivate(participant);
+
+        fixture.transport().emit(ServerFrame.newBuilder()
+                .setParticipantOwnershipGranted(ParticipantOwnershipGranted.newBuilder()
+                        .setParticipantId("player-1")
+                        .setRegistrationId(ByteString.copyFromUtf8("stale-registration"))
+                        .setOwnershipToken(ByteString.copyFromUtf8("stale-token"))
+                        .build())
+                .build());
+
+        assertEquals(ControllerSessionState.ACTIVE, fixture.session.state());
+        assertEquals(ParticipantHandleState.OWNED, participant.state());
+        assertTrue(fixture.session.participant(participant.participantId()).isPresent());
+    }
+
+    @Test
+    void stopAfterAPermanentFailureStillCompletesNormally() {
+        Fixture fixture = new Fixture();
+        fixture.startAndActivate(null);
+
+        fixture.transport().disconnect(false);
+        assertEquals(ControllerSessionState.FAILED, fixture.session.state());
+
+        fixture.session.stop().join();
+        assertEquals(ControllerSessionState.CLOSED, fixture.session.state());
+    }
+
+    @Test
+    void aSupersededTransportCannotResurrectTheSession() {
+        Fixture fixture = new Fixture();
+        fixture.startAndActivate(null);
+        ScriptedControllerTransport first = fixture.transport();
+
+        first.disconnect(true);
+        assertEquals(ControllerSessionState.RECONNECTING, fixture.session.state());
+
+        first.signalConnected();
+
+        assertEquals(ControllerSessionState.RECONNECTING, fixture.session.state());
+        assertEquals(1, fixture.transports.createdCount());
+    }
+
+    @Test
     void endpointSchemeMustMatchTlsChoice() {
         assertThrows(IllegalArgumentException.class, () -> ControllerSession.builder(
                 ControllerId.of("controller"), URI.create("https://localhost:4000")).build());

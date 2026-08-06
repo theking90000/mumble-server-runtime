@@ -22,6 +22,7 @@ final class GrpcControllerTransport implements ControllerTransport {
     private StreamObserver<ClientFrame> requestObserver;
     private Listener listener;
     private boolean closed;
+    private boolean terminated;
 
     GrpcControllerTransport(URI endpoint, TlsConfig tlsConfig) {
         this.endpoint = Objects.requireNonNull(endpoint, "endpoint");
@@ -49,12 +50,16 @@ final class GrpcControllerTransport implements ControllerTransport {
 
             @Override
             public void onError(Throwable failure) {
-                value.onClosed(failure, isRetryable(failure));
+                if (terminate()) {
+                    value.onClosed(failure, isRetryable(failure));
+                }
             }
 
             @Override
             public void onCompleted() {
-                value.onClosed(new ControllerException("controller stream closed by peer"), true);
+                if (terminate()) {
+                    value.onClosed(new ControllerException("controller stream closed by peer"), true);
+                }
             }
         };
 
@@ -62,8 +67,9 @@ final class GrpcControllerTransport implements ControllerTransport {
                 .newStub(createdChannel)
                 .connect(responses);
         synchronized (lock) {
-            if (closed) {
-                requests.onCompleted();
+            if (terminated) {
+                // The stream failed or was closed while the call was being started. Reporting a
+                // connection now would reopen a session this transport can no longer carry.
                 createdChannel.shutdownNow();
                 return;
             }
@@ -95,12 +101,28 @@ final class GrpcControllerTransport implements ControllerTransport {
                 return;
             }
             closed = true;
+            terminated = true;
             if (requestObserver != null) {
                 requestObserver.onCompleted();
             }
             if (channel != null) {
                 channel.shutdownNow();
             }
+        }
+    }
+
+    /**
+     * Claims the single termination this transport is allowed to report to its listener.
+     *
+     * @return {@code true} for the first caller only
+     */
+    private boolean terminate() {
+        synchronized (lock) {
+            if (terminated) {
+                return false;
+            }
+            terminated = true;
+            return true;
         }
     }
 

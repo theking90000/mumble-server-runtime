@@ -25,6 +25,7 @@ stateDiagram-v2
     ACTIVE --> RECONCILING: ResyncRequired / send SyncDesiredState
     ACTIVE --> RECONNECTING: streamClosed(retryable) / suspend handles, schedule backoff
     RECONCILING --> RECONNECTING: streamClosed(retryable) / suspend handles, schedule backoff
+    ACTIVE --> RECONNECTING: RenewLease rejected SESSION_EXPIRED_ERROR / drop stream, schedule backoff
     RECONNECTING --> RECONCILING: backoffElapsed / open transport, send OpenSession(snapshot + tokens)
     CONNECTING --> FAILED: streamClosed(permanent) / fail pending operations
     RECONCILING --> FAILED: invalidServerFrame or streamClosed(permanent) / fail pending operations
@@ -43,7 +44,18 @@ Safety invariants:
   current `desiredRevision`;
 - transport keepalive never renews the business lease;
 - a reconnect always sends a full snapshot before incremental commands resume;
-- receipt of a client frame never advances applied or published watermarks.
+- receipt of a client frame never advances applied or published watermarks;
+- a desired-state snapshot carries the complete explicit observation set, so a
+  reconciliation barrier acknowledges every observation change up to its
+  revision. `ObservedSpacesAccepted` acknowledges the same changes when the
+  observation set is replaced incrementally;
+- request correlation is stream-scoped. A closed stream fails every outstanding
+  one-shot fetch and drops the space cache, which the next stream rebuilds from
+  full snapshots. Declarative desired state survives instead, and is presented
+  again in the reopening snapshot;
+- a rejected lease renewal or desired-state synchronization is a session-scoped
+  loss, not a controller failure: `SESSION_EXPIRED_ERROR` reconnects and resumes
+  from the retained resume token.
 
 ## ParticipantHandle
 
@@ -77,7 +89,8 @@ Safety invariants:
 - `setSpec` replaces the complete spec and keeps only the newest wire state while
   all futures up to its revision complete from the covering acknowledgement;
 - `REVOKED` is terminal. Re-acquisition creates a new handle and registration id;
-- a revocation naming another registration id cannot change this handle.
+- a revocation naming another registration id cannot change this handle, and
+  neither can a grant naming another registration id.
 
 ## ControllerLeaseAndOwnership
 
@@ -127,7 +140,11 @@ one-shot read and never changes either side of this union.
 
 The Java reducer tests cover connection barriers, reconnect snapshots, offline
 coalescing, revocation, full observation replacement, one-shot fetches, space
-incarnations, stale registration messages, and idempotent shutdown. The future
+incarnations, stale registration messages, and idempotent shutdown. They also
+cover what a stream closure does to client-side pending state: observations
+declared before `start` or during an outage, fetches that the new stream cannot
+answer, the dropped space cache, a superseded transport reporting a late
+connection, an expired lease renewal, and shutdown after a permanent failure. The future
 Rust adapter must additionally verify both reordered handoff traces:
 
 1. `Release(old)` then `Register(new)` enters `DETACHED_PENDING` briefly and ends

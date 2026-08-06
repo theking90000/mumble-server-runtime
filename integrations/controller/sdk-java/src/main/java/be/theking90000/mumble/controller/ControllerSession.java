@@ -4,6 +4,7 @@ import com.google.protobuf.ByteString;
 import com.google.protobuf.Duration;
 import be.theking90000.mumble.controller.internal.protocol.v1.ClientFrame;
 import be.theking90000.mumble.controller.internal.protocol.v1.CloseSession;
+import be.theking90000.mumble.controller.internal.protocol.v1.CommandErrorCode;
 import be.theking90000.mumble.controller.internal.protocol.v1.CommandRejected;
 import be.theking90000.mumble.controller.internal.protocol.v1.DesiredStateReconciled;
 import be.theking90000.mumble.controller.internal.protocol.v1.DesiredStateSnapshot;
@@ -79,8 +80,8 @@ public final class ControllerSession {
             new CopyOnWriteArrayList<ControllerSessionListener>();
     private final CopyOnWriteArrayList<SpaceListener> spaceListeners =
             new CopyOnWriteArrayList<SpaceListener>();
-    private final NavigableMap<Long, List<CompletableFuture<Void>>> pendingObservedSpaces =
-            new TreeMap<Long, List<CompletableFuture<Void>>>();
+    private final NavigableMap<Long, PendingObservation> pendingObservedSpaces =
+            new TreeMap<Long, PendingObservation>();
     private final Map<ByteString, CompletableFuture<SpaceSnapshot>> pendingFetches =
             new HashMap<ByteString, CompletableFuture<SpaceSnapshot>>();
     private final Map<ByteString, RejectionHandler> rejectionHandlers =
@@ -92,6 +93,8 @@ public final class ControllerSession {
     private ControllerTransport transport;
     private ByteString resumeToken = ByteString.EMPTY;
     private ByteString sessionToken = ByteString.EMPTY;
+    private ByteString leaseRequestId = ByteString.EMPTY;
+    private ByteString syncRequestId = ByteString.EMPTY;
     private long desiredStateRevision;
     private long observedSpacesRevision;
     private long reconciledStateRevision;
@@ -310,6 +313,10 @@ public final class ControllerSession {
     /**
      * Returns an immutable point-in-time copy of the latest space cache.
      *
+     * <p>The cache is dropped on every stream closure, because a space may be closed or replaced
+     * while the session is disconnected. It is rebuilt from the full snapshots received on the next
+     * stream for the effective observation set.</p>
+     *
      * @return immutable map of the latest full snapshot for each cached semantic key
      */
     public Map<SpaceKey, SpaceSnapshot> spaces() {
@@ -323,6 +330,9 @@ public final class ControllerSession {
      *
      * <p>This one-shot result is returned by the future and does not subscribe to later updates or
      * insert the result into {@link #spaces()}.</p>
+     *
+     * <p>A fetch is correlated to one request on one stream and is never retried automatically. The
+     * future completes exceptionally when that stream closes before its result.</p>
      *
      * @param spaceKey semantic key to fetch
      * @return future completed with the fetched full snapshot
@@ -482,22 +492,21 @@ public final class ControllerSession {
                     ? explicitlyObservedSpaces.add(spaceKey)
                     : explicitlyObservedSpaces.remove(spaceKey);
             if (!changed) {
-                List<CompletableFuture<Void>> pending =
-                        pendingObservedSpaces.get(observedSpacesRevision);
-                if (pending != null && !pending.isEmpty()) {
-                    return pending.get(pending.size() - 1);
+                PendingObservation pending = pendingObservedSpaces.get(observedSpacesRevision);
+                if (pending != null && !pending.futures.isEmpty()) {
+                    return pending.futures.get(pending.futures.size() - 1);
                 }
                 return CompletableFuture.completedFuture(null);
             }
             observedSpacesRevision++;
             desiredStateRevision++;
             CompletableFuture<Void> future = new CompletableFuture<Void>();
-            List<CompletableFuture<Void>> revisions = pendingObservedSpaces.get(observedSpacesRevision);
-            if (revisions == null) {
-                revisions = new ArrayList<CompletableFuture<Void>>();
-                pendingObservedSpaces.put(observedSpacesRevision, revisions);
+            PendingObservation pending = pendingObservedSpaces.get(observedSpacesRevision);
+            if (pending == null) {
+                pending = new PendingObservation(desiredStateRevision);
+                pendingObservedSpaces.put(observedSpacesRevision, pending);
             }
-            revisions.add(future);
+            pending.futures.add(future);
             if (state == ControllerSessionState.ACTIVE) {
                 sendObservedSpaces(future);
             }
@@ -512,21 +521,22 @@ public final class ControllerSession {
             return;
         }
         try {
-            transport = transportFactory.create();
-            transport.connect(new ControllerTransport.Listener() {
+            final ControllerTransport created = transportFactory.create();
+            transport = created;
+            created.connect(new ControllerTransport.Listener() {
                 @Override
                 public void onConnected() {
-                    ControllerSession.this.onTransportConnected();
+                    ControllerSession.this.onTransportConnected(created);
                 }
 
                 @Override
                 public void onFrame(ServerFrame frame) {
-                    ControllerSession.this.onServerFrame(frame);
+                    ControllerSession.this.onServerFrame(created, frame);
                 }
 
                 @Override
                 public void onClosed(Throwable failure, boolean retryable) {
-                    ControllerSession.this.onTransportClosed(failure, retryable);
+                    ControllerSession.this.onTransportClosed(created, failure, retryable);
                 }
             });
         } catch (RuntimeException failure) {
@@ -534,12 +544,15 @@ public final class ControllerSession {
         }
     }
 
-    private void onTransportConnected() {
+    private void onTransportConnected(ControllerTransport source) {
         synchronized (monitor) {
+            if (source != transport) {
+                // A stream this session already abandoned may not reopen it under a revoked token.
+                source.close();
+                return;
+            }
             if (state == ControllerSessionState.STOPPING || state == ControllerSessionState.CLOSED) {
-                if (transport != null) {
-                    transport.close();
-                }
+                transport.close();
                 return;
             }
             sessionReady = false;
@@ -566,10 +579,12 @@ public final class ControllerSession {
         }
     }
 
-    private void onServerFrame(ServerFrame frame) {
+    private void onServerFrame(ControllerTransport source, ServerFrame frame) {
         Objects.requireNonNull(frame, "frame");
         synchronized (monitor) {
-            if (state == ControllerSessionState.CLOSED || state == ControllerSessionState.FAILED) {
+            if (source != transport
+                    || state == ControllerSessionState.CLOSED
+                    || state == ControllerSessionState.FAILED) {
                 return;
             }
             switch (frame.getPayloadCase()) {
@@ -628,8 +643,11 @@ public final class ControllerSession {
         }
     }
 
-    private void onTransportClosed(Throwable failure, boolean retryable) {
+    private void onTransportClosed(ControllerTransport source, Throwable failure, boolean retryable) {
         synchronized (monitor) {
+            if (source != transport) {
+                return;
+            }
             handleTransportFailure(failure, retryable);
         }
     }
@@ -651,6 +669,17 @@ public final class ControllerSession {
             transport.close();
             transport = null;
         }
+        // Request ids are stream-scoped: nothing correlated on the dead stream can ever land, and
+        // the observation set, the participant registrations, and the observed space cache are all
+        // rebuilt from the snapshot the next stream opens with.
+        ControllerException disconnected = new ControllerException(
+                "controller stream closed before the response arrived", failure);
+        for (CompletableFuture<SpaceSnapshot> pending : pendingFetches.values()) {
+            pending.completeExceptionally(disconnected);
+        }
+        pendingFetches.clear();
+        clearRejectionHandlers();
+        spaces.clear();
         for (ParticipantHandle handle : participants.values()) {
             handle.suspend();
         }
@@ -689,6 +718,7 @@ public final class ControllerSession {
             return;
         }
         removeClosedWithoutOwnership();
+        completeObservationsReconciledThrough(reconciledStateRevision);
         if (Long.compareUnsigned(reconciledStateRevision, desiredStateRevision) < 0) {
             beginResynchronization();
             return;
@@ -721,8 +751,8 @@ public final class ControllerSession {
         ParticipantId participantId = ParticipantId.of(granted.getParticipantId());
         ParticipantHandle handle = participants.get(participantId);
         if (handle == null || !handle.registrationId().equals(granted.getRegistrationId())) {
-            failPermanently(new ControllerException(
-                    "ownership granted for an unknown participant registration: " + participantId));
+            // A grant naming another registration belongs to a superseded acquisition and, exactly
+            // like a stale revocation, cannot touch the registration this session currently holds.
             return;
         }
         if (granted.getOwnershipToken().isEmpty()) {
@@ -880,13 +910,47 @@ public final class ControllerSession {
         handler.reject(failure);
     }
 
+    /**
+     * Registers the rejection handler for a lease renewal or desired-state synchronization.
+     *
+     * <p>Neither command has an acknowledging server frame that would retire its handler, and only
+     * one of each is ever outstanding, so each new request retires its own predecessor.</p>
+     */
+    private ByteString trackSessionScopedRequest(ByteString previousRequestId, final String context) {
+        if (!previousRequestId.isEmpty()) {
+            rejectionHandlers.remove(previousRequestId);
+        }
+        ByteString requestId = nextRequestId();
+        rejectionHandlers.put(requestId, new RejectionHandler() {
+            @Override
+            public void reject(CommandRejectedException failure) {
+                if (CommandErrorCode.SESSION_EXPIRED_ERROR.name().equals(failure.code())) {
+                    // The session, not the controller, is gone: resume from the retained token
+                    // instead of destroying every ownership this instance still holds.
+                    handleTransportFailure(failure, true);
+                    return;
+                }
+                failPermanently(new ControllerException(context, failure));
+            }
+        });
+        return requestId;
+    }
+
+    private void clearRejectionHandlers() {
+        rejectionHandlers.clear();
+        leaseRequestId = ByteString.EMPTY;
+        syncRequestId = ByteString.EMPTY;
+    }
+
     private void beginResynchronization() {
         if (state == ControllerSessionState.STOPPING) {
             return;
         }
         reconciliationReceived = false;
         changeState(ControllerSessionState.RECONCILING);
-        ByteString requestId = nextRequestId();
+        ByteString requestId = trackSessionScopedRequest(
+                syncRequestId, "desired-state synchronization was rejected");
+        syncRequestId = requestId;
         SyncDesiredState sync = SyncDesiredState.newBuilder()
                 .setSessionToken(sessionToken)
                 .setDesiredState(buildDesiredStateSnapshot())
@@ -988,12 +1052,13 @@ public final class ControllerSession {
     }
 
     private void sendFrame(ClientFrame frame) {
-        if (transport == null) {
+        final ControllerTransport current = transport;
+        if (current == null) {
             return;
         }
-        transport.send(frame).whenComplete((ignored, failure) -> {
+        current.send(frame).whenComplete((ignored, failure) -> {
             if (failure != null) {
-                onTransportClosed(failure, true);
+                onTransportClosed(current, failure, true);
             }
         });
     }
@@ -1076,8 +1141,11 @@ public final class ControllerSession {
                             .setSessionToken(sessionToken)
                             .setDesiredStateRevision(desiredStateRevision)
                             .build();
+                    ByteString requestId = trackSessionScopedRequest(
+                            leaseRequestId, "lease renewal was rejected");
+                    leaseRequestId = requestId;
                     sendFrame(ClientFrame.newBuilder()
-                            .setRequestId(nextRequestId())
+                            .setRequestId(requestId)
                             .setRenewLease(renew)
                             .build());
                     scheduleLeaseRenewal(leaseMillis);
@@ -1107,14 +1175,31 @@ public final class ControllerSession {
     }
 
     private void completeObservedSpacesThrough(long acceptedRevision) {
-        Iterator<Map.Entry<Long, List<CompletableFuture<Void>>>> iterator =
+        Iterator<Map.Entry<Long, PendingObservation>> iterator =
                 pendingObservedSpaces.entrySet().iterator();
         while (iterator.hasNext()) {
-            Map.Entry<Long, List<CompletableFuture<Void>>> entry = iterator.next();
+            Map.Entry<Long, PendingObservation> entry = iterator.next();
             if (Long.compareUnsigned(entry.getKey(), acceptedRevision) <= 0) {
-                for (CompletableFuture<Void> future : entry.getValue()) {
-                    future.complete(null);
-                }
+                entry.getValue().complete();
+                iterator.remove();
+            }
+        }
+    }
+
+    /**
+     * Completes observation futures already covered by a desired-state reconciliation barrier.
+     *
+     * <p>A desired-state snapshot carries the complete explicit observation set but no observation
+     * revision of its own, so a reconciliation barrier is the only acknowledgement available for an
+     * observation declared before {@link #start()} or while the stream was down.</p>
+     */
+    private void completeObservationsReconciledThrough(long reconciledRevision) {
+        Iterator<Map.Entry<Long, PendingObservation>> iterator =
+                pendingObservedSpaces.entrySet().iterator();
+        while (iterator.hasNext()) {
+            PendingObservation pending = iterator.next().getValue();
+            if (Long.compareUnsigned(pending.desiredStateRevision, reconciledRevision) <= 0) {
+                pending.complete();
                 iterator.remove();
             }
         }
@@ -1135,6 +1220,11 @@ public final class ControllerSession {
         if (state == ControllerSessionState.FAILED || state == ControllerSessionState.CLOSED) {
             return;
         }
+        if (state == ControllerSessionState.STOPPING) {
+            // A shutdown already in flight ends as a completed shutdown, never as a failure.
+            closeLocally();
+            return;
+        }
         cancelScheduledTasks();
         if (transport != null) {
             transport.close();
@@ -1142,18 +1232,16 @@ public final class ControllerSession {
         }
         changeState(ControllerSessionState.FAILED);
         startFuture.completeExceptionally(failure);
-        stopFuture.completeExceptionally(failure);
         for (CompletableFuture<SpaceSnapshot> future : pendingFetches.values()) {
             future.completeExceptionally(failure);
         }
         pendingFetches.clear();
-        for (List<CompletableFuture<Void>> futures : pendingObservedSpaces.values()) {
-            for (CompletableFuture<Void> future : futures) {
-                future.completeExceptionally(failure);
-            }
+        for (PendingObservation pending : pendingObservedSpaces.values()) {
+            pending.completeExceptionally(failure);
         }
         pendingObservedSpaces.clear();
-        rejectionHandlers.clear();
+        spaces.clear();
+        clearRejectionHandlers();
         for (ParticipantHandle handle : participants.values()) {
             handle.beginUnregister();
             handle.releaseAcknowledged();
@@ -1173,12 +1261,11 @@ public final class ControllerSession {
             future.completeExceptionally(failure);
         }
         pendingFetches.clear();
-        for (List<CompletableFuture<Void>> futures : pendingObservedSpaces.values()) {
-            for (CompletableFuture<Void> future : futures) {
-                future.completeExceptionally(failure);
-            }
+        for (PendingObservation pending : pendingObservedSpaces.values()) {
+            pending.completeExceptionally(failure);
         }
         pendingObservedSpaces.clear();
+        spaces.clear();
         for (ParticipantHandle handle : participants.values()) {
             handle.beginUnregister();
             handle.releaseAcknowledged();
@@ -1187,7 +1274,7 @@ public final class ControllerSession {
         changeState(ControllerSessionState.CLOSED);
         startFuture.completeExceptionally(failure);
         stopFuture.complete(null);
-        rejectionHandlers.clear();
+        clearRejectionHandlers();
         scheduler.close();
     }
 
@@ -1263,6 +1350,28 @@ public final class ControllerSession {
 
     private interface RejectionHandler {
         void reject(CommandRejectedException failure);
+    }
+
+    /** Futures awaiting one explicit observation revision, and the snapshot revision that carries it. */
+    private static final class PendingObservation {
+        private final long desiredStateRevision;
+        private final List<CompletableFuture<Void>> futures = new ArrayList<CompletableFuture<Void>>();
+
+        private PendingObservation(long desiredStateRevision) {
+            this.desiredStateRevision = desiredStateRevision;
+        }
+
+        private void complete() {
+            for (CompletableFuture<Void> future : futures) {
+                future.complete(null);
+            }
+        }
+
+        private void completeExceptionally(Throwable failure) {
+            for (CompletableFuture<Void> future : futures) {
+                future.completeExceptionally(failure);
+            }
+        }
     }
 
     /** Builder for a single automatically reconnecting controller session. */

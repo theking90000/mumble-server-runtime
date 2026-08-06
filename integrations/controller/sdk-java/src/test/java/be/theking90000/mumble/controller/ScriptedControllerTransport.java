@@ -53,6 +53,10 @@ final class ScriptedControllerTransport implements ControllerTransport {
         listener.onClosed(new ControllerException("scripted disconnect"), retryable);
     }
 
+    void signalConnected() {
+        listener.onConnected();
+    }
+
     static final class Factory implements ControllerTransport.Factory {
         private final List<ScriptedControllerTransport> transports =
                 new ArrayList<ScriptedControllerTransport>();
