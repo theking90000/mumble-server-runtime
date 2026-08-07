@@ -76,6 +76,28 @@ jobs:
       - name: SDK build and checks on a Java 8 test runtime
         run: ./gradlew --no-daemon -Dorg.gradle.java.installations.paths="$JAVA_HOME,$JAVA8_HOME" build
 
+  controller-interop:
+    name: Controller Java-Rust-Mumble interop
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.93.0
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "8"
+      - name: Remember Java 8 toolchain
+        run: echo "JAVA8_HOME=$JAVA_HOME" >> "$GITHUB_ENV"
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+          cache-dependency-path: integrations/controller/**/*.gradle.kts
+      - name: Real ControllerSession to Mumble path
+        run: ci/controller-interop.sh
+
   # Le livre est publié depuis main par le workflow Pages. Le construire ici
   # aussi fait échouer la PR plutôt que le déploiement : avec
   # `create-missing = false`, une entrée de SUMMARY.md sans fichier est une

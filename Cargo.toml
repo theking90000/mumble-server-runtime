@@ -18,6 +18,8 @@ members = [
     "tools/bench-shard",
     # Verificateur indépendant : client Mumble simule et modele strict.
     "mumble-server-runtime-testkit",
+    # Application Controller : gRPC declaratif compose au-dessus du runtime.
+    "integrations/controller/server-rust",
 ]
 
 [workspace.package]

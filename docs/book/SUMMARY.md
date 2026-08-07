@@ -29,6 +29,7 @@
   - [Establishing compatibility](mumble/oracles.md)
 - [Controller integration](controller/index.md)
   - [Java SDK and protocol](controller/java.md)
+  - [Rust server](controller/server.md)
 - [API documentation](reference/api.md)
 
 <!--

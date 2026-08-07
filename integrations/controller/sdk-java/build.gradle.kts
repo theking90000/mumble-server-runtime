@@ -92,6 +92,24 @@ tasks.test {
     })
 }
 
+tasks.register<JavaExec>("controllerInterop") {
+    dependsOn(tasks.testClasses)
+    classpath = sourceSets.test.get().runtimeClasspath
+    mainClass.set("be.theking90000.mumble.controller.ControllerInteropMain")
+    javaLauncher.set(javaToolchains.launcherFor {
+        languageVersion.set(JavaLanguageVersion.of(8))
+    })
+    // Resolved at execution time. Reading the properties while configuring would
+    // break every invocation that merely realizes this task, such as `gradlew tasks`
+    // or an IDE sync, with a missing-value failure rather than a missing argument.
+    val interopEndpoint = providers.gradleProperty("interopEndpoint")
+    val interopTokenFile = providers.gradleProperty("interopTokenFile")
+    argumentProviders.add(CommandLineArgumentProvider {
+        listOf(interopEndpoint.get(), interopTokenFile.get())
+    })
+    standardInput = System.`in`
+}
+
 val verifyControllerDescriptor = tasks.register("verifyControllerDescriptor") {
     dependsOn(tasks.named("generateProto"))
     val descriptor = layout.buildDirectory.file("descriptors/controller-v1.pb")

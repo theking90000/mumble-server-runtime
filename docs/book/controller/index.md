@@ -69,8 +69,10 @@ applied   -> a valid runtime render consumed that revision
 published -> the Mumble generation produced by that render
 ```
 
-The current repository contains the contract and Java SDK. The composed Rust
-server is introduced as a separate vertical slice, so this chapter does not
-claim that the bridge is already running.
+The composed Rust server materializes this model over the current gateway and
+shard runtime. It is an application crate rather than a new core layer: the
+runtime still owns Mumble connections and publication, while the Controller
+actor owns the remote desired state and its lease.
 
 See [Java SDK and protocol](java.md) for the client lifecycle.
+See [Rust server](server.md) for process configuration and runtime behavior.

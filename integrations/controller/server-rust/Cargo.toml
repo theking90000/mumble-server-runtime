@@ -1,0 +1,48 @@
+[package]
+name = "mumble-controller-server"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Controller gRPC application composed over Mumble Server Runtime"
+publish = false
+
+[lib]
+name = "mumble_controller_server"
+path = "src/mumble_controller_server.rs"
+
+[[bin]]
+name = "mumble-controller-server"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+base64 = "0.22"
+clap = { version = "4", features = ["derive"] }
+getrandom = "0.4"
+mumble-server-runtime-gateway = { path = "../../../mumble-server-runtime-gateway" }
+mumble-server-runtime-shard = { path = "../../../mumble-server-runtime-shard" }
+prost = "=0.14.4"
+prost-types = "=0.14.4"
+rustls-pemfile = "2"
+thiserror = "2"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal", "sync", "time"] }
+tokio-stream = { version = "0.1", features = ["net"] }
+tonic = { version = "=0.14.6", features = ["transport"] }
+tonic-prost = "=0.14.6"
+
+[build-dependencies]
+prost-build = "=0.14.4"
+protoc-bin-vendored = "=3.2.0"
+tonic-prost-build = "=0.14.6"
+
+[dev-dependencies]
+mumble-server-runtime-protocol = { path = "../../../mumble-server-runtime-protocol" }
+mumble-server-runtime-testkit = { path = "../../../mumble-server-runtime-testkit" }
+tempfile = "3"
+tokio = { version = "1", features = ["process", "test-util"] }
+
+[lints]
+workspace = true
