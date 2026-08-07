@@ -99,10 +99,14 @@ tasks.register<JavaExec>("controllerInterop") {
     javaLauncher.set(javaToolchains.launcherFor {
         languageVersion.set(JavaLanguageVersion.of(8))
     })
-    args(
-        providers.gradleProperty("interopEndpoint").get(),
-        providers.gradleProperty("interopTokenFile").get()
-    )
+    // Resolved at execution time. Reading the properties while configuring would
+    // break every invocation that merely realizes this task, such as `gradlew tasks`
+    // or an IDE sync, with a missing-value failure rather than a missing argument.
+    val interopEndpoint = providers.gradleProperty("interopEndpoint")
+    val interopTokenFile = providers.gradleProperty("interopTokenFile")
+    argumentProviders.add(CommandLineArgumentProvider {
+        listOf(interopEndpoint.get(), interopTokenFile.get())
+    })
     standardInput = System.`in`
 }
 

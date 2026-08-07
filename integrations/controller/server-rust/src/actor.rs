@@ -90,7 +90,6 @@ pub(crate) fn spawn(
         sender: sender.clone(),
         control_epoch,
         sessions: HashMap::new(),
-        session_tokens: HashMap::new(),
         resume_tokens: HashMap::new(),
         streams: HashMap::new(),
         participants: BTreeMap::new(),
@@ -118,6 +117,7 @@ struct ControllerSession {
     explicit_observations: BTreeSet<String>,
     completed_requests: HashMap<Vec<u8>, ServerFrame>,
     completed_order: VecDeque<Vec<u8>>,
+    needs_resync: bool,
 }
 
 #[derive(Clone)]
@@ -155,7 +155,6 @@ struct ControllerActor {
     sender: mpsc::Sender<ActorCommand>,
     control_epoch: Vec<u8>,
     sessions: HashMap<SessionId, ControllerSession>,
-    session_tokens: HashMap<Vec<u8>, SessionId>,
     resume_tokens: HashMap<Vec<u8>, SessionId>,
     streams: HashMap<u64, SessionId>,
     participants: BTreeMap<String, Participant>,
@@ -315,8 +314,6 @@ impl ControllerActor {
         self.next_session_id = self.next_session_id.saturating_add(1);
         let session_token = random_bytes(32)?;
         let resume_token = random_bytes(32)?;
-        self.session_tokens
-            .insert(session_token.clone(), session_id);
         self.resume_tokens.insert(resume_token.clone(), session_id);
         self.sessions.insert(
             session_id,
@@ -333,6 +330,7 @@ impl ControllerActor {
                 explicit_observations: BTreeSet::new(),
                 completed_requests: HashMap::new(),
                 completed_order: VecDeque::new(),
+                needs_resync: false,
             },
         );
         Ok(session_id)
@@ -357,12 +355,9 @@ impl ControllerActor {
     fn session_ready(&mut self, session_id: SessionId) -> Result<SessionReady, ActorStartError> {
         let new_session_token = random_bytes(32)?;
         let Some(session) = self.sessions.get_mut(&session_id) else {
-            return Err(ActorStartError::Randomness);
+            return Err(ActorStartError::MissingSession(session_id));
         };
-        self.session_tokens.remove(&session.session_token);
         session.session_token = new_session_token.clone();
-        self.session_tokens
-            .insert(new_session_token.clone(), session_id);
         Ok(SessionReady {
             session_token: new_session_token,
             resume_token: session.resume_token.clone(),
@@ -427,18 +422,24 @@ impl ControllerActor {
                 if let Some(session) = self.sessions.get_mut(&session_id) {
                     session.expires_at = Instant::now() + self.config.lease_duration;
                 }
-                if self.sessions.get(&session_id).is_some_and(|session| {
-                    session.desired_revision != command.desired_state_revision
-                }) {
+                // `needs_resync` means the server already dropped at least one frame
+                // this session never saw, so its replica cannot be trusted even when
+                // the watermarks still agree.
+                let stale = self.sessions.get_mut(&session_id).is_some_and(|session| {
+                    let stale = session.needs_resync
+                        || session.desired_revision != command.desired_state_revision;
+                    session.needs_resync = false;
+                    stale
+                });
+                if stale {
                     self.send_session(
                         session_id,
                         ServerFrame {
                             request_id,
                             payload: Some(crate::protocol::server_frame::Payload::ResyncRequired(
                                 ResyncRequired {
-                                    reason:
-                                        "desired-state watermark differs from the server replica"
-                                            .to_owned(),
+                                    reason: "the server replica no longer matches this session"
+                                        .to_owned(),
                                 },
                             )),
                         },
@@ -781,7 +782,7 @@ impl ControllerActor {
             );
             return;
         }
-        self.acquire(session_id, registration, request_id, true);
+        self.acquire(session_id, registration, request_id);
     }
 
     fn register_explicit(
@@ -797,7 +798,7 @@ impl ControllerActor {
             self.resume_registration(current, registration, request_id);
             return;
         }
-        self.acquire(session_id, registration, request_id, true);
+        self.acquire(session_id, registration, request_id);
     }
 
     fn resume_registration(
@@ -825,7 +826,6 @@ impl ControllerActor {
         session_id: SessionId,
         registration: ParticipantRegistration,
         request_id: Vec<u8>,
-        replace: bool,
     ) {
         let existing = self.participants.get(&registration.participant_id).cloned();
         if existing.is_none() && self.participants.len() >= self.config.max_participants {
@@ -856,6 +856,12 @@ impl ControllerActor {
             return;
         }
         let Some(spec) = registration.spec else {
+            self.reject_session(
+                session_id,
+                request_id,
+                CommandErrorCode::InvalidArgument,
+                "participant spec is missing",
+            );
             return;
         };
         if let Err(error) = self.ensure_space(&spec.space_key) {
@@ -897,9 +903,6 @@ impl ControllerActor {
         let mut applied_space_key = None;
         let mut published_generation = 0;
         if let Some(previous) = existing {
-            if !replace {
-                return;
-            }
             connection = previous.connection;
             self_mute = previous.self_mute;
             self_deaf = previous.self_deaf;
@@ -1311,6 +1314,13 @@ impl ControllerActor {
         let participant_ids: Vec<String> = revisions.keys().cloned().collect();
         for (participant_id, applied_revision) in revisions {
             if let Some(participant) = self.participants.get_mut(&participant_id) {
+                // Each Space reports through its own bridge task, so a report rendered
+                // before a move can reach the actor after the destination Space has
+                // already reported. Applying it would publish a Space the participant
+                // has left, and nothing would correct it until the next render there.
+                if participant.spec.space_key != space_key {
+                    continue;
+                }
                 match &refused {
                     Some(error) => participant.application_error = error.clone(),
                     None => {
@@ -1486,7 +1496,6 @@ impl ControllerActor {
             );
         }
         if let Some(session) = self.sessions.remove(&session_id) {
-            self.session_tokens.remove(&session.session_token);
             self.resume_tokens.remove(&session.resume_token);
             if let Some(stream_id) = session.stream_id {
                 self.streams.remove(&stream_id);
@@ -1706,13 +1715,24 @@ impl ControllerActor {
         let Some(sender) = sender else {
             return;
         };
-        if sender.try_send(Ok(frame)).is_err()
-            && let Some(session) = self.sessions.get_mut(&session_id)
-        {
-            if let Some(stream_id) = session.stream_id.take() {
-                self.streams.remove(&stream_id);
+        match sender.try_send(Ok(frame)) {
+            Ok(()) => {}
+            // A momentarily full queue is not a dead stream. Detaching it here would
+            // silently drop every later command, including RenewLease, and the lease
+            // would expire on a controller that never learned anything went wrong.
+            Err(mpsc::error::TrySendError::Full(_dropped)) => {
+                if let Some(session) = self.sessions.get_mut(&session_id) {
+                    session.needs_resync = true;
+                }
             }
-            session.responses = None;
+            Err(mpsc::error::TrySendError::Closed(_dropped)) => {
+                if let Some(session) = self.sessions.get_mut(&session_id) {
+                    if let Some(stream_id) = session.stream_id.take() {
+                        self.streams.remove(&stream_id);
+                    }
+                    session.responses = None;
+                }
+            }
         }
     }
 
@@ -1738,6 +1758,11 @@ impl ControllerActor {
         }
     }
 
+    /// Reject a stream that never became a session, then end it.
+    ///
+    /// Nothing maps `stream_id` to a session yet, so any later frame on this
+    /// stream would be dropped without an answer. Terminating the response
+    /// stream is the only outcome the controller can observe.
     fn reject_stream(
         &self,
         responses: &ResponseSender,
@@ -1746,6 +1771,9 @@ impl ControllerActor {
         message: &str,
     ) {
         let _ignored = responses.try_send(Ok(rejection(request_id, code, message)));
+        let _closed = responses.try_send(Err(Status::failed_precondition(
+            "OpenSession was rejected; this Controller stream carries no session",
+        )));
     }
 }
 
@@ -1797,6 +1825,8 @@ fn random_join_token() -> Result<String, ActorStartError> {
 pub enum ActorStartError {
     #[error("the operating system random source is unavailable")]
     Randomness,
+    #[error("Controller session {0} disappeared before SessionReady was built")]
+    MissingSession(u64),
 }
 
 #[cfg(test)]
@@ -1842,16 +1872,29 @@ mod tests {
             resume_token: Vec<u8>,
             desired: DesiredStateSnapshot,
         ) -> SessionHarness {
+            self.open_with(controller, instance, resume_token, desired, vec![1], 128)
+                .await
+        }
+
+        async fn open_with(
+            &mut self,
+            controller: &str,
+            instance: Vec<u8>,
+            resume_token: Vec<u8>,
+            desired: DesiredStateSnapshot,
+            request_id: Vec<u8>,
+            capacity: usize,
+        ) -> SessionHarness {
             let stream_id = self.next_stream;
             self.next_stream += 1;
-            let (responses, receiver) = mpsc::channel(128);
+            let (responses, receiver) = mpsc::channel(capacity);
             self.actor
                 .sender()
                 .send(ActorCommand::Open {
                     stream_id,
                     responses,
                     frame: ClientFrame {
-                        request_id: vec![1],
+                        request_id,
                         payload: Some(ClientPayload::OpenSession(OpenSession {
                             controller_id: controller.to_owned(),
                             controller_instance_id: instance,
@@ -2357,6 +2400,239 @@ mod tests {
             .until(|payload| matches!(payload, ServerPayload::ParticipantOwnershipRevoked(_)))
             .await;
         assert_eq!(first, replay);
+    }
+
+    /// An actor driven directly, with no spawned loop and no clock.
+    ///
+    /// These reducer steps are ordering bugs. Reproducing them through the
+    /// spawned actor would race the real shard report bridges, so the state
+    /// machine is exercised in place instead.
+    fn reducer(runtime: &Runtime) -> (ControllerActor, mpsc::Receiver<ActorCommand>) {
+        let (sender, receiver) = mpsc::channel(64);
+        let actor = ControllerActor {
+            config: ControllerConfig::default(),
+            runtime: runtime.handle(),
+            sender,
+            control_epoch: vec![0; 16],
+            sessions: HashMap::new(),
+            resume_tokens: HashMap::new(),
+            streams: HashMap::new(),
+            participants: BTreeMap::new(),
+            join_tokens: HashMap::new(),
+            spaces: BTreeMap::new(),
+            next_session_id: 1,
+            next_application_revision: 1,
+        };
+        (actor, receiver)
+    }
+
+    fn attached_session(
+        actor: &mut ControllerActor,
+        capacity: usize,
+    ) -> mpsc::Receiver<Result<ServerFrame, Status>> {
+        let (responses, receiver) = mpsc::channel(capacity);
+        actor.sessions.insert(
+            1,
+            ControllerSession {
+                controller_id: "controller".to_owned(),
+                instance_id: vec![9],
+                session_token: vec![7; 32],
+                resume_token: vec![8; 32],
+                expires_at: Instant::now() + Duration::from_secs(30),
+                stream_id: Some(5),
+                responses: Some(responses),
+                desired_revision: 3,
+                observed_revision: 0,
+                explicit_observations: BTreeSet::new(),
+                completed_requests: HashMap::new(),
+                completed_order: VecDeque::new(),
+                needs_resync: false,
+            },
+        );
+        actor.streams.insert(5, 1);
+        receiver
+    }
+
+    fn owned_participant(space_key: &str) -> Participant {
+        Participant {
+            participant_id: "alice".to_owned(),
+            owner: 1,
+            registration_id: vec![7],
+            ownership_token: vec![1; 32],
+            join_token: "join".to_owned(),
+            client_spec_revision: 1,
+            accepted_spec_revision: 1,
+            applied_spec_revision: 0,
+            applied_space_key: None,
+            published_generation: 0,
+            spec: spec(space_key, "Alice"),
+            connection: None,
+            self_mute: false,
+            self_deaf: false,
+            application_error: String::new(),
+        }
+    }
+
+    fn payloads(receiver: &mut mpsc::Receiver<Result<ServerFrame, Status>>) -> Vec<ServerPayload> {
+        let mut drained = Vec::new();
+        while let Ok(Ok(frame)) = receiver.try_recv() {
+            if let Some(payload) = frame.payload {
+                drained.push(payload);
+            }
+        }
+        drained
+    }
+
+    /// A report rendered before a move must not republish the Space left behind.
+    ///
+    /// Each Space reports through its own bridge task, so the order in which two
+    /// Spaces reach the actor is arbitrary. Applying the stale one pins
+    /// `applied_space_key` to a Space the participant no longer belongs to, and
+    /// nothing corrects it until the destination Space renders again.
+    #[tokio::test]
+    async fn a_stale_report_from_the_previous_space_is_not_applied() {
+        let runtime = Runtime::start();
+        let (mut actor, _commands) = reducer(&runtime);
+        actor.ensure_space("lobby").expect("lobby materializes");
+        actor.ensure_space("arena").expect("arena materializes");
+        actor
+            .participants
+            .insert("alice".to_owned(), owned_participant("lobby"));
+
+        actor.refresh_space("lobby");
+        let lobby_revision = actor.next_application_revision - 1;
+        if let Some(participant) = actor.participants.get_mut("alice") {
+            participant.spec.space_key = "arena".to_owned();
+        }
+        actor.refresh_space("arena");
+        let arena_revision = actor.next_application_revision - 1;
+
+        actor.reconciled(
+            "arena",
+            arena_revision,
+            ReconcileReport {
+                version: 9,
+                ..ReconcileReport::default()
+            },
+        );
+        assert_eq!(
+            actor.participants["alice"].applied_space_key.as_deref(),
+            Some("arena")
+        );
+
+        actor.reconciled(
+            "lobby",
+            lobby_revision,
+            ReconcileReport {
+                version: 4,
+                ..ReconcileReport::default()
+            },
+        );
+        assert_eq!(
+            actor.participants["alice"].applied_space_key.as_deref(),
+            Some("arena"),
+            "a report rendered before the move republished the Space Alice left"
+        );
+        assert_eq!(
+            actor.participants["alice"].published_generation, 9,
+            "the stale report also rewound the published generation"
+        );
+    }
+
+    /// A full response queue must not silently detach a live stream.
+    ///
+    /// Detaching drops every later command, `RenewLease` included, so the lease
+    /// expires on a controller that was never told anything went wrong. The
+    /// session stays attached and the next renewal demands a resync instead.
+    #[tokio::test]
+    async fn a_full_response_queue_demands_a_resync_instead_of_muting_the_stream() {
+        let runtime = Runtime::start();
+        let (mut actor, _commands) = reducer(&runtime);
+        let mut client = attached_session(&mut actor, 1);
+
+        actor.send_session_uncached(1, rejection(vec![1], CommandErrorCode::NotFound, "first"));
+        actor.send_session_uncached(1, rejection(vec![2], CommandErrorCode::NotFound, "dropped"));
+        assert_eq!(
+            payloads(&mut client).len(),
+            1,
+            "the second frame overflowed"
+        );
+        assert!(
+            actor.streams.contains_key(&5),
+            "a momentarily full queue is not a dead stream"
+        );
+
+        actor.frame(
+            5,
+            ClientFrame {
+                request_id: vec![3],
+                payload: Some(ClientPayload::RenewLease(RenewLease {
+                    session_token: vec![7; 32],
+                    desired_state_revision: 3,
+                })),
+            },
+        );
+        let answered = payloads(&mut client);
+        assert!(
+            answered
+                .iter()
+                .any(|payload| matches!(payload, ServerPayload::ResyncRequired(_))),
+            "the renewal was swallowed, so this lease expires in silence: {answered:?}"
+        );
+    }
+
+    /// A closed response queue is a dead stream and must be detached.
+    #[tokio::test]
+    async fn a_closed_response_queue_detaches_the_stream() {
+        let runtime = Runtime::start();
+        let (mut actor, _commands) = reducer(&runtime);
+        let client = attached_session(&mut actor, 4);
+        drop(client);
+
+        actor.send_session_uncached(1, rejection(vec![1], CommandErrorCode::NotFound, "gone"));
+        assert!(!actor.streams.contains_key(&5));
+        assert!(
+            actor.sessions[&1].responses.is_none(),
+            "a closed stream must not stay attached to the session"
+        );
+    }
+
+    /// A rejected `OpenSession` must end the stream.
+    ///
+    /// No session maps to this stream, so every later frame would be dropped in
+    /// `frame` without an answer. Terminating the response stream is the only
+    /// outcome the controller can observe.
+    #[tokio::test]
+    async fn a_rejected_open_session_terminates_the_stream() {
+        let runtime = Runtime::start();
+        let (mut actor, _commands) = reducer(&runtime);
+        let (responses, mut client) = mpsc::channel(8);
+
+        actor.open(
+            5,
+            responses,
+            ClientFrame {
+                request_id: Vec::new(),
+                payload: Some(ClientPayload::OpenSession(OpenSession {
+                    controller_id: "controller".to_owned(),
+                    controller_instance_id: vec![9],
+                    resume_token: Vec::new(),
+                    desired_state: Some(snapshot(1, Vec::new())),
+                })),
+            },
+        );
+
+        assert!(matches!(
+            client.try_recv(),
+            Ok(Ok(ServerFrame {
+                payload: Some(ServerPayload::CommandRejected(_)),
+                ..
+            }))
+        ));
+        assert!(
+            matches!(client.try_recv(), Ok(Err(_status))),
+            "the stream carries no session, so it must not stay open in silence"
+        );
     }
 
     #[tokio::test(start_paused = true)]

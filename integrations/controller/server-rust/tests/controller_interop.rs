@@ -103,6 +103,23 @@ impl JavaController {
     }
 }
 
+/// Assert that the server closed the control connection.
+///
+/// `wait_until` returns `Err` on timeout as well, so `is_err()` alone proves
+/// nothing: it holds just as well for a connection that stayed perfectly open.
+/// Only the error that is *not* the timeout witnesses a close.
+async fn assert_closed(client: &mut SimulatedMumbleClient, reason: &str) {
+    let error = client
+        .wait_until(DEADLINE, |_model| false)
+        .await
+        .expect_err(reason);
+    let report = format!("{error:#}");
+    assert!(
+        !report.contains("timed out"),
+        "{reason}: the connection was still open after {DEADLINE:?} ({report})"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "run through ci/controller-interop.sh with Java 8 and Java 17 configured"]
 async fn real_java_session_drives_real_mumble_clients() {
@@ -250,13 +267,11 @@ async fn real_java_session_drives_real_mumble_clients() {
         .expect("replacement Alice handshake");
     let replacement_session = replacement.self_session().expect("replacement session");
     assert_ne!(replacement_session, alice_session);
-    assert!(
-        alice
-            .wait_until(SILENCE_DEADLINE, |_model| false)
-            .await
-            .is_err(),
-        "the first connection must close after replacement"
-    );
+    assert_closed(
+        &mut alice,
+        "the first connection must close after replacement",
+    )
+    .await;
     alice = replacement;
 
     java.command("MOVE", "CONTROLLER_INTEROP_MOVED").await;
@@ -297,10 +312,7 @@ async fn real_java_session_drives_real_mumble_clients() {
     assert_eq!(alice.self_session(), Some(replacement_session));
 
     java.command("RELEASE", "CONTROLLER_INTEROP_RELEASED").await;
-    assert!(
-        alice.wait_until(DEADLINE, |_model| false).await.is_err(),
-        "release must close the participant connection"
-    );
+    assert_closed(&mut alice, "release must close the participant connection").await;
     java.finish().await;
     server.shutdown().await;
 }
