@@ -1,4 +1,7 @@
-# Rust server
+# Reference: the Rust server
+
+> Internals and complete option list. [Getting started](getting-started.md)
+> covers what is needed to run the process.
 
 `mumble-controller-server` composes the Controller protocol over the existing
 gateway and shard runtime. One Tokio actor serializes session leases,

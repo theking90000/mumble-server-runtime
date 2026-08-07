@@ -1,78 +1,106 @@
 # Controller integration
 
-Mumble Controller is the language-neutral boundary for applications that own
-participants but do not belong inside the voice runtime. A Minecraft server is
-one possible controller; neither the contract nor the Java SDK depends on
-Minecraft, Bukkit or Paper.
+The Controller integration puts the users of your application into voice chat,
+without you writing any voice code.
 
-The integration uses three different kinds of identity:
+You keep the part you already own: who your users are, what they are called,
+and who should be able to hear whom. The runtime handles the Mumble protocol,
+TLS, UDP voice, encryption, per-user channel views and audio routing.
 
-- a **controller session** is one live declarative producer;
-- a **participant** is a logical person owned by at most one session;
-- a **Space** is a semantic placement key computed from participant state.
+Players connect with an unmodified Mumble client. There is no mod to install
+and no resource pack.
 
-Controllers own participants, never runtime shards. Several sessions may place
-their participants in the same Space. The Rust application decides how that
-Space is materialized by the runtime, and clients never receive a `ShardId` or
-`ConnectionId`.
+## Who this is for
 
-## Desired state, not commands
+The main use case is a Minecraft server adding proximity or team voice chat, so
+the examples are written with that in mind. Nothing in the library is tied to
+Minecraft. The SDK has no Bukkit, Paper, Spigot or Minecraft dependency, and
+works the same way in a Discord bot or a web backend.
 
-Each participant carries one complete desired specification:
+You need to know Java. You do not need to know anything about audio, codecs,
+network protocols or the Mumble specification.
 
-```text
-ParticipantSpec {
-    space_key
-    display_name
-    server_mute
-    server_deaf
-}
-```
+## The two processes
 
-Changing `space_key` replaces the specification. There is no separate move
-command, and no controller command creates or mutates a shard.
-
-A session also owns a complete set of explicit Space observations. Its effective
-read interest is:
+An integration has two halves that talk to each other over gRPC:
 
 ```text
-explicit observed Spaces
-union Spaces containing one of its participants
+your application                the runtime
++---------------------+         +--------------------------+
+| your plugin         |  gRPC   | mumble-controller-server |   TLS/UDP   Mumble
+| + controller SDK    | <-----> | (Rust)                   | <---------> clients
++---------------------+         +--------------------------+
 ```
 
-`FetchSpace` is a one-shot read and never changes that set.
+`mumble-controller-server` is a Rust process you run next to your game server.
+It speaks Mumble to the players and gRPC to you.
 
-## Ownership and connection credentials
+The Java SDK (`be.theking90000.mumble:controller`) is the library you add to
+your plugin. `ControllerSession` is almost all of it.
 
-Rust issues an opaque ownership capability whenever a registration acquires a
-participant. Every later write and release presents that exact capability. A
-new acquisition replaces it, so a delayed release from the old owner cannot
-detach the new one.
+## Spaces, participants, sessions
 
-The Mumble join token delivered with a grant is a separate bearer credential.
-It lets an unmodified Mumble client authenticate as that participant, but it
-does not authorize controller writes. Applications treat it as a password and
-never log it.
+Three concepts cover the entire API.
 
-Transport liveness and the business lease are independent. Losing a gRPC stream
-does not immediately discard ownership: the Java SDK reconnects with its full
-desired snapshot while the server-side lease remains valid.
+A **Space** is a place where people hear each other. Its name is any string you
+choose: `lobby`, `team-red`, `arena-3`. A Space exists while at least one person
+is in it. You never create or delete one.
 
-## Three watermarks
+A **participant** is one person your application is responsible for: a player,
+a user, a bot. You give it an identifier that never changes, put it in a Space
+and give it a display name. It exists for as long as you say it does, whether
+or not their Mumble client is currently connected.
 
-A successful gRPC write is not proof that a Mumble client has received a new
-view. The protocol therefore keeps three milestones separate:
+A **session** is your application's connection to the runtime, and the owner of
+the participants it registered. One `ControllerSession` per plugin instance is
+the normal setup.
 
-```text
-accepted  -> the Controller application accepted the desired revision
-applied   -> a valid runtime render consumed that revision
-published -> the Mumble generation produced by that render
+## You describe, you do not command
+
+You never send an instruction such as "move Steve to the red team channel".
+You describe the state that should hold:
+
+```java
+handle.setSpec(ParticipantSpec.builder(SpaceKey.of("team-red"), "Steve").build());
 ```
 
-The composed Rust server materializes this model over the current gateway and
-shard runtime. It is an application crate rather than a new core layer: the
-runtime still owns Mumble connections and publication, while the Controller
-actor owns the remote desired state and its lease.
+Steve belongs in `team-red` and is displayed as `Steve`. That is his complete
+description. The runtime compares it against the current state and does
+whatever is needed to close the gap.
 
-See [Java SDK and protocol](java.md) for the client lifecycle.
-See [Rust server](server.md) for process configuration and runtime behavior.
+Three consequences for your code:
+
+- There is no move, rename, mute or kick call. One call replaces a
+  participant's description, and changing `spaceKey` moves them.
+- You do not retry. If the connection drops during an update, the SDK
+  reconnects and sends the description as it stands at that moment, not a
+  backlog of pending operations. States you have already moved past are
+  skipped.
+- You do not track whether you are in sync. Set the description whenever your
+  own state changes, as often as your game logic requires.
+
+## Where to go next
+
+[Getting started](getting-started.md) has a working program in about thirty
+lines. After that:
+
+- [Spaces](spaces.md) covers naming Spaces, their lifetime, and reading who is
+  in one.
+- [Participants](participants.md) covers registering, moving, muting, removing
+  and reacting to players.
+- [Connecting a player to Mumble](joining.md) covers how a player gets into
+  voice.
+- [A Minecraft plugin](minecraft.md) is a complete Bukkit plugin using all of
+  it.
+- [Troubleshooting](troubleshooting.md) lists the common failures.
+
+The pages prefixed with **Reference** describe the protocol model, the
+lifecycle state machines and the Rust server internals. They are background
+material, and none of it is required to build a working integration.
+
+## Status
+
+This integration is pre-1.0 and still changing. The Java artifact is not yet
+published to a public repository, and details may change between versions. The
+protocol contract is versioned (`mumble.controller.v1`) and its compiled
+descriptor digest is pinned in CI, so wire compatibility cannot break silently.
