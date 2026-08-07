@@ -1,0 +1,22 @@
+# Livre mdBook — documentation publiée de Mumble Server Runtime (Français).
+
+[book]
+title = "Mumble Server Runtime (Français)"
+description = "Runtime vocal compatible Mumble avec vues par connexion."
+authors = ["Contributeurs de Mumble Server Runtime"]
+language = "fr"
+src = "docs/book/fr"
+
+[build]
+build-dir = "target/book/fr"
+create-missing = false
+
+[output.html]
+default-theme = "rust"
+preferred-dark-theme = "navy"
+git-repository-url = "https://github.com/theking90000/mumble-server-runtime"
+edit-url-template = "https://github.com/theking90000/mumble-server-runtime/edit/main/{path}"
+
+[output.html.fold]
+enable = true
+level = 2
