@@ -1,4 +1,8 @@
-# Java SDK and protocol
+# Reference: lifecycles
+
+> Background material. A working integration does not require this page.
+> [Participants](participants.md) describes the same states in application
+> terms.
 
 `ControllerSession` owns the complete local desired state of one controller
 instance. Participants and observations may be registered before `start()`;

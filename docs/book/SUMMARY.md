@@ -28,8 +28,15 @@
   - [The voice plane](mumble/voice-plane.md)
   - [Establishing compatibility](mumble/oracles.md)
 - [Controller integration](controller/index.md)
-  - [Java SDK and protocol](controller/java.md)
-  - [Rust server](controller/server.md)
+  - [Getting started](controller/getting-started.md)
+  - [Spaces](controller/spaces.md)
+  - [Participants](controller/participants.md)
+  - [Connecting a player to Mumble](controller/joining.md)
+  - [A Minecraft plugin](controller/minecraft.md)
+  - [Troubleshooting](controller/troubleshooting.md)
+  - [Reference: the model](controller/how-it-works.md)
+  - [Reference: lifecycles](controller/java.md)
+  - [Reference: the Rust server](controller/server.md)
 - [API documentation](reference/api.md)
 
 <!--
