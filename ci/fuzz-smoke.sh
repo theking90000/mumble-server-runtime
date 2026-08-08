@@ -13,6 +13,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
+cd runtime/verification/fuzz
 
 SECONDS_PER_TARGET="${1:-30}"
 TARGETS=(framing control udp ocb2_decrypt control_roundtrip udp_roundtrip)

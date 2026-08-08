@@ -303,7 +303,7 @@ fn inbound(
     }
 
     match message {
-        // REF: references/mumble/src/murmur/Messages.cpp : `Server::msgPing`
+        // REF: runtime/references/mumble/src/murmur/Messages.cpp : `Server::msgPing`
         //   stores what the client reports about its own side, then answers with
         //   the timestamp and the server's OCB2 counters.
         ControlMessage::Ping(ping) => {
@@ -317,7 +317,7 @@ fn inbound(
         // the shard answers from the render it already published, for the asking
         // connection alone.
         //
-        // REF: references/mumble/src/mumble/MainWindow.cpp : the client asks
+        // REF: runtime/references/mumble/src/mumble/MainWindow.cpp : the client asks
         //   these of its own accord, on channel selection and on opening a
         //   user's information window.
         ControlMessage::PermissionQuery(query) => match query.channel_id {
@@ -348,7 +348,7 @@ fn inbound(
         // the gateway holds no view, and guessing would only mean refusing a
         // legitimate button.
         //
-        // REF: references/mumble/src/murmur/Messages.cpp : `msgContextAction`
+        // REF: runtime/references/mumble/src/murmur/Messages.cpp : `msgContextAction`
         //   uses `MSG_SETUP`, so it counts as activity like any other intent.
         ControlMessage::ContextAction(action) => {
             let _delivered = runtime.send(
@@ -380,9 +380,9 @@ fn inbound(
 /// A `UserState` carrying **no** session at all is about its own sender. That is
 /// not a leniency, it is how the official client mutes itself.
 ///
-/// REF: references/mumble/src/murmur/Messages.cpp : `VICTIM_SETUP` starts from
+/// REF: runtime/references/mumble/src/murmur/Messages.cpp : `VICTIM_SETUP` starts from
 ///   `uSource` and only looks a session up when the message carries one.
-/// REF: references/mumble/src/mumble/ServerHandler.cpp : `setSelfMuteDeafState`
+/// REF: runtime/references/mumble/src/mumble/ServerHandler.cpp : `setSelfMuteDeafState`
 ///   sends a `UserState` with both flags and no session.
 fn user_state(
     state: &tcp::UserState,
@@ -403,7 +403,7 @@ fn user_state(
     // cannot see is refused by the shard, which is what keeps a guessed id from
     // working as an existence oracle.
     //
-    // REF: references/vendored/Mumble.proto : a client moves itself with a
+    // REF: runtime/references/vendored/Mumble.proto : a client moves itself with a
     //   `UserState` naming its own session and a `channel_id`.
     if let Some(channel) = state.channel_id {
         let _delivered = runtime.send(
@@ -455,7 +455,7 @@ fn user_state(
 /// - Too long gets `TextTooLong`, which the client has a message for.
 /// - Anything else gets the generic refusal.
 ///
-/// REF: references/mumble/src/murmur/Messages.cpp : `msgTextMessage` runs
+/// REF: runtime/references/mumble/src/murmur/Messages.cpp : `msgTextMessage` runs
 ///   `RATELIMIT`, then `isTextAllowed` with `PERM_DENIED_TYPE(TextTooLong)`,
 ///   then returns on an empty message, before looking at a single target.
 fn text_message(
@@ -491,7 +491,7 @@ fn text_message(
     // crate should grow, so a server that turned HTML off refuses markup instead
     // of quietly rewriting it (R6).
     //
-    // REF: references/mumble/src/murmur/Server.cpp : `isTextAllowed` runs
+    // REF: runtime/references/mumble/src/murmur/Server.cpp : `isTextAllowed` runs
     //   `HTMLFilter::filter` when `bAllowHTML` is false.
     if !config.allow_html && text.message.contains('<') {
         refused(
@@ -528,7 +528,7 @@ fn text_message(
 /// identifier, so anything else is either a different client with a fan-out this
 /// server has not agreed to, or a probe. Both are refused.
 ///
-/// REF: references/mumble/src/mumble/ServerHandler.cpp :
+/// REF: runtime/references/mumble/src/mumble/ServerHandler.cpp :
 ///   `sendUserTextMessage` adds one session; `sendChannelTextMessage` adds one
 ///   `channel_id`, or one `tree_id` for the tree variant.
 fn single_target(text: &tcp::TextMessage) -> Option<TextTarget> {
@@ -558,7 +558,7 @@ fn single_target(text: &tcp::TextMessage) -> Option<TextTarget> {
 /// A `UserStats` with no session at all is about its sender, like every other
 /// message that omits it.
 ///
-/// REF: references/mumble/src/murmur/Messages.cpp : `msgUserStats` answers the
+/// REF: runtime/references/mumble/src/murmur/Messages.cpp : `msgUserStats` answers the
 ///   full detail only for `extend` - self, or Ban at the root - and the packet
 ///   counters only for `local`.
 fn user_stats(
@@ -587,7 +587,7 @@ fn user_stats(
 /// left open polling for statistics would otherwise keep an idle user looking
 /// active forever.
 ///
-/// REF: references/mumble/src/murmur/Messages.cpp : `MSG_SETUP` calls
+/// REF: runtime/references/mumble/src/murmur/Messages.cpp : `MSG_SETUP` calls
 ///   `resetIdleSeconds()` while `MSG_SETUP_NO_UNIDLE` does not, and the second
 ///   is used by `msgPing`, `msgCryptSetup`, `msgVoiceTarget`,
 ///   `msgPermissionQuery`, `msgCodecVersion`, `msgUserStats` and
@@ -611,7 +611,7 @@ fn unidles(message: &ControlMessage) -> bool {
 /// is measurable from here: the loss the client sees, its own ping to us, the
 /// packets it counted. It only ever travels back to the client that sent it.
 ///
-/// REF: references/mumble/src/murmur/Messages.cpp : `msgPing` assigns each of
+/// REF: runtime/references/mumble/src/murmur/Messages.cpp : `msgPing` assigns each of
 ///   these straight from the message, then answers with the server's own
 ///   counters.
 fn reported(ping: &tcp::Ping) -> ClientReport {
@@ -646,7 +646,7 @@ fn reported(ping: &tcp::Ping) -> ClientReport {
 /// purpose: a connection already knows all three about itself, and holding a DER
 /// chain per peer to fill a dialog is memory spent on nothing.
 ///
-/// REF: references/mumble/src/mumble/UserInformation.cpp : the dialog calls
+/// REF: runtime/references/mumble/src/mumble/UserInformation.cpp : the dialog calls
 ///   `qgbUDP->setVisible(false)` unless `has_from_client() && has_from_server()`,
 ///   and prints `bandwidth / 125.0` as kbit/s.
 fn own_stats(peer: &Peer, now: Instant) -> ControlMessage {
@@ -698,7 +698,7 @@ fn own_stats(peer: &Peer, now: Instant) -> ControlMessage {
 /// A flag the client did not mention stays `None`, because only the flavor knows
 /// what it currently renders.
 ///
-/// REF: references/mumble/src/murmur/Messages.cpp : `msgUserState` sets
+/// REF: runtime/references/mumble/src/murmur/Messages.cpp : `msgUserState` sets
 ///   `self_mute` when `self_deaf` is true, then clears `self_deaf` when
 ///   `self_mute` is false.
 fn self_state(state: &tcp::UserState) -> (Option<bool>, Option<bool>) {
@@ -723,7 +723,7 @@ fn self_state(state: &tcp::UserState) -> (Option<bool>, Option<bool>) {
 fn tunnelled(voice: &Arc<VoicePlane>, peer: &Arc<Peer>, raw: &[u8]) -> Vec<(Vec<u8>, SocketAddr)> {
     // The client is telling us its UDP does not work, so its own audio goes back
     // over the tunnel until a datagram from it reaches us again.
-    // REF: references/mumble/src/murmur/Server.cpp : the `UDPTunnel` branch sets
+    // REF: runtime/references/mumble/src/murmur/Server.cpp : the `UDPTunnel` branch sets
     //   `u->aiUdpFlag = 0`.
     peer.set_udp_mode(false);
 
@@ -764,7 +764,7 @@ fn tunnelled(voice: &Arc<VoicePlane>, peer: &Arc<Peer>, raw: &[u8]) -> Vec<(Vec<
 /// never reaches us and falls back to the TCP tunnel permanently - while the UDP
 /// plane is working in both directions.
 ///
-/// REF: references/mumble/src/mumble/ServerHandler.cpp : `TCPMessageType::Ping`
+/// REF: runtime/references/mumble/src/mumble/ServerHandler.cpp : `TCPMessageType::Ping`
 ///   disables UDP on `(uiRemoteGood == 0 || uiGood == 0) && bUdp && elapsed >
 ///   20000000`.
 fn ping_reply(request: &tcp::Ping, peer: &Peer) -> tcp::Ping {
@@ -781,7 +781,7 @@ fn ping_reply(request: &tcp::Ping, peer: &Peer) -> tcp::Ping {
     }
 }
 
-/// REF: references/vendored/Mumble.proto : `PermissionDenied`.
+/// REF: runtime/references/vendored/Mumble.proto : `PermissionDenied`.
 fn permission_denied(peer: &Peer) -> ControlMessage {
     ControlMessage::PermissionDenied(tcp::PermissionDenied {
         session: Some(peer.session().0),
@@ -903,7 +903,7 @@ mod tests {
     /// The whole table, because the two implications interact and the
     /// interesting cases are the contradictory ones.
     ///
-    /// REF: references/mumble/src/murmur/Messages.cpp : `msgUserState`. Each row
+    /// REF: runtime/references/mumble/src/murmur/Messages.cpp : `msgUserState`. Each row
     /// is what that code leaves in the broadcast message for the same input.
     #[test]
     fn the_self_state_resolves_the_way_the_reference_server_resolves_it() {

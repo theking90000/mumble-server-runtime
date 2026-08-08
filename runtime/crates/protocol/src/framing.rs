@@ -7,11 +7,11 @@
 //! [ type: u16 big-endian ][ length: u32 big-endian ][ payload: `length` bytes ]
 //! ```
 //!
-//! REF: references/vendored/protocol/Connection.cpp : Connection::socketRead
+//! REF: runtime/references/vendored/protocol/Connection.cpp : Connection::socketRead
 //!      (reads 6 header bytes, then `iPacketLength` payload bytes; incremental).
-//! REF: references/vendored/protocol/Connection.cpp : `if (iPacketLength > 0x7fffff)`
+//! REF: runtime/references/vendored/protocol/Connection.cpp : `if (iPacketLength > 0x7fffff)`
 //!      (a larger declared length is a "huge packet" and the peer is dropped).
-//! REF: references/vendored/protocol/MumbleProtocol.h : TCPMessageType (type codes 0..=26).
+//! REF: runtime/references/vendored/protocol/MumbleProtocol.h : TCPMessageType (type codes 0..=26).
 //!
 //! This module is deliberately dumb about semantics: it extracts the raw type
 //! code and the payload bytes. Mapping the code to a known message type, and
@@ -136,7 +136,7 @@ pub fn write_frame(
 
 /// The TCP message type register.
 ///
-/// REF: references/vendored/protocol/MumbleProtocol.h : `MUMBLE_ALL_TCP_MESSAGES`
+/// REF: runtime/references/vendored/protocol/MumbleProtocol.h : `MUMBLE_ALL_TCP_MESSAGES`
 ///      X-macro (`Version = 0` .. `PluginDataTransmission = 26`). Variant names
 ///      are idiomatic Rust; the numeric codes are the wire truth.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

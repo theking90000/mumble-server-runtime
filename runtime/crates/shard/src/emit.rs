@@ -27,7 +27,7 @@ use crate::view::{Action, Actions, Channel, User};
 
 /// Effective-permission bits, as the Mumble client understands them.
 ///
-/// REF: references/mumble/src/ACL.h : `enum ChanACL::Perm`.
+/// REF: runtime/references/mumble/src/ACL.h : `enum ChanACL::Perm`.
 pub mod perm {
     pub const TRAVERSE: u32 = 0x2;
     pub const ENTER: u32 = 0x4;
@@ -76,7 +76,7 @@ pub fn permission_query(channel: &Channel) -> ControlMessage {
         // A flush would tell the client to drop what it knows about **every**
         // channel. This answers one question about one channel.
         //
-        // REF: references/mumble/src/mumble/Messages.cpp : `msgPermissionQuery`
+        // REF: runtime/references/mumble/src/mumble/Messages.cpp : `msgPermissionQuery`
         //   zeroes every channel's permissions when `flush()` is set.
         flush: Some(false),
     })
@@ -94,7 +94,7 @@ pub fn permission_query(channel: &Channel) -> ControlMessage {
 /// The requester's own statistics are a different question, answered where the
 /// transport lives rather than here.
 ///
-/// REF: references/mumble/src/murmur/Messages.cpp : `msgUserStats` gates the
+/// REF: runtime/references/mumble/src/murmur/Messages.cpp : `msgUserStats` gates the
 ///   certificates, version and address behind `extend` (self, or Ban at the
 ///   root) and the counters behind `local`, and always answers with the session.
 #[must_use]
@@ -111,12 +111,12 @@ pub fn user_stats(session: SessionId) -> ControlMessage {
 /// it to the server, and it names the recipient's session, which is what makes
 /// the client file it as addressed to them rather than as an announcement.
 ///
-/// REF: references/mumble/src/mumble/Messages.cpp : `msgTextMessage` resolves
+/// REF: runtime/references/mumble/src/mumble/Messages.cpp : `msgTextMessage` resolves
 ///   the actor and falls back to `tr("Server", "message from")` when there is
 ///   none.
-/// REF: references/mumble/src/murmur/RPC.cpp : `Server::sendTextMessage` adds
+/// REF: runtime/references/mumble/src/murmur/RPC.cpp : `Server::sendTextMessage` adds
 ///   the recipient's session when the message is aimed at one user.
-/// REF: references/vendored/Mumble.proto : `PermissionDenied.DenyType.Text`
+/// REF: runtime/references/vendored/Mumble.proto : `PermissionDenied.DenyType.Text`
 ///   means "denied for another reason, see the reason field".
 #[must_use]
 pub fn spoken(to: SessionId, word: &Word) -> ControlMessage {
@@ -142,7 +142,7 @@ pub fn spoken(to: SessionId, word: &Word) -> ControlMessage {
 /// message names one session. Accepting a mix would mean inventing a fan-out
 /// nobody asked for, so it is refused where the wire is parsed (R6).
 ///
-/// REF: references/mumble/src/mumble/ServerHandler.cpp :
+/// REF: runtime/references/mumble/src/mumble/ServerHandler.cpp :
 ///   `sendUserTextMessage` adds one session, `sendChannelTextMessage` adds one
 ///   `channel_id` **or** one `tree_id`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -162,10 +162,10 @@ pub enum TextTarget {
 /// `actor` is `None` for the server's own voice, which is what makes the client
 /// attribute it to the server rather than to a user it would have to know.
 ///
-/// REF: references/mumble/src/mumble/Messages.cpp : `msgTextMessage` labels the
+/// REF: runtime/references/mumble/src/mumble/Messages.cpp : `msgTextMessage` labels the
 ///   entry Tree, Channel or Private from whichever list is non-empty, and falls
 ///   back to `tr("Server", "message from")` when there is no actor.
-/// REF: references/mumble/src/murmur/Messages.cpp : `msgTextMessage` stamps the
+/// REF: runtime/references/mumble/src/murmur/Messages.cpp : `msgTextMessage` stamps the
 ///   actor itself and forwards one identical message to each recipient.
 #[must_use]
 pub fn relayed(actor: Option<SessionId>, to: TextTarget, text: &str) -> ControlMessage {
@@ -190,7 +190,7 @@ pub fn relayed(actor: Option<SessionId>, to: TextTarget, text: &str) -> ControlM
 /// already holds, since naming any other would answer a question it did not get
 /// to ask.
 ///
-/// REF: references/mumble/src/murmur/Messages.cpp : the `PERM_DENIED` macro sets
+/// REF: runtime/references/mumble/src/murmur/Messages.cpp : the `PERM_DENIED` macro sets
 ///   `permission`, `channel_id`, `session` and `DenyType::Permission`.
 #[must_use]
 pub fn denied_permission(
@@ -213,9 +213,9 @@ pub fn denied_permission(
 /// is the only thing that has to survive the round trip. Decimal because it is
 /// the shortest form that reads back unambiguously.
 ///
-/// REF: references/mumble/src/mumble/Messages.cpp : `msgContextActionModify`
+/// REF: runtime/references/mumble/src/mumble/Messages.cpp : `msgContextActionModify`
 ///   stores `msg.action()` in the menu entry's data.
-/// REF: references/mumble/src/mumble/MainWindow.cpp : `context_triggered` sends
+/// REF: runtime/references/mumble/src/mumble/MainWindow.cpp : `context_triggered` sends
 ///   that same data back as `ContextAction.action`.
 #[must_use]
 pub fn action_name(key: ActionKey) -> String {
@@ -238,7 +238,7 @@ pub fn action_key(name: &str) -> Option<ActionKey> {
 /// Withdrawals come first for the same reason: a rename must not race its own
 /// removal.
 ///
-/// REF: references/mumble/src/mumble/Messages.cpp : `msgContextActionModify`
+/// REF: runtime/references/mumble/src/mumble/Messages.cpp : `msgContextActionModify`
 ///   allocates `new QAction` per `Add` and appends it to the context lists;
 ///   `removeContextAction` deletes every entry whose data matches.
 #[must_use]
@@ -360,7 +360,7 @@ fn emit_op(op: &PlanOp) -> ControlMessage {
 /// one, and the root already exists on its side, so the message is an update to
 /// something it has. A channel parented to itself would be a cycle.
 ///
-/// REF: references/mumble/src/mumble/Messages.cpp : `msgChannelState` creates a
+/// REF: runtime/references/mumble/src/mumble/Messages.cpp : `msgChannelState` creates a
 ///   channel only `if (p && msg.has_name())`, and rejects a move into itself.
 fn created_channel(channel: &Channel) -> tcp::ChannelState {
     let parent = (channel.id != ChannelId::ROOT).then_some(channel.parent.0);
@@ -384,7 +384,7 @@ fn created_channel(channel: &Channel) -> tcp::ChannelState {
 /// one entirely, so incremental sets are both cheaper and the only way to
 /// express "unlink the last one".
 ///
-/// REF: references/mumble/src/mumble/Messages.cpp : `msgChannelState` handles
+/// REF: runtime/references/mumble/src/mumble/Messages.cpp : `msgChannelState` handles
 ///   `links` under `if (msg.links_size())`, then `links_remove` and `links_add`
 ///   in their own independent blocks.
 fn patched_channel(patch: &ChannelPatch) -> tcp::ChannelState {

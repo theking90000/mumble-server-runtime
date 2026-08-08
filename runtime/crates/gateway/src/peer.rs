@@ -80,7 +80,7 @@ pub struct Peer {
 /// window. Client-supplied numbers are only ever shown back to the client that
 /// supplied them, so a client that lies here lies to itself alone.
 ///
-/// REF: references/mumble/src/murmur/Messages.cpp : `msgPing` assigns
+/// REF: runtime/references/mumble/src/murmur/Messages.cpp : `msgPing` assigns
 ///   `uiRemoteGood/Late/Lost/Resync`, `dUDPPingAvg/Var`, `uiUDPPackets`,
 ///   `dTCPPingAvg/Var` and `uiTCPPackets` straight from the message.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
@@ -226,7 +226,7 @@ impl Peer {
     /// to the replay history - which is what makes the cold path's "try every
     /// candidate" safe.
     ///
-    /// REF: references/mumble/src/murmur/Server.cpp : `Server::run` binds an
+    /// REF: runtime/references/mumble/src/murmur/Server.cpp : `Server::run` binds an
     ///   unknown peer to the first `checkDecrypt` that succeeds.
     #[must_use]
     pub fn decrypt(&self, datagram: &[u8]) -> Option<Vec<u8>> {
@@ -260,7 +260,7 @@ impl Peer {
     /// Record that this peer's audio is arriving over UDP again, or that it has
     /// fallen back to the tunnel.
     ///
-    /// REF: references/mumble/src/murmur/Server.cpp : `aiUdpFlag` goes to 0 on a
+    /// REF: runtime/references/mumble/src/murmur/Server.cpp : `aiUdpFlag` goes to 0 on a
     ///   `UDPTunnel` message and back to 1 when a datagram arrives.
     pub fn set_udp_mode(&self, on: bool) {
         self.udp_mode.store(on, Ordering::Relaxed);

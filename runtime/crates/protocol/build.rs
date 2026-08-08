@@ -1,7 +1,7 @@
 //! Generate Rust types from the vendored Mumble `.proto` files (R1).
 //!
 //! The wire schema is never hand-transcribed: it is compiled from
-//! `references/vendored/*.proto` at the pinned commit (`references/mumble.pin`).
+//! `runtime/references/vendored/*.proto` at the pinned commit (`runtime/references/mumble.pin`).
 //! `protox` parses the `.proto` in pure Rust, so no external `protoc` is needed.
 //!
 //! This runs outside the crate's `src/`, so it is exempt from the pure-crate IO
@@ -10,10 +10,10 @@
 use std::path::PathBuf;
 
 const PROTOS: &[&str] = &[
-    "../../../references/vendored/Mumble.proto",
-    "../../../references/vendored/MumbleUDP.proto",
+    "../../references/vendored/Mumble.proto",
+    "../../references/vendored/MumbleUDP.proto",
 ];
-const INCLUDES: &[&str] = &["../../../references/vendored"];
+const INCLUDES: &[&str] = &["../../references/vendored"];
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let file_descriptors = protox::compile(PROTOS, INCLUDES)?;
@@ -26,6 +26,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     for proto in PROTOS {
         println!("cargo:rerun-if-changed={proto}");
     }
-    println!("cargo:rerun-if-changed=../../../references/mumble.pin");
+    println!("cargo:rerun-if-changed=../../references/mumble.pin");
     Ok(())
 }

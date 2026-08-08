@@ -14,14 +14,14 @@ use std::time::{Duration, Instant};
 
 /// Largest voice datagram the server accepts, in bytes.
 ///
-/// REF: references/mumble/src/MumbleProtocol.h : `MAX_UDP_PACKET_SIZE = 1024`.
+/// REF: runtime/references/mumble/src/MumbleProtocol.h : `MAX_UDP_PACKET_SIZE = 1024`.
 ///   The real server drops tunnelled audio below 2 bytes or above this, so
 ///   matching it keeps both ingress paths on the same rule.
 pub const MAX_UDP_PACKET_SIZE: usize = 1024;
 
 /// Smallest datagram that can carry anything meaningful (a type byte plus at
 /// least one payload byte).
-/// REF: references/mumble/src/murmur/Server.cpp : the `UDPTunnel` branch drops
+/// REF: runtime/references/mumble/src/murmur/Server.cpp : the `UDPTunnel` branch drops
 ///   `len < 2`.
 pub const MIN_UDP_PACKET_SIZE: usize = 2;
 
@@ -40,7 +40,7 @@ const BURST: u32 = 400;
 /// What the reference server adds to a voice payload to account for what the
 /// network actually carried.
 ///
-/// REF: references/mumble/src/murmur/Server.cpp : `processMsg` bills
+/// REF: runtime/references/mumble/src/murmur/Server.cpp : `processMsg` bills
 ///   `20 + 8 + 4 + payload` - IP, UDP, crypt, data - against the bandwidth
 ///   record.
 pub const PACKET_OVERHEAD: usize = 20 + 8 + 4;
@@ -123,9 +123,9 @@ impl VoiceBudget {
     ///
     /// The unit is the client's: it divides by 125 to print kbit/s.
     ///
-    /// REF: references/mumble/src/murmur/ServerUser.cpp : `bandwidth()` sums the
+    /// REF: runtime/references/mumble/src/murmur/ServerUser.cpp : `bandwidth()` sums the
     ///   frames of the last second and divides by the elapsed time.
-    /// REF: references/mumble/src/mumble/UserInformation.cpp : the dialog prints
+    /// REF: runtime/references/mumble/src/mumble/UserInformation.cpp : the dialog prints
     ///   `msg.bandwidth() / 125.0` as kbit/s.
     pub fn bandwidth(&mut self, now: Instant) -> u32 {
         self.roll(now);
@@ -137,7 +137,7 @@ impl VoiceBudget {
 
     /// How long this connection has been doing nothing.
     ///
-    /// REF: references/mumble/src/murmur/ServerUser.cpp : `idleSeconds()` takes
+    /// REF: runtime/references/mumble/src/murmur/ServerUser.cpp : `idleSeconds()` takes
     ///   the shorter of "since the last voice frame" and "since the last control
     ///   message that unidles".
     pub fn idle(&self, now: Instant) -> Duration {
@@ -203,7 +203,7 @@ pub fn is_acceptable_size(len: usize) -> bool {
 /// Sustained text messages per second allowed from one connection, and how many
 /// may arrive back to back.
 ///
-/// REF: references/mumble/src/murmur/Meta.cpp : `iMessageLimit = 1`,
+/// REF: runtime/references/mumble/src/murmur/Meta.cpp : `iMessageLimit = 1`,
 ///   `iMessageBurst = 5`.
 const MESSAGES_PER_SECOND: u32 = 1;
 const MESSAGE_BURST: u32 = 5;
@@ -217,7 +217,7 @@ const MESSAGE_BURST: u32 = 5;
 /// The clock is passed in for the same reason [`VoiceBudget`] does it: a test
 /// that has to sleep to observe a rate limit is a test that will be flaky.
 ///
-/// REF: references/mumble/src/murmur/Messages.cpp : the `RATELIMIT` macro
+/// REF: runtime/references/mumble/src/murmur/Messages.cpp : the `RATELIMIT` macro
 ///   returns from `msgTextMessage` **without** answering the client.
 #[derive(Debug)]
 pub struct TextBudget {

@@ -677,7 +677,7 @@ fn check_overlay_references(
 /// Not a design choice. The Mumble client looks the sender session up before
 /// buffering a voice frame and discards the frame when the lookup fails.
 ///
-/// REF: references/mumble/src/mumble/ServerHandler.cpp : `handleVoicePacket`
+/// REF: runtime/references/mumble/src/mumble/ServerHandler.cpp : `handleVoicePacket`
 ///   buffers only when `ClientUser::get(audioData.senderSession)` succeeds.
 /// # Why this is not a loop over pairs
 ///

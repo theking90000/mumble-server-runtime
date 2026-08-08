@@ -17,14 +17,14 @@ name = "mumble_server_runtime_arena"
 path = "src/mumble_server_runtime_arena.rs"
 
 [dependencies]
-mumble-server-runtime-shard = { path = "../../runtime/crates/shard" }
-mumble-server-runtime-gateway = { path = "../../runtime/crates/gateway" }
+mumble-server-runtime-shard = { path = "../../crates/shard" }
+mumble-server-runtime-gateway = { path = "../../crates/gateway" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "sync", "time"] }
 anyhow = "1"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "sync", "time", "test-util"] }
-mumble-server-runtime-protocol = { path = "../../runtime/crates/protocol" }
+mumble-server-runtime-protocol = { path = "../../crates/protocol" }
 
 [lints]
 workspace = true

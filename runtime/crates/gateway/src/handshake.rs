@@ -7,10 +7,10 @@
 //! runtime and the handshake is not a second one.
 //!
 //! The order is authoritative, traced to Murmur (R1):
-//! REF: references/mumble/src/murmur/Messages.cpp : `Server::msgAuthenticate` -
+//! REF: runtime/references/mumble/src/murmur/Messages.cpp : `Server::msgAuthenticate` -
 //!   CryptSetup, CodecVersion, ChannelState (root first, parents before
 //!   children), UserState(self), UserState(others), ServerSync, ServerConfig.
-//! REF: references/mumble/src/murmur/Server.cpp : `Server::encrypted` - the
+//! REF: runtime/references/mumble/src/murmur/Server.cpp : `Server::encrypted` - the
 //!   server's own `Version` goes out as soon as TLS completes, BEFORE
 //!   Authenticate; it is therefore [`server_version`] and not part of this
 //!   sequence.
@@ -92,7 +92,7 @@ pub fn completion(config: &GatewayConfig, session: SessionId) -> Vec<ControlMess
 
 /// Refuse a connection before it is attached to anything.
 ///
-/// REF: references/vendored/Mumble.proto : `Reject.RejectType`.
+/// REF: runtime/references/vendored/Mumble.proto : `Reject.RejectType`.
 #[must_use]
 pub fn reject(reason: &str) -> ControlMessage {
     ControlMessage::Reject(tcp::Reject {

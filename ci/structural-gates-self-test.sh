@@ -48,9 +48,7 @@ assert_boundary_rejects() {
   fi
 }
 
-assert_gate_rejects old mumble-server-runtime-shard
 assert_gate_rejects new runtime/crates/shard
-assert_boundary_rejects old mumble-server-runtime-shard/src/lib.rs fixtures/corpus.bin
 assert_boundary_rejects new runtime/crates/shard/src/lib.rs runtime/verification/fixtures/corpus.bin
 
-echo "✓ structural-gates-self-test.sh: old and new layouts are enforced."
+echo "✓ structural-gates-self-test.sh: the runtime layout is enforced."

@@ -5,7 +5,7 @@ use anyhow::{Context, Result, ensure};
 
 /// Duration represented by one prepared Opus packet.
 ///
-/// REF: references/mumble/src/mumble/AudioInput.h:iFrameSize.
+/// REF: runtime/references/mumble/src/mumble/AudioInput.h:iFrameSize.
 pub const OPUS_FRAME_DURATION: std::time::Duration = std::time::Duration::from_millis(10);
 
 /// A pre-encoded clip made of fixed-size, raw Opus packets.
@@ -50,7 +50,7 @@ impl VoiceClip {
 
     /// Return the next raw packet, wrapping around when the clip ends.
     ///
-    /// REF: references/mumble/src/MumbleUDP.proto:Audio.opus_data.
+    /// REF: runtime/references/mumble/src/MumbleUDP.proto:Audio.opus_data.
     pub fn packet(&self, index: usize) -> Option<&[u8]> {
         let frame = index % self.frames;
         let start = frame.checked_mul(self.frame_bytes.get())?;

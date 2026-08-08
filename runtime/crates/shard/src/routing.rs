@@ -41,10 +41,10 @@ impl Silence {
     ///
     /// The two predicates are the reference server's own, field for field.
     ///
-    /// REF: references/mumble/src/murmur/Server.cpp : `processMsg` drops the
+    /// REF: runtime/references/mumble/src/murmur/Server.cpp : `processMsg` drops the
     ///   packet before anything else when the speaker is
     ///   `bMute || bSuppress || bSelfMute`.
-    /// REF: references/mumble/src/murmur/AudioReceiverBuffer.cpp : `addReceiver`
+    /// REF: runtime/references/mumble/src/murmur/AudioReceiverBuffer.cpp : `addReceiver`
     ///   refuses a receiver that is `bDeaf || bSelfDeaf`.
     pub fn record(&mut self, session: SessionId, flags: UserFlags) {
         if flags.self_mute || flags.mute || flags.suppress {

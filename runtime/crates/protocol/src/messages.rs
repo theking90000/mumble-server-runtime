@@ -1,8 +1,8 @@
 //! Protobuf message types for the Mumble protocol, generated at build time from
 //! the vendored `.proto` (see `build.rs`); never hand-transcribed (R1).
 //!
-//! REF: references/vendored/Mumble.proto (package MumbleProto) — TCP control messages.
-//! REF: references/vendored/MumbleUDP.proto (package MumbleUDP) — UDP audio/ping envelope.
+//! REF: runtime/references/vendored/Mumble.proto (package MumbleProto) — TCP control messages.
+//! REF: runtime/references/vendored/MumbleUDP.proto (package MumbleUDP) — UDP audio/ping envelope.
 //!
 //! Note the `UDPTunnel` message defined in Mumble.proto is "Not used" on the wire:
 //! a TCP frame of type `UdpTunnel` carries raw audio bytes, not this message. That

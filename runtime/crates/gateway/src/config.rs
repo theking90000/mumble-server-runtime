@@ -55,7 +55,7 @@ impl Default for GatewayConfig {
 impl GatewayConfig {
     /// Encode the advertised version in the Mumble v2 format.
     ///
-    /// REF: references/mumble/src/Version.h : `fromComponents` -
+    /// REF: runtime/references/mumble/src/Version.h : `fromComponents` -
     ///   `version_v2 = (major << 48) | (minor << 32) | (patch << 16)`.
     #[must_use]
     pub fn version_v2(&self) -> u64 {

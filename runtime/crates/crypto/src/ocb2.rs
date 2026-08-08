@@ -3,9 +3,9 @@
 //!
 //! Ported from the vendored reference (R1); every routine mirrors its C++ source:
 //!
-//! REF: references/vendored/ocb2-vectors/CryptStateOCB2.cpp : `ocb_encrypt`,
+//! REF: runtime/references/vendored/ocb2-vectors/CryptStateOCB2.cpp : `ocb_encrypt`,
 //!      `ocb_decrypt`, `encrypt`, `decrypt`, `S2`, `S3`, `XOR`.
-//! REF: references/vendored/ocb2-vectors/TestCrypt.cpp : the golden vectors and
+//! REF: runtime/references/vendored/ocb2-vectors/TestCrypt.cpp : the golden vectors and
 //!      mitigation tests reproduced in this module's `tests`.
 //!
 //! The block "doubling" (`S2`) and "tripling" (`S3`) treat the 16-byte block as a

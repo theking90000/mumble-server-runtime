@@ -143,9 +143,9 @@ impl Overlay {
 /// A bit set rather than an enum: one action may be offered in several places at
 /// once, which is exactly what the client's three menus do with it.
 ///
-/// REF: references/vendored/Mumble.proto : `ContextActionModify.Context`,
+/// REF: runtime/references/vendored/Mumble.proto : `ContextActionModify.Context`,
 ///   `Server = 0x01`, `Channel = 0x02`, `User = 0x04`.
-/// REF: references/mumble/src/mumble/Messages.cpp : `msgContextActionModify`
+/// REF: runtime/references/mumble/src/mumble/Messages.cpp : `msgContextActionModify`
 ///   appends the same action to `qlServerActions`, `qlUserActions` and
 ///   `qlChannelActions`, one per bit set.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]

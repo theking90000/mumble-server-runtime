@@ -24,8 +24,8 @@ use tokio_rustls::server::TlsStream;
 /// The TLS CertificateVerify signature still proves possession of its private
 /// key. Authentication and principal binding remain outside Phase 6.
 ///
-/// REF: references/mumble/src/murmur/Server.cpp:Server::sslError
-/// REF: references/mumble/src/murmur/Server.cpp:Server::encrypted
+/// REF: runtime/references/mumble/src/murmur/Server.cpp:Server::sslError
+/// REF: runtime/references/mumble/src/murmur/Server.cpp:Server::encrypted
 #[derive(Debug)]
 struct MumbleClientCertificateVerifier {
     algorithms: WebPkiSupportedAlgorithms,
@@ -100,8 +100,8 @@ impl Identity {
 
 /// Build the server TLS config from an identity, pinned to TLS 1.2.
 ///
-/// REF: references/mumble/src/mumble/ServerHandler.cpp:ServerHandler::ServerHandler
-/// REF: references/mumble/src/murmur/Server.cpp:Server::encrypted
+/// REF: runtime/references/mumble/src/mumble/ServerHandler.cpp:ServerHandler::ServerHandler
+/// REF: runtime/references/mumble/src/murmur/Server.cpp:Server::encrypted
 pub fn server_config(identity: Identity) -> Result<Arc<ServerConfig>> {
     let algorithms = rustls::crypto::ring::default_provider().signature_verification_algorithms;
     let verifier = Arc::new(MumbleClientCertificateVerifier { algorithms });
@@ -117,8 +117,8 @@ pub fn server_config(identity: Identity) -> Result<Arc<ServerConfig>> {
 /// This value is only presented in `UserState.hash` so the official client can
 /// retain local preferences. It does not grant permissions.
 ///
-/// REF: references/vendored/Mumble.proto:UserState.hash
-/// REF: references/mumble/src/murmur/Server.cpp:Server::encrypted
+/// REF: runtime/references/vendored/Mumble.proto:UserState.hash
+/// REF: runtime/references/mumble/src/murmur/Server.cpp:Server::encrypted
 pub fn client_certificate_hash(stream: &TlsStream<TcpStream>) -> Option<String> {
     const HEX: &[u8; 16] = b"0123456789abcdef";
 

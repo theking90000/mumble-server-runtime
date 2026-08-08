@@ -309,7 +309,7 @@ impl Client {
     /// sends, and it is the case a server that only accepts an explicit session
     /// would silently ignore.
     ///
-    /// REF: references/mumble/src/mumble/ServerHandler.cpp :
+    /// REF: runtime/references/mumble/src/mumble/ServerHandler.cpp :
     ///   `setSelfMuteDeafState`.
     pub async fn set_self_state(&mut self, mute: bool, deaf: bool) -> Result<()> {
         self.send(&ControlMessage::UserState(tcp::UserState {
@@ -322,7 +322,7 @@ impl Client {
 
     /// Type into the chat bar with a channel selected.
     ///
-    /// REF: references/mumble/src/mumble/ServerHandler.cpp :
+    /// REF: runtime/references/mumble/src/mumble/ServerHandler.cpp :
     ///   `sendChannelTextMessage` fills one `channel_id`, or one `tree_id` when
     ///   the message is aimed at the whole subtree.
     pub async fn say_in_channel(&mut self, channel: u32, message: &str) -> Result<()> {
@@ -336,7 +336,7 @@ impl Client {
 
     /// Write privately to somebody, the way the user menu does.
     ///
-    /// REF: references/mumble/src/mumble/ServerHandler.cpp :
+    /// REF: runtime/references/mumble/src/mumble/ServerHandler.cpp :
     ///   `sendUserTextMessage`.
     pub async fn say_to_user(&mut self, session: u32, message: &str) -> Result<()> {
         self.send(&ControlMessage::TextMessage(tcp::TextMessage {
@@ -349,7 +349,7 @@ impl Client {
 
     /// Ask what may be done in a channel, the way selecting it does.
     ///
-    /// REF: references/mumble/src/mumble/ServerHandler.cpp :
+    /// REF: runtime/references/mumble/src/mumble/ServerHandler.cpp :
     ///   `requestChannelPermissions`.
     pub async fn query_permissions(&mut self, channel: u32) -> Result<()> {
         self.send(&ControlMessage::PermissionQuery(tcp::PermissionQuery {
@@ -361,7 +361,7 @@ impl Client {
 
     /// Open somebody's information window.
     ///
-    /// REF: references/mumble/src/mumble/ServerHandler.cpp : `requestUserStats`.
+    /// REF: runtime/references/mumble/src/mumble/ServerHandler.cpp : `requestUserStats`.
     /// Press a context action, the way the client does: the identifier it was
     /// given, plus whatever the tree currently has selected.
     pub async fn invoke_action(
@@ -389,7 +389,7 @@ impl Client {
 
     /// Report what this client sees of the link, the way its keepalive does.
     ///
-    /// REF: references/mumble/src/mumble/ServerHandler.cpp : the client's `Ping`
+    /// REF: runtime/references/mumble/src/mumble/ServerHandler.cpp : the client's `Ping`
     ///   carries its own good/late/lost counters, packet counts and measured
     ///   pings.
     pub async fn ping_reporting(&mut self, report: tcp::Ping) -> Result<()> {

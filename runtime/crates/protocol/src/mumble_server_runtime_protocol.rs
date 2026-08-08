@@ -2,7 +2,7 @@
 //! enveloppes UDP. Aucune IO, aucun runtime (gates R4).
 //!
 //! La vérité protocolaire vient exclusivement des sources vendorées (R1) :
-//! `references/vendored/` au commit `references/mumble.pin`. Chaque module porte
+//! `runtime/references/vendored/` au commit `runtime/references/mumble.pin`. Chaque module porte
 //! des commentaires `// REF:` traçant chaque fait vers ces sources.
 #![forbid(unsafe_code)]
 

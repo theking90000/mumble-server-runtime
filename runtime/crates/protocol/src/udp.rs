@@ -7,7 +7,7 @@
 //! [ type: u8 ][ protobuf message ]
 //! ```
 //!
-//! REF: references/vendored/protocol/MumbleProtocol.h : `MUMBLE_ALL_UDP_MESSAGES`
+//! REF: runtime/references/vendored/protocol/MumbleProtocol.h : `MUMBLE_ALL_UDP_MESSAGES`
 //!      (Audio = 0, Ping = 1).
 //! REF: MumbleProtocol.cpp : `m_byteBuffer[0] = UDPMessageType::Audio/Ping`, protobuf
 //!      encoded from offset 1; `UDPDecoder::decode` rejects `data.size() <= 1`.

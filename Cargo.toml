@@ -13,9 +13,9 @@ members = [
     "runtime/crates/shard",
     "runtime/crates/gateway",
     # Composition et charge de demonstration.
-    "tools/mumble-server-runtime-arena",
-    "tools/mumble-server-runtime-stress",
-    "tools/bench-shard",
+    "runtime/reference/arena",
+    "runtime/tools/stress",
+    "runtime/tools/bench-shard",
     # Verificateur indépendant : client Mumble simule et modele strict.
     "runtime/verification/testkit",
     # Application Controller : gRPC declaratif compose au-dessus du runtime.
