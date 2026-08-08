@@ -3,9 +3,9 @@
 resolver = "3"
 members = [
     # Outils d'observation et de verification du protocole.
-    "tools/recording-proxy",
-    "tools/corpus-decode",
-    "tools/mitm-proxy",
+    "runtime/verification/protocol-tools/recording-proxy",
+    "runtime/verification/protocol-tools/corpus-decode",
+    "runtime/verification/protocol-tools/mitm-proxy",
     # Fondations pures.
     "runtime/crates/protocol",
     "runtime/crates/crypto",
@@ -17,7 +17,7 @@ members = [
     "tools/mumble-server-runtime-stress",
     "tools/bench-shard",
     # Verificateur indépendant : client Mumble simule et modele strict.
-    "mumble-server-runtime-testkit",
+    "runtime/verification/testkit",
     # Application Controller : gRPC declaratif compose au-dessus du runtime.
     "integrations/controller/server-rust",
 ]

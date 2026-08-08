@@ -17,13 +17,15 @@ Tout est ordonné pour construire les oracles (corpus, proxy MITM, client simul�
 
 **R1 — La vérité protocolaire ne vient jamais de mémoire.**
 Toute affirmation sur le wire format doit être traçable vers une source vendored :
-`references/mumble/` (clone pinné), `fixtures/corpus/` (captures réelles), ou la
+`references/mumble/` (clone pinné), `runtime/verification/fixtures/corpus/`
+(captures réelles), ou la
 spec. Chaque module protocolaire porte un commentaire `// REF:` pointant vers le
 fichier source Mumble correspondant. Un détail absent de ces sources → tu t'arrêtes
 et tu le signales. Tu n'inventes pas un détail « plausible ».
 
 **R2 — Séparation implémenteur / vérificateur.**
-`mumble-server-runtime-testkit/`, `fixtures/`, `conformance/` ne sont modifiables que par des
+`runtime/verification/testkit/`, `runtime/verification/fixtures/`, `conformance/`
+ne sont modifiables que par des
 tâches de **vérification**, jamais par une tâche d'implémentation. Si tes tests
 échouent, tu corriges l'implémentation, pas le test. Toute modification d'un test
 de conformité passe par une **revue humaine**. Enforcement : `ci/verifier-boundary.sh`

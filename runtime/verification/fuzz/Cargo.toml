@@ -19,8 +19,8 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4"
-mumble-server-runtime-protocol = { path = "../mumble-server-runtime-protocol" }
-mumble-server-runtime-crypto = { path = "../mumble-server-runtime-crypto" }
+mumble-server-runtime-protocol = { path = "../../crates/protocol" }
+mumble-server-runtime-crypto = { path = "../../crates/crypto" }
 
 [[bin]]
 name = "framing"

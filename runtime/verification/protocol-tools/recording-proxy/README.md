@@ -23,7 +23,7 @@ est l'affaire de la Phase 1.
      --listen 0.0.0.0:64738 \
      --upstream 127.0.0.1:64739 \
      --scenario 01-handshake \
-     --out fixtures/corpus/01-handshake
+     --out runtime/verification/fixtures/corpus/01-handshake
    ```
 
 3. Connecter le **client Mumble officiel** à `localhost:64738` (accepter le
@@ -36,7 +36,7 @@ direction/transport) et `meta.json` (scénario, adresses, totaux) dans `--out`.
 ## Inspecter une capture
 
 ```bash
-cargo run -p mumble-server-runtime-recording-proxy -- dump fixtures/corpus/01-handshake/session.voxcap --hex
+cargo run -p mumble-server-runtime-recording-proxy -- dump runtime/verification/fixtures/corpus/01-handshake/session.voxcap --hex
 ```
 
 ## Notes
