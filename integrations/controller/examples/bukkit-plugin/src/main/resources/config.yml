@@ -1,0 +1,25 @@
+# Where the controller server listens. Use https:// to enable TLS.
+controller-endpoint: "http://127.0.0.1:4000"
+
+# The host players reach the Mumble gateway on. It goes into the join link, so it
+# must be resolvable from the player's machine, not only from the server.
+public-host: "voice.example.com"
+
+# Identifies this controller's desired state. Two Minecraft servers sharing this
+# value share ownership of one controller, each keeping its own participants.
+controller-id: "example-voice"
+
+# Traces every participant and Space notification to the console. Session state
+# changes, ownership losses and rejections are logged regardless.
+debug: false
+
+# Also writes the join link to the server log. The link carries a bearer
+# credential, so this puts a password on disk. Useful on a test server.
+log-join-link: false
+
+# Shows the live state sidebar as soon as a player joins. /voice board toggles it
+# per player either way.
+scoreboard: true
+
+# Sidebar refresh period, in ticks. 20 ticks is one second.
+scoreboard-refresh-ticks: 20
