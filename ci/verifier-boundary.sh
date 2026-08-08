@@ -2,9 +2,9 @@
 #
 # verifier-boundary.sh — enforce la séparation implémenteur / vérificateur (R2).
 #
-# Les zones vérificateur (conformance/, fixtures/, mumble-server-runtime-testkit/) ne peuvent
-# pas être modifiées dans le même diff qu'une implémentation (mumble-server-runtime-*/src, hors
-# testkit). Toute modification d'un test de conformité passe par une revue humaine.
+# Les zones vérificateur, dans l'ancienne ou la nouvelle arborescence, ne peuvent
+# pas être modifiées dans le même diff que les sources d'une implémentation.
+# Toute modification d'un test de conformité passe par une revue humaine.
 #
 # Usage :
 #   ci/verifier-boundary.sh <base_ref>     # compare HEAD à <base_ref>
@@ -34,9 +34,9 @@ touches_impl=0
 while IFS= read -r f; do
   [ -n "$f" ] || continue
   case "$f" in
-    conformance/*|fixtures/*|mumble-server-runtime-testkit/*)
+    conformance/*|fixtures/*|mumble-server-runtime-testkit/*|runtime/verification/testkit/*|runtime/verification/fixtures/*)
       touches_verifier=1 ;;
-    mumble-server-runtime-*/src/*)
+    mumble-server-runtime-*/src/*|runtime/crates/*/src/*|integrations/controller/server-rust/src/*|control-plane/server-rust/src/*|control-plane/core/rust/src/*|control-plane/host/rust/src/*|control-plane/implementations/*/rust/src/*)
       # le testkit est une zone vérificateur, déjà couverte au-dessus.
       case "$f" in mumble-server-runtime-testkit/*) ;; *) touches_impl=1 ;; esac ;;
   esac
@@ -44,8 +44,7 @@ done <<< "$CHANGED"
 
 if [ "$touches_verifier" -eq 1 ] && [ "$touches_impl" -eq 1 ]; then
   echo "✗ verifier-boundary.sh : un même diff touche à la fois une zone"
-  echo "  vérificateur (conformance/ | fixtures/ | mumble-server-runtime-testkit/) et une"
-  echo "  implémentation (mumble-server-runtime-*/src). Interdit par R2 — séparer les diffs."
+  echo "  vérificateur et une implémentation. Interdit par R2 — séparer les diffs."
   echo "  Fichiers :"
   echo "$CHANGED" | sed 's/^/    /'
   exit 1

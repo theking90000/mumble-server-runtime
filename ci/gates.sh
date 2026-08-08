@@ -25,9 +25,11 @@ violations=0
 
 # Récupère les .rs sous <crate>/src, en excluant les fichiers de test.
 crate_src_files() {
-  local crate="$1"
-  [ -d "$crate/src" ] || return 0
-  find "$crate/src" -name '*.rs' ! -path '*/tests/*' ! -name '*_test.rs' 2>/dev/null || true
+  local crate
+  for crate in "$@"; do
+    [ -d "$crate/src" ] || continue
+    find "$crate/src" -name '*.rs' ! -path '*/tests/*' ! -name '*_test.rs' 2>/dev/null || true
+  done
 }
 
 report() {
@@ -53,20 +55,33 @@ forbid() {
 echo "== Gates par-crate (R4) =="
 
 # --- mumble-server-runtime-shard : logique et publication sans sockets ---
-mapfile -t shard_files < <(crate_src_files mumble-server-runtime-shard)
+mapfile -t shard_files < <(crate_src_files \
+  mumble-server-runtime-shard runtime/crates/shard)
 forbid "shard/no-net" \
        '(std::net|tokio::net|TcpListener|TcpStream|UdpSocket)' "${shard_files[@]}"
 
 # --- Crates centrales : aucun concept du flavor de démonstration ---
-for central in mumble-server-runtime-protocol mumble-server-runtime-crypto mumble-server-runtime-shard mumble-server-runtime-gateway; do
-  mapfile -t central_files < <(crate_src_files "$central")
+central_crates=(
+  "protocol|mumble-server-runtime-protocol|runtime/crates/protocol"
+  "crypto|mumble-server-runtime-crypto|runtime/crates/crypto"
+  "shard|mumble-server-runtime-shard|runtime/crates/shard"
+  "gateway|mumble-server-runtime-gateway|runtime/crates/gateway"
+)
+for central_spec in "${central_crates[@]}"; do
+  IFS='|' read -r central old_dir new_dir <<< "$central_spec"
+  mapfile -t central_files < <(crate_src_files "$old_dir" "$new_dir")
   forbid "$central/no-demo-flavor" \
          '([Aa]urora|[Bb]orealis|mumble-server-runtime[_-]arena)' "${central_files[@]}"
 done
 
 # --- mumble-server-runtime-protocol / mumble-server-runtime-crypto : crates purs, sans runtime ni IO ---
-for pure in mumble-server-runtime-protocol mumble-server-runtime-crypto; do
-  mapfile -t pure_files < <(crate_src_files "$pure")
+pure_crates=(
+  "protocol|mumble-server-runtime-protocol|runtime/crates/protocol"
+  "crypto|mumble-server-runtime-crypto|runtime/crates/crypto"
+)
+for pure_spec in "${pure_crates[@]}"; do
+  IFS='|' read -r pure old_dir new_dir <<< "$pure_spec"
+  mapfile -t pure_files < <(crate_src_files "$old_dir" "$new_dir")
   forbid "$pure/no-tokio"      '\btokio\b'                          "${pure_files[@]}"
   forbid "$pure/no-net"        'std::net'                           "${pure_files[@]}"
   forbid "$pure/no-fs"         'std::fs'                            "${pure_files[@]}"
