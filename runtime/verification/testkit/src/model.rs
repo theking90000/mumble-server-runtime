@@ -63,7 +63,7 @@ impl ClientModel {
     /// Apply one server->client control message, enforcing every §20 invariant it
     /// touches. Panics on any violation (the model's contract, §26.6).
     ///
-    // REF: references/mumble/src/Mumble.proto:ChannelState, UserState, TextMessage,
+    // REF: runtime/references/mumble/src/Mumble.proto:ChannelState, UserState, TextMessage,
     // PermissionDenied, ACL, ContextAction, UserList, VoiceTarget, PermissionQuery,
     // UserStats, RequestBlob, and PluginDataTransmission entity reference fields.
     pub fn apply(&mut self, message: &ControlMessage) {
@@ -134,8 +134,8 @@ impl ClientModel {
 
     /// Apply one server-to-client audio message.
     ///
-    // REF: references/mumble/src/MumbleUDP.proto:Audio.sender_session
-    // REF: references/mumble/src/mumble/ServerHandler.cpp:handleVoicePacket
+    // REF: runtime/references/mumble/src/MumbleUDP.proto:Audio.sender_session
+    // REF: runtime/references/mumble/src/mumble/ServerHandler.cpp:handleVoicePacket
     pub fn apply_audio(&self, audio: &udp::Audio) {
         self.check_session_reference(audio.sender_session, "Audio.sender_session");
     }

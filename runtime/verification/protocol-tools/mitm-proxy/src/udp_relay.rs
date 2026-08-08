@@ -8,13 +8,13 @@
 //! tell clients apart (mirroring the Phase 0 recording proxy).
 //!
 //! Address -> session correlation follows the real server:
-//! REF: references/mumble/src/murmur/Server.cpp : `Server::run` UDP loop — a
+//! REF: runtime/references/mumble/src/murmur/Server.cpp : `Server::run` UDP loop — a
 //!      datagram from a known peer address uses that peer's `CryptState`; from an
 //!      unknown peer the server loops the users sharing the same host IP
 //!      (`qhHostUsers`) and binds the address on the first `checkDecrypt` success
 //!      (`qhPeerUsers.insert`). Unencrypted connectivity pings are answered before
 //!      any association is attempted.
-//! REF: references/mumble/src/murmur/Server.cpp : `Server::checkDecrypt` — a
+//! REF: runtime/references/mumble/src/murmur/Server.cpp : `Server::checkDecrypt` — a
 //!      failed decrypt is side-effect-free (OCB2 `decrypt` restores its IV and
 //!      writes no replay history on failure, see mumble-server-runtime-crypto), so trying one
 //!      datagram against several candidate domains cannot corrupt them. That is
