@@ -19,7 +19,7 @@ members = [
     # Verificateur indépendant : client Mumble simule et modele strict.
     "runtime/verification/testkit",
     # Application Controller : gRPC declaratif compose au-dessus du runtime.
-    "integrations/controller/server-rust",
+    "control-plane/server-rust",
 ]
 
 [workspace.package]

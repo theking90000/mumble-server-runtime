@@ -73,7 +73,7 @@ published -> the Mumble generation produced by that render
 
 ## Repository layout
 
-The contract and the Java SDK live under `integrations/controller`:
+The contract and the Java SDK live under `control-plane`:
 
 - `contract` holds the canonical versioned Protobuf/gRPC definition. Its
   compiled descriptor digest is pinned in CI, so a wire-incompatible edit fails

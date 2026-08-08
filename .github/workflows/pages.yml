@@ -48,8 +48,8 @@ jobs:
           java-version: "17"
           cache: gradle
           cache-dependency-path: |
-            integrations/controller/**/*.gradle.kts
-            integrations/controller/gradle/wrapper/gradle-wrapper.properties
+            control-plane/**/*.gradle.kts
+            control-plane/gradle/wrapper/gradle-wrapper.properties
 
       - name: mdbook build
         run: mdbook build
@@ -60,7 +60,7 @@ jobs:
         run: cargo doc --workspace --no-deps --all-features
 
       - name: Controller JavaDoc
-        working-directory: integrations/controller
+        working-directory: control-plane
         run: ./gradlew --no-daemon -Dorg.gradle.java.installations.paths="$JAVA_HOME,$JAVA8_HOME" :sdk-java:javadoc
 
       - name: Assembler le site
@@ -71,7 +71,7 @@ jobs:
           mkdir -p site/api
           cp -r target/doc/. site/api/
           mkdir -p site/controller
-          cp -r integrations/controller/sdk-java/build/docs/javadoc/. site/controller/
+          cp -r control-plane/sdk-java/build/docs/javadoc/. site/controller/
           # `cargo doc` sur un workspace multi-crates ne produit pas d'index
           # racine : sans redirection, /api/ renvoie un 404.
           if [ ! -f site/api/index.html ]; then

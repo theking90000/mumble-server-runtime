@@ -47,7 +47,7 @@ Maven:
 > **Work in progress.** No public release exists yet, so the coordinates above
 > do not resolve from any repository. Until the first release, build the
 > artifact locally with `./gradlew publishToMavenLocal` from
-> `integrations/controller`, add `mavenLocal()` to your repositories, and depend
+> `control-plane`, add `mavenLocal()` to your repositories, and depend
 > on version `0.1.0-SNAPSHOT`.
 
 The SDK brings gRPC and Protobuf with it. In a Minecraft plugin those must be
