@@ -59,7 +59,7 @@ par-crate) et `ci/dep-direction.sh` (via `cargo metadata`) :
 
 | Zone                                 | Interdit                                                                     |
 | ------------------------------------ | ---------------------------------------------------------------------------- |
-| `mumble-server-runtime-shard/src`                  | sockets (`std::net`, `tokio::net`, `TcpListener`, `TcpStream`, `UdpSocket`)  |
+| `runtime/crates/shard/src`                        | sockets (`std::net`, `tokio::net`, `TcpListener`, `TcpStream`, `UdpSocket`)  |
 | crates centraux                      | importer le flavor de démonstration `mumble-server-runtime-arena`                          |
 | `mumble-server-runtime-protocol`, `mumble-server-runtime-crypto` | `tokio`, IO (`std::net`, `std::fs`) — crates purs                            |
 | tout le workspace                    | `.unwrap()` hors tests, `static mut`, `unsafe` sans commentaire `// SAFETY:` |

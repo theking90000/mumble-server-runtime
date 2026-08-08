@@ -7,11 +7,11 @@ members = [
     "tools/corpus-decode",
     "tools/mitm-proxy",
     # Fondations pures.
-    "mumble-server-runtime-protocol",
-    "mumble-server-runtime-crypto",
+    "runtime/crates/protocol",
+    "runtime/crates/crypto",
     # Runtime courant : logique de shard sans IO, puis gateway TLS/TCP/UDP.
-    "mumble-server-runtime-shard",
-    "mumble-server-runtime-gateway",
+    "runtime/crates/shard",
+    "runtime/crates/gateway",
     # Composition et charge de demonstration.
     "tools/mumble-server-runtime-arena",
     "tools/mumble-server-runtime-stress",
@@ -33,10 +33,10 @@ authors = ["Mumble Server Runtime contributors"]
 # The verifier inherits runtime paths from the workspace so a mechanical crate
 # move never requires an implementation diff to edit verifier-owned manifests.
 [workspace.dependencies]
-mumble-server-runtime-protocol = { path = "mumble-server-runtime-protocol" }
-mumble-server-runtime-crypto = { path = "mumble-server-runtime-crypto" }
-mumble-server-runtime-shard = { path = "mumble-server-runtime-shard" }
-mumble-server-runtime-gateway = { path = "mumble-server-runtime-gateway" }
+mumble-server-runtime-protocol = { path = "runtime/crates/protocol" }
+mumble-server-runtime-crypto = { path = "runtime/crates/crypto" }
+mumble-server-runtime-shard = { path = "runtime/crates/shard" }
+mumble-server-runtime-gateway = { path = "runtime/crates/gateway" }
 
 # Lints partagés — encodent une partie de R4 au niveau du compilateur. Chaque
 # crate les active via `[lints] workspace = true`. Le reste de R4 est applique

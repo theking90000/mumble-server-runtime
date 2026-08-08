@@ -3,7 +3,7 @@
 //! These drive the shards by hand - `handle` then `reconcile` - rather than
 //! through sockets, so every assertion is about the model and none of them can
 //! be flaky. The end-to-end path through TLS and UDP is exercised separately, in
-//! `mumble-server-runtime-gateway/tests/gateway.rs`.
+//! `runtime/crates/gateway/tests/gateway.rs`.
 #![allow(clippy::expect_used)]
 
 use std::collections::BTreeSet;

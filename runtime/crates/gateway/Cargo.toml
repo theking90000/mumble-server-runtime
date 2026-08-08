@@ -15,9 +15,9 @@ name = "mumble_server_runtime_gateway"
 path = "src/mumble_server_runtime_gateway.rs"
 
 [dependencies]
-mumble-server-runtime-protocol = { path = "../mumble-server-runtime-protocol" }
-mumble-server-runtime-crypto = { path = "../mumble-server-runtime-crypto" }
-mumble-server-runtime-shard = { path = "../mumble-server-runtime-shard" }
+mumble-server-runtime-protocol = { path = "../protocol" }
+mumble-server-runtime-crypto = { path = "../crypto" }
+mumble-server-runtime-shard = { path = "../shard" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "sync", "time", "signal"] }
 tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12", "logging"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }

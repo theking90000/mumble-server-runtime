@@ -10,10 +10,10 @@
 use std::path::PathBuf;
 
 const PROTOS: &[&str] = &[
-    "../references/vendored/Mumble.proto",
-    "../references/vendored/MumbleUDP.proto",
+    "../../../references/vendored/Mumble.proto",
+    "../../../references/vendored/MumbleUDP.proto",
 ];
-const INCLUDES: &[&str] = &["../references/vendored"];
+const INCLUDES: &[&str] = &["../../../references/vendored"];
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let file_descriptors = protox::compile(PROTOS, INCLUDES)?;
@@ -26,6 +26,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     for proto in PROTOS {
         println!("cargo:rerun-if-changed={proto}");
     }
-    println!("cargo:rerun-if-changed=../references/mumble.pin");
+    println!("cargo:rerun-if-changed=../../../references/mumble.pin");
     Ok(())
 }

@@ -22,6 +22,6 @@ name = "corpus-decode"
 path = "src/main.rs"
 
 [dependencies]
-mumble-server-runtime-protocol = { path = "../../mumble-server-runtime-protocol" }
-mumble-server-runtime-crypto = { path = "../../mumble-server-runtime-crypto" }
+mumble-server-runtime-protocol = { path = "../../runtime/crates/protocol" }
+mumble-server-runtime-crypto = { path = "../../runtime/crates/crypto" }
 anyhow = "1"
