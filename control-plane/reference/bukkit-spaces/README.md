@@ -1,7 +1,7 @@
 # Bukkit example plugin
 
 A buildable version of the plugin described in
-[`A Minecraft plugin`](../../../../docs/book/controller/minecraft.md). It opens
+[`A Minecraft plugin`](../../../docs/book/controller/minecraft.md). It opens
 one controller session, registers a participant per online player, keys the
 Space on the player's world, sends a copyable `mumble://` join link, and releases
 the participant on quit. A `/voice` command and a live sidebar expose the state the
@@ -13,7 +13,7 @@ as-is. The SDK has no Minecraft dependency, and nothing here is required by it.
 ## Building
 
 ```sh
-cd integrations/controller/examples/bukkit-plugin
+cd control-plane/reference/bukkit-spaces
 ../../gradlew build
 ```
 
@@ -121,4 +121,4 @@ never is.
 
 - Spigot 1.8.8 or newer, on Java 8 or newer.
 - A running controller server; see
-  [`The controller server`](../../../../docs/book/controller/server.md).
+  [`The controller server`](../../../docs/book/controller/server.md).

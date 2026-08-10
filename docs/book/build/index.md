@@ -18,7 +18,7 @@ Terms used here without definition are defined in
 ## The example to read
 
 Every code fragment in this chapter is drawn from the demonstration
-application, which lives under `tools/mumble-server-runtime-arena/` and builds
+application, which lives under `runtime/reference/arena/` and builds
 with the workspace.
 
 | file | what to take from it |

@@ -25,5 +25,5 @@ To build the same documentation locally:
 
 ```console
 $ cargo doc --workspace --no-deps --all-features --open
-$ cd integrations/controller && ./gradlew javadoc
+$ cd control-plane && ./gradlew javadoc
 ```

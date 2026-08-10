@@ -10,7 +10,7 @@ Current modules:
 - `contract`: the canonical versioned Protobuf/gRPC contract;
 - `sdk-java`: the Java 8 compatible `ControllerSession` SDK;
 - `server-rust`: the composed gRPC, gateway and dynamic-Space server;
-- `examples/bukkit-plugin`: a buildable Spigot 1.8 plugin using the SDK, kept as
+- `reference/bukkit-spaces`: a buildable Spigot 1.8 plugin using the SDK, kept as
   a separate Gradle build.
 
 The Java API uses the package `be.theking90000.mumble.controller` and is published as:
@@ -30,7 +30,7 @@ The Rust server is an application crate. It depends on the gateway and shard
 runtime, while the core crates remain independent of Controller vocabulary.
 
 The protocol model and its executable Java reducer are described in the
-[`Controller integration`](../../docs/book/controller/index.md) section of the book.
+[`Controller integration`](../docs/book/controller/index.md) section of the book.
 
 Run the integration checks from this directory:
 

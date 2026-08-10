@@ -22,8 +22,8 @@ anyhow = "1"
 base64 = "0.22"
 clap = { version = "4", features = ["derive"] }
 getrandom = "0.4"
-mumble-server-runtime-gateway = { path = "../../../runtime/crates/gateway" }
-mumble-server-runtime-shard = { path = "../../../runtime/crates/shard" }
+mumble-server-runtime-gateway = { path = "../../runtime/crates/gateway" }
+mumble-server-runtime-shard = { path = "../../runtime/crates/shard" }
 prost = "=0.14.4"
 prost-types = "=0.14.4"
 rustls-pemfile = "2"
@@ -39,8 +39,8 @@ protoc-bin-vendored = "=3.2.0"
 tonic-prost-build = "=0.14.6"
 
 [dev-dependencies]
-mumble-server-runtime-protocol = { path = "../../../runtime/crates/protocol" }
-mumble-server-runtime-testkit = { path = "../../../runtime/verification/testkit" }
+mumble-server-runtime-protocol = { path = "../../runtime/crates/protocol" }
+mumble-server-runtime-testkit = { path = "../../runtime/verification/testkit" }
 tempfile = "3"
 tokio = { version = "1", features = ["process", "test-util"] }
 

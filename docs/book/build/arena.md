@@ -177,7 +177,7 @@ client already holds rather than rebuilt, so no reconnection occurs.
 
 | file | contents |
 | --- | --- |
-| `tools/mumble-server-runtime-arena/src/main.rs` | the composition: gateway, both shards, the update task |
+| `runtime/reference/arena/src/main.rs` | the composition: gateway, both shards, the update task |
 | `.../src/router.rs` | where an arrival goes and what the credential buys |
 | `.../src/lobby.rs` | the flat room, the intents, the migration request |
 | `.../src/arena.rs` | scopes, overlays and the audio relation |

@@ -27,16 +27,13 @@ mumble-server-runtime-gateway -> mumble-server-runtime-shard -> mumble-server-ru
 
 Le benchmark actif est `ci/bench-shard.sh`.
 
-## Fondation d'intégration Controller
+## Implémentation Controller
 
-`integrations/controller` contient le contrat Protobuf/gRPC v1 et le SDK Java 8
-`ControllerSession`. Le SDK maintient un état désiré, réconcilie ses handles de
-participants et cache des projections de Spaces à travers une frontière de
-transport testable.
-
-Cette fondation n'est pas reliée au runtime courant : aucun `adapter-rust`,
-serveur gRPC de production ou flavor Minecraft n'est implémenté. Elle ne prouve
-donc aucune intégration live avec les crates Rust.
+`control-plane` contient le contrat Protobuf/gRPC v1, le SDK Java 8
+`ControllerSession`, le serveur Rust composé au-dessus du runtime et la
+référence Bukkit Spaces. Le serveur possède les sessions, leases, fencing,
+révisions et publications de Spaces. L'interop de CI relie une vraie session
+Java au serveur Rust puis à des clients Mumble simulés.
 
 ## Pipeline retiré
 
@@ -70,7 +67,7 @@ cargo fmt --all --check
 RUSTFLAGS="-D warnings" cargo clippy --workspace --all-targets --all-features
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --all-features
 RUSTFLAGS="-D warnings" cargo test --workspace --all-features
-(cd integrations/controller && ./gradlew check)
+(cd control-plane && ./gradlew check)
 ```
 
 Les tests live ouvrent des sockets loopback locales.

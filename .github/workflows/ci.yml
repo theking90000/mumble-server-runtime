@@ -60,7 +60,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: integrations/controller
+        working-directory: control-plane
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
@@ -74,7 +74,7 @@ jobs:
           distribution: temurin
           java-version: "17"
           cache: gradle
-          cache-dependency-path: integrations/controller/**/*.gradle.kts
+          cache-dependency-path: control-plane/**/*.gradle.kts
       - name: SDK build and checks on a Java 8 test runtime
         run: ./gradlew --no-daemon -Dorg.gradle.java.installations.paths="$JAVA_HOME,$JAVA8_HOME" build
 
@@ -96,7 +96,7 @@ jobs:
           distribution: temurin
           java-version: "17"
           cache: gradle
-          cache-dependency-path: integrations/controller/**/*.gradle.kts
+          cache-dependency-path: control-plane/**/*.gradle.kts
       - name: Real ControllerSession to Mumble path
         run: ci/controller-interop.sh
 
