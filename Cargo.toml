@@ -20,6 +20,8 @@ members = [
     "runtime/verification/testkit",
     # Verificateur du contrat de synchronisation Controller.
     "control-plane/verification/core-conformance",
+    # Socle de synchronisation Controller, pur et indépendant du runtime.
+    "control-plane/core/rust",
     # Application Controller : gRPC declaratif compose au-dessus du runtime.
     "control-plane/server-rust",
 ]

@@ -1,0 +1,20 @@
+[package]
+name = "mumble-controller-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Runtime-independent Controller synchronization state machine"
+publish = false
+
+[lib]
+name = "mumble_controller_core"
+path = "src/mumble_controller_core.rs"
+
+[dependencies]
+thiserror = "2"
+
+[lints]
+workspace = true
