@@ -6,7 +6,6 @@ pub mod config;
 mod profile;
 mod server;
 mod service;
-mod space;
 
 pub mod protocol {
     tonic::include_proto!("mumble.controller.v1");

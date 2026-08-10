@@ -1,16 +1,38 @@
+//! Built-in Controller profile that renders one root channel and audio domain per named Space.
+
 use std::collections::BTreeMap;
 
-use mumble_controller_host::{SnapshotReader, VersionedSnapshot};
-use mumble_server_runtime_shard::{
+use mumble_controller_host::runtime::{
     Audience, ConnectionId, DomainId, Narrow, Occupant, Reply, Scope, ScopeSet, ShardBuilder,
     ShardLogic, UserFlags, VoiceEvent,
 };
-use tokio::sync::mpsc;
+use mumble_controller_host::{SnapshotReader, VersionedSnapshot};
 
-use crate::actor::{ActorCommand, SpaceEvent};
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SpaceEvent {
+    pub connection: ConnectionId,
+    pub kind: SpaceEventKind,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SpaceEventKind {
+    Connected,
+    Disconnected,
+    SelfState { self_mute: bool, self_deaf: bool },
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct RenderParticipant {
+pub struct SpaceReport {
+    pub space_key: String,
+    pub event: SpaceEvent,
+}
+
+pub trait SpaceReporter: Send + 'static {
+    fn try_report(&self, report: SpaceReport) -> Result<(), SpaceReport>;
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RenderParticipant {
     pub participant_id: String,
     pub connection: Option<ConnectionId>,
     pub display_name: String,
@@ -22,7 +44,7 @@ pub(crate) struct RenderParticipant {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct RenderState {
+pub struct RenderState {
     pub application_revision: u64,
     pub space_key: String,
     pub participants: Vec<RenderParticipant>,
@@ -34,24 +56,20 @@ impl VersionedSnapshot for RenderState {
     }
 }
 
-pub(crate) struct ControllerSpaceLogic {
+pub struct ControllerSpaceLogic<R> {
     space_key: String,
     desired: SnapshotReader<RenderState>,
-    actor: mpsc::Sender<ActorCommand>,
+    reporter: R,
     self_state: BTreeMap<ConnectionId, (bool, bool)>,
     undelivered_departures: Vec<ConnectionId>,
 }
 
-impl ControllerSpaceLogic {
-    pub(crate) fn new(
-        space_key: String,
-        desired: SnapshotReader<RenderState>,
-        actor: mpsc::Sender<ActorCommand>,
-    ) -> Self {
+impl<R: SpaceReporter> ControllerSpaceLogic<R> {
+    pub fn new(space_key: String, desired: SnapshotReader<RenderState>, reporter: R) -> Self {
         Self {
             space_key,
             desired,
-            actor,
+            reporter,
             self_state: BTreeMap::new(),
             undelivered_departures: Vec::new(),
         }
@@ -83,28 +101,30 @@ impl ControllerSpaceLogic {
     /// bound to a dead connection, keep rendering it, and never let the Space
     /// go empty. Departures are therefore retried, bounded by live connections.
     fn report(&mut self, event: SpaceEvent) {
-        if let Err(error) = self.actor.try_send(ActorCommand::SpaceEvent {
+        let report = SpaceReport {
             space_key: self.space_key.clone(),
             event,
-        }) {
-            if let SpaceEvent::Disconnected(connection) = event {
-                self.undelivered_departures.push(connection);
+        };
+        if let Err(report) = self.reporter.try_report(report) {
+            if report.event.kind == SpaceEventKind::Disconnected {
+                self.undelivered_departures.push(report.event.connection);
             }
-            eprintln!(
-                "mumble-controller-server: dropping a Space event under backpressure: {error}"
-            );
+            eprintln!("mumble-controller-spaces: dropping an event under backpressure");
         }
     }
 
     fn flush_departures(&mut self) {
         let pending = std::mem::take(&mut self.undelivered_departures);
         for connection in pending {
-            self.report(SpaceEvent::Disconnected(connection));
+            self.report(SpaceEvent {
+                connection,
+                kind: SpaceEventKind::Disconnected,
+            });
         }
     }
 }
 
-impl ShardLogic for ControllerSpaceLogic {
+impl<R: SpaceReporter> ShardLogic for ControllerSpaceLogic<R> {
     fn render(&mut self, out: &mut ShardBuilder<'_>) {
         self.flush_departures();
         let desired = self.desired.latest();
@@ -149,11 +169,17 @@ impl ShardLogic for ControllerSpaceLogic {
         self.flush_departures();
         match event {
             VoiceEvent::Connected { connection } => {
-                self.report(SpaceEvent::Connected(*connection));
+                self.report(SpaceEvent {
+                    connection: *connection,
+                    kind: SpaceEventKind::Connected,
+                });
             }
             VoiceEvent::Disconnected { connection, .. } => {
                 self.self_state.remove(connection);
-                self.report(SpaceEvent::Disconnected(*connection));
+                self.report(SpaceEvent {
+                    connection: *connection,
+                    kind: SpaceEventKind::Disconnected,
+                });
             }
             VoiceEvent::Migrated { connection, .. } => {
                 self.self_state.remove(connection);
@@ -171,10 +197,12 @@ impl ShardLogic for ControllerSpaceLogic {
                     current.1 = *value;
                 }
                 let (self_mute, self_deaf) = *current;
-                self.report(SpaceEvent::SelfState {
+                self.report(SpaceEvent {
                     connection: *connection,
-                    self_mute,
-                    self_deaf,
+                    kind: SpaceEventKind::SelfState {
+                        self_mute,
+                        self_deaf,
+                    },
                 });
             }
             VoiceEvent::Said {
@@ -198,11 +226,47 @@ impl ShardLogic for ControllerSpaceLogic {
 mod tests {
     #![allow(clippy::expect_used)]
 
+    use std::collections::VecDeque;
     use std::sync::Arc;
+    use std::sync::Mutex;
 
-    use mumble_server_runtime_shard::{ChannelKey, Spoken};
+    use mumble_controller_host::runtime::{ChannelKey, Spoken};
 
     use super::*;
+
+    #[derive(Clone)]
+    struct TestReporter {
+        capacity: usize,
+        events: Arc<Mutex<VecDeque<SpaceReport>>>,
+    }
+
+    impl TestReporter {
+        fn new(capacity: usize) -> Self {
+            Self {
+                capacity,
+                events: Arc::new(Mutex::new(VecDeque::new())),
+            }
+        }
+
+        fn pop(&self) -> Option<SpaceReport> {
+            self.events.lock().expect("event queue lock").pop_front()
+        }
+
+        fn is_empty(&self) -> bool {
+            self.events.lock().expect("event queue lock").is_empty()
+        }
+    }
+
+    impl SpaceReporter for TestReporter {
+        fn try_report(&self, report: SpaceReport) -> Result<(), SpaceReport> {
+            let mut events = self.events.lock().expect("event queue lock");
+            if events.len() >= self.capacity {
+                return Err(report);
+            }
+            events.push_back(report);
+            Ok(())
+        }
+    }
 
     fn participant(
         connection: ConnectionId,
@@ -225,17 +289,17 @@ mod tests {
         participants: Vec<RenderParticipant>,
         actor_capacity: usize,
     ) -> (
-        ControllerSpaceLogic,
+        ControllerSpaceLogic<TestReporter>,
         mumble_controller_host::SnapshotPublisher<RenderState>,
-        mpsc::Receiver<ActorCommand>,
+        TestReporter,
     ) {
         let (desired, receiver) = mumble_controller_host::snapshot_channel(Arc::new(RenderState {
             application_revision: 1,
             space_key: "lobby".to_owned(),
             participants,
         }));
-        let (actor, events) = mpsc::channel(actor_capacity);
-        let logic = ControllerSpaceLogic::new("lobby".to_owned(), receiver, actor);
+        let events = TestReporter::new(actor_capacity);
+        let logic = ControllerSpaceLogic::new("lobby".to_owned(), receiver, events.clone());
         (logic, desired, events)
     }
 
@@ -246,7 +310,7 @@ mod tests {
     /// entry with `(false, false)` un-mutes a client that only asked to deafen.
     #[test]
     fn a_partial_self_state_keeps_the_flag_it_does_not_carry() {
-        let (mut logic, _desired, mut events) =
+        let (mut logic, _desired, events) =
             logic_with(vec![participant(ConnectionId(7), true, false)], 4);
         let mut reply = Reply::default();
         logic.observe(
@@ -258,16 +322,15 @@ mod tests {
             &mut reply,
         );
 
-        let ActorCommand::SpaceEvent { event, .. } = events.try_recv().expect("a self-state event")
-        else {
-            panic!("the logic must report a Space event")
-        };
+        let event = events.pop().expect("a self-state event").event;
         assert_eq!(
             event,
-            SpaceEvent::SelfState {
+            SpaceEvent {
                 connection: ConnectionId(7),
-                self_mute: true,
-                self_deaf: true,
+                kind: SpaceEventKind::SelfState {
+                    self_mute: true,
+                    self_deaf: true,
+                },
             }
         );
     }
@@ -279,7 +342,7 @@ mod tests {
     /// let the Space go empty.
     #[test]
     fn a_departure_refused_under_backpressure_is_retried() {
-        let (mut logic, _desired, mut events) =
+        let (mut logic, _desired, events) =
             logic_with(vec![participant(ConnectionId(7), false, false)], 1);
         let mut reply = Reply::default();
         logic.observe(
@@ -296,12 +359,16 @@ mod tests {
             &mut reply,
         );
 
-        let ActorCommand::SpaceEvent { event, .. } = events.try_recv().expect("the arrival") else {
-            panic!("the logic must report a Space event")
-        };
-        assert_eq!(event, SpaceEvent::Connected(ConnectionId(7)));
+        let event = events.pop().expect("the arrival").event;
+        assert_eq!(
+            event,
+            SpaceEvent {
+                connection: ConnectionId(7),
+                kind: SpaceEventKind::Connected,
+            }
+        );
         assert!(
-            events.try_recv().is_err(),
+            events.is_empty(),
             "the departure could not fit in the mailbox"
         );
 
@@ -311,12 +378,14 @@ mod tests {
             },
             &mut reply,
         );
-        let ActorCommand::SpaceEvent { event, .. } =
-            events.try_recv().expect("the retried departure")
-        else {
-            panic!("the logic must report a Space event")
-        };
-        assert_eq!(event, SpaceEvent::Disconnected(ConnectionId(7)));
+        let event = events.pop().expect("the retried departure").event;
+        assert_eq!(
+            event,
+            SpaceEvent {
+                connection: ConnectionId(7),
+                kind: SpaceEventKind::Disconnected,
+            }
+        );
     }
 
     #[test]
@@ -327,8 +396,8 @@ mod tests {
             participants: Vec::new(),
         });
         let (_desired, receiver) = mumble_controller_host::snapshot_channel(initial);
-        let (actor, _events) = mpsc::channel(1);
-        let mut logic = ControllerSpaceLogic::new("lobby".to_owned(), receiver, actor);
+        let mut logic =
+            ControllerSpaceLogic::new("lobby".to_owned(), receiver, TestReporter::new(1));
         let mut reply = Reply::default();
         logic.observe(
             &VoiceEvent::Said {

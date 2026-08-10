@@ -730,6 +730,7 @@ dependencies = [
  "getrandom 0.4.3",
  "mumble-controller-core",
  "mumble-controller-host",
+ "mumble-controller-spaces",
  "mumble-server-runtime-gateway",
  "mumble-server-runtime-protocol",
  "mumble-server-runtime-shard",
@@ -746,6 +747,13 @@ dependencies = [
  "tonic",
  "tonic-prost",
  "tonic-prost-build",
+]
+
+[[package]]
+name = "mumble-controller-spaces"
+version = "0.1.0"
+dependencies = [
+ "mumble-controller-host",
 ]
 
 [[package]]

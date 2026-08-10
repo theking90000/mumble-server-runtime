@@ -1,0 +1,20 @@
+[package]
+name = "mumble-controller-spaces"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Built-in named Spaces profile for the Mumble Controller"
+publish = false
+
+[lib]
+name = "mumble_controller_spaces"
+path = "src/mumble_controller_spaces.rs"
+
+[dependencies]
+mumble-controller-host = { path = "../../../host/rust" }
+
+[lints]
+workspace = true

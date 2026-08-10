@@ -10,6 +10,10 @@ use mumble_controller_core::{
     SessionError, SessionId, SessionRegistry,
 };
 use mumble_controller_host::{HostError, MumbleHost, SnapshotPublisher, snapshot_channel};
+use mumble_controller_spaces::{
+    ControllerSpaceLogic, RenderParticipant, RenderState, SpaceEvent, SpaceEventKind, SpaceReport,
+    SpaceReporter,
+};
 use mumble_server_runtime_gateway::RuntimeHandle;
 use mumble_server_runtime_shard::{ConnectionId, ReconcileReport, ShardHandle, ShardId};
 use tokio::sync::{mpsc, oneshot, watch};
@@ -29,20 +33,8 @@ use crate::protocol::{
     ResyncRequired, ServerFrame, SessionClosing, SessionReady, SpaceAbsent, SpaceClosed,
     SpaceParticipant, SpaceSnapshot,
 };
-use crate::space::{ControllerSpaceLogic, RenderParticipant, RenderState};
 
 pub(crate) type ResponseSender = mpsc::Sender<Result<ServerFrame, Status>>;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum SpaceEvent {
-    Connected(ConnectionId),
-    Disconnected(ConnectionId),
-    SelfState {
-        connection: ConnectionId,
-        self_mute: bool,
-        self_deaf: bool,
-    },
-}
 
 pub(crate) enum ActorCommand {
     Open {
@@ -62,15 +54,26 @@ pub(crate) enum ActorCommand {
         credential: Option<String>,
         response: oneshot::Sender<Result<ShardId, String>>,
     },
-    SpaceEvent {
-        space_key: String,
-        event: SpaceEvent,
-    },
+    SpaceEvent(SpaceReport),
     Reconciled {
         space_key: String,
         application_revision: u64,
         report: ReconcileReport,
     },
+}
+
+#[derive(Clone)]
+struct ActorSpaceReporter {
+    sender: mpsc::Sender<ActorCommand>,
+}
+
+impl SpaceReporter for ActorSpaceReporter {
+    fn try_report(&self, report: SpaceReport) -> Result<(), SpaceReport> {
+        let retained = report.clone();
+        self.sender
+            .try_send(ActorCommand::SpaceEvent(report))
+            .map_err(|_error| retained)
+    }
 }
 
 #[derive(Clone)]
@@ -194,8 +197,8 @@ impl ControllerActor {
                 credential,
                 response,
             } => self.route(connection, credential, response),
-            ActorCommand::SpaceEvent { space_key, event } => {
-                self.space_event(&space_key, event);
+            ActorCommand::SpaceEvent(report) => {
+                self.space_event(&report.space_key, report.event);
             }
             ActorCommand::Reconciled {
                 space_key,
@@ -1373,7 +1376,15 @@ impl ControllerActor {
         let key_for_report = space_key.to_owned();
         let (report_sender, mut report_receiver) = watch::channel(None::<(u64, ReconcileReport)>);
         let handle = self.host.create_shard_with_reports(
-            move |_handle| ControllerSpaceLogic::new(key_for_logic, receiver, actor_for_logic),
+            move |_handle| {
+                ControllerSpaceLogic::new(
+                    key_for_logic,
+                    receiver,
+                    ActorSpaceReporter {
+                        sender: actor_for_logic,
+                    },
+                )
+            },
             move |report| {
                 report_sender.send_replace(Some((
                     publication_marker.rendered_revision(),
@@ -1551,11 +1562,7 @@ impl ControllerActor {
     }
 
     fn space_event(&mut self, space_key: &str, event: SpaceEvent) {
-        let connection = match event {
-            SpaceEvent::Connected(connection)
-            | SpaceEvent::Disconnected(connection)
-            | SpaceEvent::SelfState { connection, .. } => connection,
-        };
+        let connection = event.connection;
         let participant_id = self.host.participant(connection).map(str::to_owned);
         let Some(participant_id) = participant_id else {
             return;
@@ -1565,16 +1572,15 @@ impl ControllerActor {
             if participant.spec.space_key != space_key {
                 return;
             }
-            match event {
-                SpaceEvent::Connected(_) => {}
-                SpaceEvent::Disconnected(_) => {
+            match event.kind {
+                SpaceEventKind::Connected => {}
+                SpaceEventKind::Disconnected => {
                     self.host.disconnect(connection);
                     refresh = true;
                 }
-                SpaceEvent::SelfState {
+                SpaceEventKind::SelfState {
                     self_mute,
                     self_deaf,
-                    ..
                 } => {
                     participant.self_mute = self_mute;
                     participant.self_deaf = self_deaf;
