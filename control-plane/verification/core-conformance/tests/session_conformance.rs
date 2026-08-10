@@ -97,6 +97,8 @@ fn desired_state(revision: u64) -> DesiredStateSnapshot {
     }
 }
 
+// The verifier intentionally leaves future protocol fields at their defaults.
+#[allow(clippy::field_reassign_with_default)]
 fn open_frame(
     request: &str,
     controller: &str,
