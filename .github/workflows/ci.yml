@@ -26,7 +26,10 @@ jobs:
       - name: Frontière implémenteur/vérificateur (R2)
         run: |
           if [ "${{ github.event_name }}" = "pull_request" ]; then
-            ci/verifier-boundary.sh "origin/${{ github.base_ref }}"
+            # Actions checks out refs/pull/<n>/merge. Its first parent is the
+            # exact PR base, including for stacked PRs where github.base_ref can
+            # still resolve to the repository default branch.
+            ci/verifier-boundary.sh "HEAD^1"
           else
             ci/verifier-boundary.sh
           fi
