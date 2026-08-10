@@ -30,6 +30,8 @@ jobs:
           else
             ci/verifier-boundary.sh
           fi
+      - name: Autotests des gates structurels
+        run: ci/structural-gates-self-test.sh
 
   build:
     name: fmt + clippy + test

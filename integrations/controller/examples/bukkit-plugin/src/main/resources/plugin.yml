@@ -1,0 +1,16 @@
+name: VoiceExample
+main: be.theking90000.mumble.bukkit.VoicePlugin
+version: ${version}
+author: theking90000
+description: Example Mumble Controller integration; one participant per player, one Space per world.
+
+commands:
+  voice:
+    description: Voice chat link, live state and administrative mute.
+    usage: /voice <link|status|space|board|list|mute|unmute>
+    aliases: [vc]
+
+permissions:
+  voiceexample.admin:
+    description: Lists every participant and applies administrative mutes.
+    default: op
