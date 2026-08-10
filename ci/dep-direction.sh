@@ -43,6 +43,18 @@ FORBIDDEN=(
   "mumble-server-runtime-crypto|mumble-server-runtime-testkit"
   "mumble-server-runtime-shard|mumble-server-runtime-testkit"
   "mumble-server-runtime-gateway|mumble-server-runtime-testkit"
+  "mumble-controller-core|mumble-server-runtime-protocol"
+  "mumble-controller-core|mumble-server-runtime-crypto"
+  "mumble-controller-core|mumble-server-runtime-shard"
+  "mumble-controller-core|mumble-server-runtime-gateway"
+  "mumble-controller-core|mumble-controller-host"
+  "mumble-controller-core|mumble-controller-spaces"
+  "mumble-controller-core|mumble-controller-server"
+  "mumble-controller-core|tokio"
+  "mumble-controller-core|tonic"
+  "mumble-controller-host|mumble-controller-spaces"
+  "mumble-controller-host|mumble-controller-server"
+  "mumble-controller-spaces|mumble-controller-server"
 )
 
 violations=0

@@ -87,6 +87,22 @@ for pure_spec in "${pure_crates[@]}"; do
   forbid "$pure/no-fs"         'std::fs'                            "${pure_files[@]}"
 done
 
+# --- Controller Core : pure synchronization state, without transport or business policy ---
+mapfile -t controller_core_files < <(crate_src_files \
+  control-plane/core/rust)
+forbid "controller-core/no-runtime" \
+       '(mumble[_-]server[_-]runtime|RuntimeHandle|ShardHandle|ShardId|ConnectionId)' "${controller_core_files[@]}"
+forbid "controller-core/no-transport" \
+       '(tokio|tonic|std::net)' "${controller_core_files[@]}"
+forbid "controller-core/no-spaces" \
+       '(SpaceKey|SpaceSnapshot|SpaceParticipant|FetchSpace|ObservedSpaces|mumble[_-]controller[_-]spaces)' "${controller_core_files[@]}"
+
+# --- Controller Host : runtime bridge without a concrete profile policy ---
+mapfile -t controller_host_files < <(crate_src_files \
+  control-plane/host/rust)
+forbid "controller-host/no-spaces" \
+       '(SpaceKey|SpaceSnapshot|SpaceParticipant|FetchSpace|ObservedSpaces|mumble[_-]controller[_-]spaces)' "${controller_host_files[@]}"
+
 echo "== Gates globaux (tout le workspace) =="
 
 mapfile -t all_files < <(find . -type d -name target -prune -o -name '*.rs' ! -path '*/tests/*' ! -name '*_test.rs' -print 2>/dev/null || true)

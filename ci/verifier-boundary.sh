@@ -34,9 +34,9 @@ touches_impl=0
 while IFS= read -r f; do
   [ -n "$f" ] || continue
   case "$f" in
-    conformance/*|runtime/verification/testkit/*|runtime/verification/fixtures/*)
+    conformance/*|runtime/verification/testkit/*|runtime/verification/fixtures/*|control-plane/verification/*)
       touches_verifier=1 ;;
-    runtime/crates/*/src/*|control-plane/server-rust/src/*|control-plane/core/rust/src/*|control-plane/host/rust/src/*|control-plane/implementations/*/rust/src/*)
+    runtime/crates/*/src/*|control-plane/server-rust/src/*|control-plane/server/rust/src/*|control-plane/core/rust/src/*|control-plane/host/rust/src/*|control-plane/implementations/*/rust/src/*)
       touches_impl=1 ;;
   esac
 done <<< "$CHANGED"
