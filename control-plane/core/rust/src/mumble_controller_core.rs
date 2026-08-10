@@ -4,6 +4,13 @@
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
+mod ownership;
+
+pub use ownership::{
+    ClaimMode, ClaimOutcome, ClaimRequest, OwnershipError, OwnershipRegistry, OwnershipState,
+    RevisionOutcome,
+};
+
 pub type SessionId = u64;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
