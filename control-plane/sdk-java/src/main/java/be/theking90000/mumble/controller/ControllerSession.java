@@ -2,6 +2,7 @@ package be.theking90000.mumble.controller;
 
 import com.google.protobuf.ByteString;
 import com.google.protobuf.Duration;
+import be.theking90000.mumble.controller.internal.ProfileMetadata;
 import be.theking90000.mumble.controller.internal.protocol.v1.ClientFrame;
 import be.theking90000.mumble.controller.internal.protocol.v1.CloseSession;
 import be.theking90000.mumble.controller.internal.protocol.v1.CommandErrorCode;
@@ -571,6 +572,7 @@ public final class ControllerSession {
                     .setControllerInstanceId(controllerInstanceId)
                     .setResumeToken(resumeToken)
                     .setDesiredState(buildDesiredStateSnapshot())
+                    .setProfile(ProfileMetadata.spacesProfile())
                     .build();
             sendFrame(ClientFrame.newBuilder()
                     .setRequestId(requestId)
@@ -690,6 +692,10 @@ public final class ControllerSession {
     private void acceptSession(SessionReady ready) {
         if (ready.getSessionToken().isEmpty() || ready.getResumeToken().isEmpty()) {
             failPermanently(new ControllerException("SessionReady contains an empty token"));
+            return;
+        }
+        if (!ready.hasProfile() || !ProfileMetadata.isSpaces(ready.getProfile())) {
+            failPermanently(new ControllerException("SessionReady selected an unexpected profile"));
             return;
         }
         long leaseMillis;
