@@ -11,9 +11,9 @@
 //! forwarded verbatim. Mumble decodes such pings on the raw bytes *before* it
 //! ever attempts decryption, and the encrypted voice plane never collides with
 //! their fixed shapes, so recognising them first is safe.
-//! REF: references/mumble/src/murmur/Server.cpp : `Server::run` (`decodePing`
+//! REF: runtime/references/mumble/src/murmur/Server.cpp : `Server::run` (`decodePing`
 //!      then `checkDecrypt`).
-//! REF: references/mumble/src/MumbleProtocol.cpp : `UDPDecoder::decodePing_legacy`
+//! REF: runtime/references/mumble/src/MumbleProtocol.cpp : `UDPDecoder::decodePing_legacy`
 //!      (12-byte request with four leading zero bytes; 24-byte response) and
 //!      `UDPDecoder::decode` (protobuf ping when `header == UDPMessageType::Ping`).
 //!
@@ -43,7 +43,7 @@ pub enum UdpOutcome {
 pub enum DropReason {
     /// OCB2 rejected it: a replay, an out-of-window late packet, or a tag
     /// mismatch. The real Murmur server drops exactly these the same way.
-    /// REF: references/mumble/src/murmur/Server.cpp : `Server::checkDecrypt`.
+    /// REF: runtime/references/mumble/src/murmur/Server.cpp : `Server::checkDecrypt`.
     Ocb2Rejected,
     /// It decrypted, but the plaintext is not a protobuf UDP envelope: legacy
     /// voice (out of scope per ADR-0001) or corruption. The proxy cannot re-encode

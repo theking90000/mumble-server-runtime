@@ -11,15 +11,15 @@
 //!
 //! 1. Not all UDP is OCB2-encrypted. Before the crypt handshake, the client and
 //!    server exchange **unencrypted legacy connectivity pings** (the server-list
-//!    style ping). REF: references/mumble/src/MumbleProtocol.cpp :
+//!    style ping). REF: runtime/references/mumble/src/MumbleProtocol.cpp :
 //!    `UDPDecoder::decodePing_legacy` (12-byte request with four leading zero
 //!    bytes + 64-bit timestamp; 24-byte response with legacy version, timestamp,
 //!    user/max/bandwidth counts). The Mumble server tries this ping decode BEFORE
-//!    attempting decryption. REF: references/mumble/src/murmur/Server.cpp :
+//!    attempting decryption. REF: runtime/references/mumble/src/murmur/Server.cpp :
 //!    `Server::run` (`decodePing` then `checkDecrypt`).
 //!
 //! 2. The corpus server is Mumble 1.3.4, which predates protobuf UDP
-//!    (introduced in 1.5.0). REF: references/mumble/src/MumbleProtocol.h :
+//!    (introduced in 1.5.0). REF: runtime/references/mumble/src/MumbleProtocol.h :
 //!    `PROTOBUF_INTRODUCTION_VERSION = 1.5.0`. Its encrypted UDP voice plane is
 //!    therefore the **legacy** wire format, which ADR-0001 deliberately excludes
 //!    from `mumble-server-runtime-protocol`. OCB2 decryption (version-independent) still works;
@@ -330,10 +330,10 @@ impl TcpStream {
 /// `server_nonce`; the server is symmetric. So to decrypt a C2S datagram we run
 /// a `CryptState` whose decrypt IV is `client_nonce`, and for S2C, `server_nonce`.
 ///
-/// REF: references/mumble/src/mumble/Messages.cpp : `MainWindow::msgCryptSetup`
+/// REF: runtime/references/mumble/src/mumble/Messages.cpp : `MainWindow::msgCryptSetup`
 ///      -> `csCrypt->setKey(key, client_nonce, server_nonce)`, where
 ///      `setKey(rkey, eiv, div)` sets encrypt_iv=client_nonce, decrypt_iv=server_nonce.
-/// REF: references/mumble/src/murmur/Messages.cpp : the server fills
+/// REF: runtime/references/mumble/src/murmur/Messages.cpp : the server fills
 ///      `server_nonce = getEncryptIV()`, `client_nonce = getDecryptIV()` (symmetric).
 struct CryptContext {
     c2s: CryptState,

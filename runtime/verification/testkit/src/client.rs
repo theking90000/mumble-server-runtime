@@ -49,7 +49,7 @@ impl SimulatedMumbleClient {
 
     /// Connect with an opaque credential in `Authenticate.password`.
     ///
-    /// REF: `references/mumble/src/Mumble.proto:Authenticate.password` defines
+    /// REF: `runtime/references/mumble/src/Mumble.proto:Authenticate.password` defines
     /// the password field used by Mumble clients for server authentication.
     pub async fn connect_with_credential(
         server: SocketAddr,
@@ -241,7 +241,7 @@ impl SimulatedMumbleClient {
             .context("a voice datagram did not authenticate")?;
         match decode_udp(&plaintext).context("decoding voice")? {
             UdpMessage::Audio(audio) => {
-                // REF: references/mumble/src/MumbleUDP.proto:Audio.sender_session
+                // REF: runtime/references/mumble/src/MumbleUDP.proto:Audio.sender_session
                 self.model.apply_audio(&audio);
                 Ok(Some(audio))
             }
@@ -326,7 +326,7 @@ impl FrameReader {
 /// Returns `None` for a malformed setup rather than guessing: a judge that
 /// invents crypto material would report the server's mistakes as its own.
 ///
-/// REF: references/mumble/src/mumble/Messages.cpp : `setKey(key, client_nonce,
+/// REF: runtime/references/mumble/src/mumble/Messages.cpp : `setKey(key, client_nonce,
 ///   server_nonce)` — the client encrypts client-to-server with the client
 ///   nonce and decrypts server-to-client with the server nonce.
 fn client_crypt(setup: &tcp::CryptSetup) -> Option<CryptState> {

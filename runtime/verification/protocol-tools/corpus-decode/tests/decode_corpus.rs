@@ -59,7 +59,7 @@ const SCENARIOS: &[&str] = &[
 ];
 
 fn corpus_dir() -> PathBuf {
-    // CARGO_MANIFEST_DIR is tools/corpus-decode; the corpus is at the root.
+    // CARGO_MANIFEST_DIR is the corpus decoder; fixtures are a verification sibling.
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/corpus")
 }
 

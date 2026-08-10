@@ -9,23 +9,23 @@
 //!
 //! Direction and nonce mapping, traced to the reference:
 //!
-//! REF: references/mumble/src/murmur/Messages.cpp : `Server::msgAuthenticate`
+//! REF: runtime/references/mumble/src/murmur/Messages.cpp : `Server::msgAuthenticate`
 //!      crypt-setup block — the server sends `CryptSetup{key = getRawKey(),
 //!      server_nonce = getEncryptIV(), client_nonce = getDecryptIV()}`. So the
 //!      server encrypts server->client with its encrypt IV (= server_nonce) and
 //!      decrypts client->server with its decrypt IV (= client_nonce).
-//! REF: references/mumble/src/mumble/Messages.cpp : `MainWindow::msgCryptSetup`
+//! REF: runtime/references/mumble/src/mumble/Messages.cpp : `MainWindow::msgCryptSetup`
 //!      — the client calls `setKey(key, client_nonce, server_nonce)`, i.e. its
 //!      encrypt IV = client_nonce and its decrypt IV = server_nonce. Exact mirror
 //!      of the server.
-//! REF: references/vendored/Mumble.proto : `message CryptSetup` — "Either side may
+//! REF: runtime/references/vendored/Mumble.proto : `message CryptSetup` — "Either side may
 //!      request a resync by sending the message without any values filled. The
 //!      resync is performed by sending the message with only the client or server
 //!      nonce filled."
-//! REF: references/mumble/src/murmur/Messages.cpp : `Server::msgCryptSetup` — an
+//! REF: runtime/references/mumble/src/murmur/Messages.cpp : `Server::msgCryptSetup` — an
 //!      empty request is answered with `server_nonce = getEncryptIV()`; a message
 //!      carrying `client_nonce` triggers `setDecryptIV(client_nonce)`.
-//! REF: references/mumble/src/mumble/Messages.cpp : `MainWindow::msgCryptSetup` —
+//! REF: runtime/references/mumble/src/mumble/Messages.cpp : `MainWindow::msgCryptSetup` —
 //!      symmetric: an empty request is answered with `client_nonce =
 //!      getEncryptIV()`; a `server_nonce` alone triggers `setDecryptIV`.
 //!
