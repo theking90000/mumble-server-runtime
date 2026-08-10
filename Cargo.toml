@@ -18,6 +18,8 @@ members = [
     "runtime/tools/bench-shard",
     # Verificateur indépendant : client Mumble simule et modele strict.
     "runtime/verification/testkit",
+    # Verificateur du contrat de synchronisation Controller.
+    "control-plane/verification/core-conformance",
     # Application Controller : gRPC declaratif compose au-dessus du runtime.
     "control-plane/server-rust",
 ]

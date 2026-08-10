@@ -687,6 +687,23 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1d87ecb2933e8aeadb3e3a02b828fed80a7528047e68b4f424523a0981a3a084"
 
 [[package]]
+name = "mumble-controller-core-conformance"
+version = "0.1.0"
+dependencies = [
+ "mumble-controller-server",
+ "mumble-server-runtime-gateway",
+ "prost 0.14.4",
+ "prost-build 0.14.4",
+ "prost-types 0.14.4",
+ "protoc-bin-vendored",
+ "tokio",
+ "tokio-stream",
+ "tonic",
+ "tonic-prost",
+ "tonic-prost-build",
+]
+
+[[package]]
 name = "mumble-controller-server"
 version = "0.1.0"
 dependencies = [
