@@ -6,7 +6,8 @@ use std::time::Duration;
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use mumble_controller_core::{
-    OpenSession as CoreOpenSession, RenewOutcome, SessionCredentials, SessionError, SessionId,
+    ClaimMode, ClaimOutcome, ClaimRequest, OpenSession as CoreOpenSession, OwnershipError,
+    OwnershipRegistry, RenewOutcome, RevisionOutcome, SessionCredentials, SessionError, SessionId,
     SessionRegistry,
 };
 use mumble_server_runtime_gateway::RuntimeHandle;
@@ -90,12 +91,15 @@ pub(crate) fn spawn(
     let control_epoch = random_bytes(16)?;
     let (sender, receiver) = mpsc::channel(config.queue_capacity);
     let core_sessions = SessionRegistry::new(config.max_sessions, config.lease_duration);
+    let ownership =
+        OwnershipRegistry::new(config.max_participants, config.max_participants_per_session);
     let actor = ControllerActor {
         config,
         runtime,
         sender: sender.clone(),
         control_epoch,
         core_sessions,
+        ownership,
         sessions: HashMap::new(),
         streams: HashMap::new(),
         participants: BTreeMap::new(),
@@ -119,12 +123,7 @@ struct ControllerSession {
 #[derive(Clone)]
 struct Participant {
     participant_id: String,
-    owner: SessionId,
-    registration_id: Vec<u8>,
-    ownership_token: Vec<u8>,
     join_token: String,
-    client_spec_revision: u64,
-    accepted_spec_revision: u64,
     applied_spec_revision: u64,
     applied_space_key: Option<String>,
     published_generation: u64,
@@ -151,6 +150,7 @@ struct ControllerActor {
     sender: mpsc::Sender<ActorCommand>,
     control_epoch: Vec<u8>,
     core_sessions: SessionRegistry,
+    ownership: OwnershipRegistry,
     sessions: HashMap<SessionId, ControllerSession>,
     streams: HashMap<u64, SessionId>,
     participants: BTreeMap<String, Participant>,
@@ -719,23 +719,20 @@ impl ControllerActor {
             .map(|registration| registration.participant_id.clone())
             .collect();
         let no_longer_desired: Vec<String> = self
-            .participants
-            .values()
-            .filter(|participant| {
-                participant.owner == session_id
-                    && !desired_ids.contains(&participant.participant_id)
-            })
-            .map(|participant| participant.participant_id.clone())
+            .ownership
+            .owned_entities(session_id)
+            .into_iter()
+            .filter(|entity_id| !desired_ids.contains(entity_id))
             .collect();
         for participant_id in no_longer_desired {
-            let Some(participant) = self.participants.get(&participant_id).cloned() else {
+            let Some(ownership) = self.ownership.get(&participant_id).cloned() else {
                 continue;
             };
             self.release(
                 session_id,
                 &participant_id,
-                &participant.registration_id,
-                &participant.ownership_token,
+                &ownership.registration_id,
+                &ownership.fencing_token,
                 OwnershipRevocationReason::ParticipantReleased,
                 None,
             );
@@ -771,12 +768,12 @@ impl ControllerActor {
         registration: ParticipantRegistration,
         request_id: Vec<u8>,
     ) {
-        if let Some(current) = self.participants.get(&registration.participant_id).cloned() {
+        if let Some(current) = self.ownership.get(&registration.participant_id).cloned() {
             if current.owner == session_id
                 && current.registration_id == registration.registration_id
-                && current.ownership_token == registration.ownership_token
+                && current.fencing_token == registration.ownership_token
             {
-                self.resume_registration(current, registration, request_id);
+                self.resume_registration(session_id, registration, request_id, ClaimMode::Snapshot);
                 return;
             }
             // A full snapshot restores capabilities but never transfers ownership.
@@ -790,7 +787,7 @@ impl ControllerActor {
             );
             return;
         }
-        self.acquire(session_id, registration, request_id);
+        self.acquire(session_id, registration, request_id, ClaimMode::Snapshot);
     }
 
     fn register_explicit(
@@ -799,33 +796,70 @@ impl ControllerActor {
         registration: ParticipantRegistration,
         request_id: Vec<u8>,
     ) {
-        if let Some(current) = self.participants.get(&registration.participant_id).cloned()
+        if let Some(current) = self.ownership.get(&registration.participant_id)
             && current.owner == session_id
             && current.registration_id == registration.registration_id
         {
-            self.resume_registration(current, registration, request_id);
+            self.resume_registration(session_id, registration, request_id, ClaimMode::Explicit);
             return;
         }
-        self.acquire(session_id, registration, request_id);
+        self.acquire(session_id, registration, request_id, ClaimMode::Explicit);
     }
 
     fn resume_registration(
         &mut self,
-        current: Participant,
+        session_id: SessionId,
         registration: ParticipantRegistration,
         request_id: Vec<u8>,
+        mode: ClaimMode,
     ) {
-        if registration.client_spec_revision > current.client_spec_revision
-            && let Some(spec) = registration.spec
-        {
-            self.apply_spec(
-                &current.participant_id,
-                registration.client_spec_revision,
-                spec,
+        let participant_id = registration.participant_id.clone();
+        if !self.participants.contains_key(&participant_id) {
+            self.reject_session(
+                session_id,
+                request_id,
+                CommandErrorCode::InternalError,
+                "resumed ownership has no Host participant state",
             );
+            return;
         }
-        if let Some(participant) = self.participants.get(&current.participant_id).cloned() {
-            self.send_grant(participant.owner, &participant, request_id);
+        let claim = self.ownership.claim(ClaimRequest {
+            entity_id: &participant_id,
+            owner: session_id,
+            registration_id: &registration.registration_id,
+            presented_fencing_token: &registration.ownership_token,
+            client_revision: registration.client_spec_revision,
+            new_fencing_token: Vec::new(),
+            mode,
+        });
+        let revision_advanced = match claim {
+            Ok(ClaimOutcome::Resumed {
+                revision_advanced, ..
+            }) => revision_advanced,
+            Ok(ClaimOutcome::Acquired { .. }) => {
+                self.reject_session(
+                    session_id,
+                    request_id,
+                    CommandErrorCode::InternalError,
+                    "a resumed registration unexpectedly acquired ownership",
+                );
+                return;
+            }
+            Err(error) => {
+                self.reject_session(
+                    session_id,
+                    request_id,
+                    CommandErrorCode::InternalError,
+                    &error.to_string(),
+                );
+                return;
+            }
+        };
+        if revision_advanced && let Some(spec) = registration.spec {
+            self.apply_spec(&participant_id, spec);
+        }
+        if let Some(participant) = self.participants.get(&participant_id).cloned() {
+            self.send_grant(session_id, &participant, request_id);
         }
     }
 
@@ -834,8 +868,18 @@ impl ControllerActor {
         session_id: SessionId,
         registration: ParticipantRegistration,
         request_id: Vec<u8>,
+        mode: ClaimMode,
     ) {
-        let existing = self.participants.get(&registration.participant_id).cloned();
+        let existing = self.ownership.get(&registration.participant_id).cloned();
+        if existing.is_some() != self.participants.contains_key(&registration.participant_id) {
+            self.reject_session(
+                session_id,
+                request_id,
+                CommandErrorCode::InternalError,
+                "Core ownership and Host participant state disagree",
+            );
+            return;
+        }
         if existing.is_none() && self.participants.len() >= self.config.max_participants {
             self.reject_session(
                 session_id,
@@ -845,14 +889,10 @@ impl ControllerActor {
             );
             return;
         }
-        let owned = self
-            .participants
-            .values()
-            .filter(|participant| participant.owner == session_id)
-            .count();
+        let owned = self.ownership.owned_entities(session_id).len();
         if existing
             .as_ref()
-            .is_none_or(|participant| participant.owner != session_id)
+            .is_none_or(|ownership| ownership.owner != session_id)
             && owned >= self.config.max_participants_per_session
         {
             self.reject_session(
@@ -910,30 +950,84 @@ impl ControllerActor {
         let mut self_deaf = false;
         let mut applied_space_key = None;
         let mut published_generation = 0;
-        if let Some(previous) = existing {
+        let claim = self.ownership.claim(ClaimRequest {
+            entity_id: &registration.participant_id,
+            owner: session_id,
+            registration_id: &registration.registration_id,
+            presented_fencing_token: &registration.ownership_token,
+            client_revision: registration.client_spec_revision,
+            new_fencing_token: ownership_token,
+            mode,
+        });
+        let previous_ownership = match claim {
+            Ok(ClaimOutcome::Acquired { previous, .. }) => previous,
+            Ok(ClaimOutcome::Resumed { .. }) => {
+                self.reject_session(
+                    session_id,
+                    request_id,
+                    CommandErrorCode::InternalError,
+                    "an ownership acquisition unexpectedly resumed a registration",
+                );
+                return;
+            }
+            Err(OwnershipError::GlobalLimit | OwnershipError::OwnerLimit) => {
+                self.reject_session(
+                    session_id,
+                    request_id,
+                    CommandErrorCode::ResourceExhausted,
+                    "the ownership limit is reached",
+                );
+                return;
+            }
+            Err(OwnershipError::SnapshotConflict) => {
+                self.send_revocation(
+                    session_id,
+                    &registration.participant_id,
+                    registration.registration_id,
+                    OwnershipRevocationReason::RegistrationRejected,
+                    request_id,
+                );
+                return;
+            }
+            Err(error) => {
+                self.reject_session(
+                    session_id,
+                    request_id,
+                    CommandErrorCode::InternalError,
+                    &error.to_string(),
+                );
+                return;
+            }
+        };
+        if let Some(previous_ownership) = previous_ownership {
+            let Some(previous) = self.participants.get(&registration.participant_id).cloned()
+            else {
+                self.reject_session(
+                    session_id,
+                    request_id,
+                    CommandErrorCode::InternalError,
+                    "replaced ownership has no Host participant state",
+                );
+                return;
+            };
             connection = previous.connection;
             self_mute = previous.self_mute;
             self_deaf = previous.self_deaf;
             applied_space_key = previous.applied_space_key.clone();
             published_generation = previous.published_generation;
             self.join_tokens.remove(&previous.join_token);
-            self.advance_desired_revision(previous.owner);
+            self.advance_desired_revision(previous_ownership.owner);
             self.send_revocation(
-                previous.owner,
+                previous_ownership.owner,
                 &previous.participant_id,
-                previous.registration_id,
+                previous_ownership.registration_id,
                 OwnershipRevocationReason::OwnershipReplaced,
                 Vec::new(),
             );
         }
         let participant = Participant {
             participant_id: registration.participant_id.clone(),
-            owner: session_id,
-            registration_id: registration.registration_id,
-            ownership_token,
             join_token: join_token.clone(),
-            client_spec_revision: registration.client_spec_revision,
-            accepted_spec_revision: registration.client_spec_revision,
             // Client revisions belong to one registration capability. A transfer
             // keeps the live connection, not the previous owner's revision space.
             applied_spec_revision: 0,
@@ -987,7 +1081,18 @@ impl ControllerActor {
             );
             return;
         };
-        if current.owner != session_id || current.ownership_token != ownership_token {
+        let Some(current_ownership) = self.ownership.get(&participant_id).cloned() else {
+            self.reject_session(
+                session_id,
+                request_id,
+                CommandErrorCode::InternalError,
+                "participant Host state has no ownership state",
+            );
+            return;
+        };
+        if current_ownership.owner != session_id
+            || current_ownership.fencing_token != ownership_token
+        {
             self.reject_session(
                 session_id,
                 request_id,
@@ -996,7 +1101,7 @@ impl ControllerActor {
             );
             return;
         }
-        if client_revision < current.client_spec_revision {
+        if client_revision < current_ownership.client_revision {
             self.reject_session(
                 session_id,
                 request_id,
@@ -1005,7 +1110,7 @@ impl ControllerActor {
             );
             return;
         }
-        if client_revision == current.client_spec_revision && spec != current.spec {
+        if client_revision == current_ownership.client_revision && spec != current.spec {
             self.reject_session(
                 session_id,
                 request_id,
@@ -1023,10 +1128,59 @@ impl ControllerActor {
             );
             return;
         }
-        if client_revision > current.client_spec_revision {
-            self.apply_spec(&participant_id, client_revision, spec);
+        let revision = self.ownership.accept_revision(
+            &participant_id,
+            session_id,
+            &ownership_token,
+            client_revision,
+            spec == current.spec,
+        );
+        match revision {
+            Ok(RevisionOutcome::Advanced) => {
+                self.apply_spec(&participant_id, spec);
+            }
+            Ok(RevisionOutcome::Unchanged) => {}
+            Err(OwnershipError::NotFound) => {
+                self.reject_session(
+                    session_id,
+                    request_id,
+                    CommandErrorCode::NotFound,
+                    "participant is not registered",
+                );
+                return;
+            }
+            Err(OwnershipError::OwnershipLost) => {
+                self.reject_session(
+                    session_id,
+                    request_id,
+                    CommandErrorCode::OwnershipLost,
+                    "participant ownership token is stale",
+                );
+                return;
+            }
+            Err(OwnershipError::StaleRevision) => {
+                self.reject_session(
+                    session_id,
+                    request_id,
+                    CommandErrorCode::StaleRevision,
+                    "participant spec revision is stale",
+                );
+                return;
+            }
+            Err(error) => {
+                self.reject_session(
+                    session_id,
+                    request_id,
+                    CommandErrorCode::InternalError,
+                    &error.to_string(),
+                );
+                return;
+            }
         }
         let Some(participant) = self.participants.get(&participant_id).cloned() else {
+            return;
+        };
+        let Some(ownership) = self.ownership.get(&participant_id) else {
             return;
         };
         self.send_session(
@@ -1037,8 +1191,8 @@ impl ControllerActor {
                     crate::protocol::server_frame::Payload::ParticipantSpecAccepted(
                         ParticipantSpecAccepted {
                             participant_id,
-                            client_spec_revision: participant.client_spec_revision,
-                            accepted_spec_revision: participant.accepted_spec_revision,
+                            client_spec_revision: ownership.client_revision,
+                            accepted_spec_revision: ownership.client_revision,
                             applied_spec_revision: participant.applied_spec_revision,
                             published_generation: participant.published_generation,
                         },
@@ -1048,7 +1202,7 @@ impl ControllerActor {
         );
     }
 
-    fn apply_spec(&mut self, participant_id: &str, client_revision: u64, spec: ParticipantSpec) {
+    fn apply_spec(&mut self, participant_id: &str, spec: ParticipantSpec) {
         let Some(current) = self.participants.get(participant_id).cloned() else {
             return;
         };
@@ -1056,8 +1210,6 @@ impl ControllerActor {
         let new_space = spec.space_key.clone();
         let connection = current.connection;
         if let Some(participant) = self.participants.get_mut(participant_id) {
-            participant.client_spec_revision = client_revision;
-            participant.accepted_spec_revision = client_revision;
             participant.spec = spec;
         }
         self.refresh_space(&old_space);
@@ -1081,32 +1233,54 @@ impl ControllerActor {
         reason: OwnershipRevocationReason,
         request_id: Option<Vec<u8>>,
     ) {
-        let Some(current) = self.participants.get(participant_id).cloned() else {
+        if !self.participants.contains_key(participant_id) {
             if let Some(request_id) = request_id {
-                self.reject_session(
-                    session_id,
-                    request_id,
-                    CommandErrorCode::OwnershipLost,
-                    "participant is no longer owned",
-                );
-            }
-            return;
-        };
-        if current.owner != session_id
-            || current.registration_id != registration_id
-            || current.ownership_token != ownership_token
-        {
-            if let Some(request_id) = request_id {
-                self.reject_session(
-                    session_id,
-                    request_id,
-                    CommandErrorCode::OwnershipLost,
-                    "participant ownership token is stale",
-                );
+                let (code, message) = if self.ownership.get(participant_id).is_some() {
+                    (
+                        CommandErrorCode::InternalError,
+                        "ownership has no Host participant state",
+                    )
+                } else {
+                    (
+                        CommandErrorCode::OwnershipLost,
+                        "participant is no longer owned",
+                    )
+                };
+                self.reject_session(session_id, request_id, code, message);
             }
             return;
         }
-        self.participants.remove(participant_id);
+        let released =
+            self.ownership
+                .release(participant_id, session_id, registration_id, ownership_token);
+        let released = match released {
+            Ok(released) => released,
+            Err(OwnershipError::OwnershipLost | OwnershipError::NotFound) => {
+                if let Some(request_id) = request_id {
+                    self.reject_session(
+                        session_id,
+                        request_id,
+                        CommandErrorCode::OwnershipLost,
+                        "participant ownership token is stale",
+                    );
+                }
+                return;
+            }
+            Err(error) => {
+                if let Some(request_id) = request_id {
+                    self.reject_session(
+                        session_id,
+                        request_id,
+                        CommandErrorCode::InternalError,
+                        &error.to_string(),
+                    );
+                }
+                return;
+            }
+        };
+        let Some(current) = self.participants.remove(participant_id) else {
+            return;
+        };
         self.join_tokens.remove(&current.join_token);
         if let Some(connection) = current.connection
             && let Some(peer) = self.runtime.peers().by_connection(connection)
@@ -1117,7 +1291,7 @@ impl ControllerActor {
         self.send_revocation(
             session_id,
             participant_id,
-            current.registration_id,
+            released.registration_id,
             reason,
             request_id.unwrap_or_default(),
         );
@@ -1261,15 +1435,18 @@ impl ControllerActor {
             .participants
             .values()
             .filter(|participant| participant.spec.space_key == space_key)
-            .map(|participant| RenderParticipant {
-                participant_id: participant.participant_id.clone(),
-                connection: participant.connection,
-                display_name: participant.spec.display_name.clone(),
-                server_mute: participant.spec.server_mute,
-                server_deaf: participant.spec.server_deaf,
-                self_mute: participant.self_mute,
-                self_deaf: participant.self_deaf,
-                accepted_revision: participant.accepted_spec_revision,
+            .filter_map(|participant| {
+                let ownership = self.ownership.get(&participant.participant_id)?;
+                Some(RenderParticipant {
+                    participant_id: participant.participant_id.clone(),
+                    connection: participant.connection,
+                    display_name: participant.spec.display_name.clone(),
+                    server_mute: participant.spec.server_mute,
+                    server_deaf: participant.spec.server_deaf,
+                    self_mute: participant.self_mute,
+                    self_deaf: participant.self_deaf,
+                    accepted_revision: ownership.client_revision,
+                })
             })
             .collect();
         let revisions: BTreeMap<String, u64> = participants
@@ -1483,18 +1660,16 @@ impl ControllerActor {
     }
 
     fn remove_session(&mut self, session_id: SessionId, reason: OwnershipRevocationReason) {
-        let participants: Vec<Participant> = self
-            .participants
-            .values()
-            .filter(|participant| participant.owner == session_id)
-            .cloned()
-            .collect();
-        for participant in participants {
+        let participant_ids = self.ownership.owned_entities(session_id);
+        for participant_id in participant_ids {
+            let Some(ownership) = self.ownership.get(&participant_id).cloned() else {
+                continue;
+            };
             self.release(
                 session_id,
-                &participant.participant_id,
-                &participant.registration_id,
-                &participant.ownership_token,
+                &participant_id,
+                &ownership.registration_id,
+                &ownership.fencing_token,
                 reason,
                 None,
             );
@@ -1513,6 +1688,15 @@ impl ControllerActor {
         participant: &Participant,
         request_id: Vec<u8>,
     ) {
+        let Some(ownership) = self.ownership.get(&participant.participant_id).cloned() else {
+            self.reject_session(
+                session_id,
+                request_id,
+                CommandErrorCode::InternalError,
+                "participant Host state has no ownership state",
+            );
+            return;
+        };
         self.send_session(
             session_id,
             ServerFrame {
@@ -1521,10 +1705,10 @@ impl ControllerActor {
                     crate::protocol::server_frame::Payload::ParticipantOwnershipGranted(
                         ParticipantOwnershipGranted {
                             participant_id: participant.participant_id.clone(),
-                            registration_id: participant.registration_id.clone(),
-                            ownership_token: participant.ownership_token.clone(),
-                            client_spec_revision: participant.client_spec_revision,
-                            accepted_spec_revision: participant.accepted_spec_revision,
+                            registration_id: ownership.registration_id,
+                            ownership_token: ownership.fencing_token,
+                            client_spec_revision: ownership.client_revision,
+                            accepted_spec_revision: ownership.client_revision,
                             applied_spec_revision: participant.applied_spec_revision,
                             published_generation: participant.published_generation,
                             mumble_join_token: participant.join_token.clone(),
@@ -1564,8 +1748,11 @@ impl ControllerActor {
         let Some(participant) = self.participants.get(participant_id).cloned() else {
             return;
         };
+        let Some(ownership) = self.ownership.get(participant_id).cloned() else {
+            return;
+        };
         self.send_session(
-            participant.owner,
+            ownership.owner,
             ServerFrame {
                 request_id: Vec::new(),
                 payload: Some(
@@ -1579,7 +1766,7 @@ impl ControllerActor {
                                     .unwrap_or_default(),
                                 self_mute: participant.self_mute,
                                 self_deaf: participant.self_deaf,
-                                accepted_spec_revision: participant.accepted_spec_revision,
+                                accepted_spec_revision: ownership.client_revision,
                                 applied_spec_revision: participant.applied_spec_revision,
                                 published_generation: participant.published_generation,
                                 application_error: participant.application_error,
@@ -1688,7 +1875,10 @@ impl ControllerActor {
             .get(&session_id)
             .is_some_and(|session| session.explicit_observations.contains(space_key))
             || self.participants.values().any(|participant| {
-                participant.owner == session_id && participant.spec.space_key == space_key
+                self.ownership
+                    .get(&participant.participant_id)
+                    .is_some_and(|ownership| ownership.owner == session_id)
+                    && participant.spec.space_key == space_key
             })
     }
 
@@ -2412,12 +2602,15 @@ mod tests {
         let (sender, receiver) = mpsc::channel(64);
         let config = ControllerConfig::default();
         let core_sessions = SessionRegistry::new(config.max_sessions, config.lease_duration);
+        let ownership =
+            OwnershipRegistry::new(config.max_participants, config.max_participants_per_session);
         let actor = ControllerActor {
             config,
             runtime: runtime.handle(),
             sender,
             control_epoch: vec![0; 16],
             core_sessions,
+            ownership,
             sessions: HashMap::new(),
             streams: HashMap::new(),
             participants: BTreeMap::new(),
@@ -2463,15 +2656,22 @@ mod tests {
         receiver
     }
 
-    fn owned_participant(space_key: &str) -> Participant {
-        Participant {
+    fn insert_owned_participant(actor: &mut ControllerActor, space_key: &str) {
+        actor
+            .ownership
+            .claim(ClaimRequest {
+                entity_id: "alice",
+                owner: 1,
+                registration_id: &[7],
+                presented_fencing_token: &[],
+                client_revision: 1,
+                new_fencing_token: vec![1; 32],
+                mode: ClaimMode::Explicit,
+            })
+            .expect("claim test participant");
+        let participant = Participant {
             participant_id: "alice".to_owned(),
-            owner: 1,
-            registration_id: vec![7],
-            ownership_token: vec![1; 32],
             join_token: "join".to_owned(),
-            client_spec_revision: 1,
-            accepted_spec_revision: 1,
             applied_spec_revision: 0,
             applied_space_key: None,
             published_generation: 0,
@@ -2480,7 +2680,8 @@ mod tests {
             self_mute: false,
             self_deaf: false,
             application_error: String::new(),
-        }
+        };
+        actor.participants.insert("alice".to_owned(), participant);
     }
 
     fn payloads(receiver: &mut mpsc::Receiver<Result<ServerFrame, Status>>) -> Vec<ServerPayload> {
@@ -2505,9 +2706,7 @@ mod tests {
         let (mut actor, _commands) = reducer(&runtime);
         actor.ensure_space("lobby").expect("lobby materializes");
         actor.ensure_space("arena").expect("arena materializes");
-        actor
-            .participants
-            .insert("alice".to_owned(), owned_participant("lobby"));
+        insert_owned_participant(&mut actor, "lobby");
 
         actor.refresh_space("lobby");
         let lobby_revision = actor.next_application_revision - 1;

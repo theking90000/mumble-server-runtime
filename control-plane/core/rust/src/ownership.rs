@@ -61,10 +61,7 @@ impl OwnershipRegistry {
     }
 
     pub fn claim(&mut self, request: ClaimRequest<'_>) -> Result<ClaimOutcome, OwnershipError> {
-        if request.entity_id.is_empty()
-            || request.registration_id.is_empty()
-            || request.new_fencing_token.is_empty()
-        {
+        if request.entity_id.is_empty() || request.registration_id.is_empty() {
             return Err(OwnershipError::InvalidClaim);
         }
 
@@ -103,6 +100,9 @@ impl OwnershipRegistry {
             && already_owned >= self.maximum_entities_per_owner
         {
             return Err(OwnershipError::OwnerLimit);
+        }
+        if request.new_fencing_token.is_empty() {
+            return Err(OwnershipError::InvalidClaim);
         }
         if self
             .entries
@@ -192,7 +192,7 @@ impl OwnershipRegistry {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum OwnershipError {
-    #[error("entity_id, registration_id and fencing token must not be empty")]
+    #[error("entity_id and registration_id must be present, with a fencing token for acquisition")]
     InvalidClaim,
     #[error("a snapshot cannot replace current ownership")]
     SnapshotConflict,
