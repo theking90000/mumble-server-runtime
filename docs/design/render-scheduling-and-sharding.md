@@ -1028,7 +1028,7 @@ IMPUR
                       allocateur d'IDs                    ex-mumble-server-runtime-server
 
 COMPOSITION
-  tools/mumble-server-runtime-*     binaire = runtime + flavor concret + routeur
+  runtime/reference/*               binaire = runtime + flavor concret + routeur
 
 VÉRIFICATEUR (R2)
   mumble-server-runtime-testkit     SimulatedMumbleClient + nouvel oracle
@@ -1257,7 +1257,7 @@ bits locaux + 1 bit éphémère. Serré mais suffisant.
 
 ### A.7 Réutilisation existante
 
-`tools/mitm-proxy` (P2) est déjà ~80 % du plan de données d'un tel proxy : TLS
+`runtime/verification/protocol-tools/mitm-proxy` (P2) est déjà ~80 % du plan de données d'un tel proxy : TLS
 terminée des deux côtés, **deux domaines OCB2 indépendants par connexion**,
 ré-encryption UDP validée sur corpus réel, corrélation adresse → session. Il avait
 été écrit comme oracle de conformité ; il se trouve être la maquette du proxy.

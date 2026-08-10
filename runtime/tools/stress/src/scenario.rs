@@ -127,7 +127,7 @@ impl Arena {
             }
         };
 
-        // REF: references/mumble/src/Mumble.proto:UserState fields session and channel_id.
+        // REF: runtime/references/mumble/src/Mumble.proto:UserState fields session and channel_id.
         Some(ControlMessage::UserState(tcp::UserState {
             session: Some(session),
             channel_id: Some(target),

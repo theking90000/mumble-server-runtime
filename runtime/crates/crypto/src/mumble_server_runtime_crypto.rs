@@ -2,8 +2,8 @@
 //! replay protection. Pure Rust, no IO, no runtime, no `unsafe` (gates R4).
 //!
 //! The algorithm and Mumble's specific mitigations are ported line-for-line from
-//! the vendored reference (R1): `references/vendored/ocb2-vectors/CryptStateOCB2.cpp`
-//! at `references/mumble.pin`, and validated against the vectors in the sibling
+//! the vendored reference (R1): `runtime/references/vendored/ocb2-vectors/CryptStateOCB2.cpp`
+//! at `runtime/references/mumble.pin`, and validated against the vectors in the sibling
 //! `TestCrypt.cpp`. Nothing here is recalled from memory of the OCB2 spec.
 #![forbid(unsafe_code)]
 

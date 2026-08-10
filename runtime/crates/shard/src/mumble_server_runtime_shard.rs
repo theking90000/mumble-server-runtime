@@ -46,7 +46,7 @@
 //! "right to speak". Speaking somewhere implies being visible there.
 //!
 //! REF: docs/design/guide-implementation.md
-//! REF: references/mumble/src/mumble/ServerHandler.cpp : `handleVoicePacket`
+//! REF: runtime/references/mumble/src/mumble/ServerHandler.cpp : `handleVoicePacket`
 #![forbid(unsafe_code)]
 
 pub mod build;

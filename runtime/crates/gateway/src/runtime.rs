@@ -261,7 +261,7 @@ impl RuntimeHandle {
     /// like the server removing an occupied channel, which it treats as a
     /// protocol violation.
     ///
-    /// REF: references/mumble/src/mumble/Messages.cpp : `msgUserRemove` calls
+    /// REF: runtime/references/mumble/src/mumble/Messages.cpp : `msgUserRemove` calls
     ///   `removeUser` only `if (pDst != pSelf)`; `msgChannelRemove` logs
     ///   "Protocol violation. Server sent remove for occupied channel." and
     ///   disconnects when `UserModel::removeChannel(c, true)` refuses.

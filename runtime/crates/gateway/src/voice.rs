@@ -48,7 +48,7 @@ pub type Datagram = (Vec<u8>, SocketAddr);
 
 /// The wire value of the server loopback target.
 ///
-/// REF: references/vendored/MumbleUDP.proto : `Audio.target` - "2^5-1 = 31" is
+/// REF: runtime/references/vendored/MumbleUDP.proto : `Audio.target` - "2^5-1 = 31" is
 ///   documented as "server loopback".
 const LOOPBACK_TARGET: u32 = 31;
 
@@ -57,13 +57,13 @@ const NORMAL_TARGET: u32 = 0;
 
 /// Normal speech, server to client.
 ///
-/// REF: references/vendored/MumbleUDP.proto : `Audio.context` - "0: Normal
+/// REF: runtime/references/vendored/MumbleUDP.proto : `Audio.context` - "0: Normal
 ///   speech, 1: Shout to channel, 2: Whisper to user".
 const NORMAL_CONTEXT: u32 = 0;
 
 /// Generate a fresh OCB2 key and the two nonces for a new connection.
 ///
-/// REF: references/mumble/src/murmur/Messages.cpp : `msgAuthenticate` sets
+/// REF: runtime/references/mumble/src/murmur/Messages.cpp : `msgAuthenticate` sets
 ///   `server_nonce = getEncryptIV()` and `client_nonce = getDecryptIV()`, so on
 ///   the server the encrypt IV is the server nonce (S2C) and the decrypt IV is
 ///   the client nonce (C2S).
@@ -302,10 +302,10 @@ impl VoicePlane {
     /// adding a *receiver*, and the loopback skips that path entirely, so a
     /// deafened speaker still hears its own echo.
     ///
-    /// REF: references/mumble/src/murmur/Server.cpp : `processMsg` returns on
+    /// REF: runtime/references/mumble/src/murmur/Server.cpp : `processMsg` returns on
     ///   `bMute || bSuppress || bSelfMute` before it reaches the
     ///   `SERVER_LOOPBACK` branch.
-    /// REF: references/mumble/src/murmur/AudioReceiverBuffer.cpp : the loopback
+    /// REF: runtime/references/mumble/src/murmur/AudioReceiverBuffer.cpp : the loopback
     ///   goes through `forceAddReceiver`, which does not test `bDeaf`.
     fn reflect(&self, sender: &Arc<Peer>, audio: &udp::Audio) -> Vec<Datagram> {
         let session = sender.session();
@@ -374,7 +374,7 @@ impl VoicePlane {
 /// The Opus payload travels untouched: decoding it would only be needed for
 /// mixing, transcoding or content analysis, none of which happen here.
 ///
-/// REF: references/vendored/MumbleUDP.proto : the `Header` oneof carries
+/// REF: runtime/references/vendored/MumbleUDP.proto : the `Header` oneof carries
 ///   `target` client-to-server and `context` server-to-client, so the target is
 ///   replaced rather than forwarded; `sender_session` "will always be set when
 ///   receiving audio from the server".

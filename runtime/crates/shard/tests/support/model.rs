@@ -10,7 +10,7 @@
 //!   nothing;
 //! - `UserState` and `ChannelState` **merge**: an absent field changes nothing.
 //!
-//! REF: references/mumble/src/mumble/Messages.cpp : `msgChannelState`,
+//! REF: runtime/references/mumble/src/mumble/Messages.cpp : `msgChannelState`,
 //!   `msgUserState`, `msgChannelRemove`, `msgUserRemove`.
 #![allow(clippy::expect_used)]
 #![allow(dead_code)]

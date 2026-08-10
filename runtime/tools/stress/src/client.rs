@@ -50,7 +50,7 @@ impl TalkSchedule {
         })
     }
 
-    // REF: references/mumble/src/mumble/AudioInput.cpp:AudioInput::encodeAudioFrame
+    // REF: runtime/references/mumble/src/mumble/AudioInput.cpp:AudioInput::encodeAudioFrame
     // and AudioInput::flushCheck. Sustained silence sends nothing; the last
     // packet of a talking burst is marked as a terminator.
     fn packet_at(self, elapsed: Duration, packet_interval: Duration) -> Option<bool> {
@@ -284,15 +284,15 @@ async fn run_inner(
         .await
 }
 
-// REF: references/mumble/src/Mumble.proto:Version and Authenticate.
-// REF: references/mumble/src/mumble/ServerHandler.cpp:ServerHandler::sendAuthenticate.
+// REF: runtime/references/mumble/src/Mumble.proto:Version and Authenticate.
+// REF: runtime/references/mumble/src/mumble/ServerHandler.cpp:ServerHandler::sendAuthenticate.
 async fn send_initial(
     writer: &mut WriteHalf<TlsStream<TcpStream>>,
     username: &str,
     password: Option<&str>,
 ) -> Result<()> {
     let version = ControlMessage::Version(tcp::Version {
-        // REF: references/mumble/src/Version.h:Version::fromComponents.
+        // REF: runtime/references/mumble/src/Version.h:Version::fromComponents.
         version_v2: Some((1u64 << 48) | (5u64 << 32)),
         release: Some("mumble-server-runtime-stress".to_owned()),
         os: Some(std::env::consts::OS.to_owned()),
@@ -576,7 +576,7 @@ impl ActiveClient {
         }
     }
 
-    // REF: references/mumble/src/MumbleUDP.proto:Audio and Ping envelopes.
+    // REF: runtime/references/mumble/src/MumbleUDP.proto:Audio and Ping envelopes.
     async fn send_udp(&mut self, message: &UdpMessage, report: &mut ClientReport) -> Result<()> {
         let udp = self.udp.as_ref().context("UDP was not opened")?;
         let crypt = self.crypt.as_mut().context("missing UDP crypto")?;
@@ -633,7 +633,7 @@ async fn send_control(
     writer.flush().await.context("flushing TCP")
 }
 
-// REF: references/mumble/src/mumble/Messages.cpp:MainWindow::msgCryptSetup.
+// REF: runtime/references/mumble/src/mumble/Messages.cpp:MainWindow::msgCryptSetup.
 async fn handle_crypt_setup(
     crypt: &mut Option<CryptState>,
     writer: &mut WriteHalf<TlsStream<TcpStream>>,

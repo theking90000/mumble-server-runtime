@@ -33,7 +33,7 @@ pub const CAPACITY: usize = 1024;
 /// the client before that speaker's tunnelled audio, and two independent queues
 /// cannot promise that.
 ///
-/// REF: references/mumble/src/mumble/ServerHandler.cpp : `handleVoicePacket`
+/// REF: runtime/references/mumble/src/mumble/ServerHandler.cpp : `handleVoicePacket`
 ///   looks the sender up with `ClientUser::get(senderSession)` and drops the
 ///   packet when it is absent.
 pub const MAX_DEPTH_FOR_VOICE: usize = 64;

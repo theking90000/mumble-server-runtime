@@ -17,7 +17,7 @@ Tout est ordonné pour construire les oracles (corpus, proxy MITM, client simul�
 
 **R1 — La vérité protocolaire ne vient jamais de mémoire.**
 Toute affirmation sur le wire format doit être traçable vers une source vendored :
-`references/mumble/` (clone pinné), `runtime/verification/fixtures/corpus/`
+`runtime/references/mumble/` (clone pinné), `runtime/verification/fixtures/corpus/`
 (captures réelles), ou la
 spec. Chaque module protocolaire porte un commentaire `// REF:` pointant vers le
 fichier source Mumble correspondant. Un détail absent de ces sources → tu t'arrêtes
@@ -93,7 +93,7 @@ composition, routage, file bornée) · `mumble-server-runtime-gateway` (TLS/TCP/
 registre multi-shards, migration) · `mumble-server-runtime-testkit` (client simulé et modèle
 strict indépendant).
 
-`tools/mumble-server-runtime-arena` est le flavor de démonstration et le binaire de composition.
+`runtime/reference/arena` est le flavor de démonstration et le binaire de composition.
 Les anciens crates par connexion P4–P7 ont été retirés ; leur dernier état reste
 consultable au tag `legacy-p7-final`.
 

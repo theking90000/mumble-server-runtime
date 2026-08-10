@@ -18,11 +18,11 @@ Ces règles s'appliquent à toutes les phases. Elles existent parce que les mode
 
 ### R1. La vérité protocolaire ne vient jamais de mémoire
 
-Toute affirmation sur le wire format doit être traçable vers une source vendored dans le dépôt : `references/mumble/` (clone pinné du dépôt mumble-voip), le corpus de captures (`fixtures/corpus/`), ou la spécification Mumble Server Runtime. Un agent qui a besoin d'un détail absent de ces sources s'arrête et le signale au lieu de l'inventer. Chaque module protocolaire contient un commentaire `// REF:` pointant vers le fichier source Mumble correspondant.
+Toute affirmation sur le wire format doit être traçable vers une source vendored dans le dépôt : `runtime/references/mumble/` (clone pinné du dépôt mumble-voip), le corpus de captures (`runtime/verification/fixtures/corpus/`), ou la spécification Mumble Server Runtime. Un agent qui a besoin d'un détail absent de ces sources s'arrête et le signale au lieu de l'inventer. Chaque module protocolaire contient un commentaire `// REF:` pointant vers le fichier source Mumble correspondant.
 
 ### R2. Séparation implémenteur / vérificateur
 
-Les répertoires `mumble-server-runtime-testkit/`, `fixtures/`, et `conformance/` sont modifiables uniquement par des tâches de type "vérification", jamais par une tâche d'implémentation. Un agent d'implémentation dont les tests échouent corrige l'implémentation, pas le test. Toute modification d'un test de conformité passe par une revue humaine. Enforcement : CI refuse un diff qui touche à la fois `mumble-server-runtime-*/src` et `conformance/`.
+Les répertoires `runtime/verification/testkit/`, `runtime/verification/fixtures/`, et `conformance/` sont modifiables uniquement par des tâches de type "vérification", jamais par une tâche d'implémentation. Un agent d'implémentation dont les tests échouent corrige l'implémentation, pas le test. Toute modification d'un test de conformité passe par une revue humaine. Enforcement : CI refuse un diff qui touche à la fois `runtime/crates/*/src` et une zone de vérification.
 
 ### R3. Critère de done machine-vérifiable
 
@@ -65,13 +65,13 @@ Tout chemin non implémenté répond par un refus explicite (`PermissionDenied`,
 Livrables :
 
 1. Workspace cargo avec les gates R4 actifs, CI verte sur un workspace vide.
-2. `references/mumble/` : clone pinné (commit hash fixé) du dépôt mumble-voip. Extraction de `Mumble.proto`, `MumbleUDP.proto`, et des vecteurs de test de `CryptState` (les tests OCB2 du dépôt officiel deviennent des fixtures).
+2. `runtime/references/mumble/` : clone pinné (commit hash fixé) du dépôt mumble-voip. Extraction de `Mumble.proto`, `MumbleUDP.proto`, et des vecteurs de test de `CryptState` (les tests OCB2 du dépôt officiel deviennent des fixtures).
 3. **Corpus de captures** : transcripts binaires de sessions réelles client officiel ↔ Murmur, via un proxy TCP/UDP d'enregistrement (à écrire, trivial : il ne décode rien, il journalise des octets horodatés et annotés par direction). Scénarios à capturer : handshake complet, join/leave de canal, création/suppression de canal, deux clients qui parlent, whisper, permission denied, déconnexion, resync crypto si provocable.
 4. Décision gelée : format UDP legacy supporté ou non. Elle conditionne la structure de `mumble-server-runtime-protocol` et ne doit pas rester ouverte. Recommandation : legacy requis si un client Android doit se connecter un jour, et le corpus doit alors inclure une session Mumla.
 
 **Humain requis :** installer Murmur et le client officiel, dérouler les scénarios de capture à la main (un agent ne pilote pas une GUI Qt), trancher la décision legacy UDP.
 
-**Done :** `fixtures/corpus/` contient au moins 8 scénarios annotés ; un README décrit chaque scénario ; le hash du commit mumble de référence est fixé dans un fichier versionné.
+**Done :** `runtime/verification/fixtures/corpus/` contient au moins 8 scénarios annotés ; un README décrit chaque scénario ; le hash du commit mumble de référence est fixé dans un fichier versionné.
 
 ---
 

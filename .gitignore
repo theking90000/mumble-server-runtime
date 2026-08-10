@@ -4,9 +4,6 @@
 Cargo.lock.orig
 
 # cargo-fuzz
-/fuzz/target/
-/fuzz/corpus/
-/fuzz/artifacts/
 /runtime/verification/fuzz/target/
 /runtime/verification/fuzz/corpus/
 /runtime/verification/fuzz/artifacts/
@@ -14,7 +11,7 @@ Cargo.lock.orig
 # Références vendored : le clone brut du dépôt mumble-voip n'est PAS commité.
 # Seuls le hash pinné (references/mumble.pin) et les extraits explicitement
 # vendorés (.proto, vecteurs OCB2) le sont. Voir references/README.md.
-/references/mumble/
+/runtime/references/mumble/
 
 # OS / éditeurs
 .DS_Store

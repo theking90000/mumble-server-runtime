@@ -7,8 +7,8 @@ Commit: 5fe5ec6e61b0c1cc414a8a8db548ec484eec6b90 (see `../mumble.pin`)
 Reproduction:
 
 ```bash
-git clone https://github.com/mumble-voip/mumble references/mumble
-git -C references/mumble checkout "$(cat references/mumble.pin)"
+git clone https://github.com/mumble-voip/mumble runtime/references/mumble
+git -C runtime/references/mumble checkout "$(cat runtime/references/mumble.pin)"
 ```
 
 ## Files

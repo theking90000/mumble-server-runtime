@@ -79,7 +79,7 @@ impl ChannelKey {
 /// the label as the identifier would break its own buttons the day it renames
 /// one. The label stays a field; this is the identity.
 ///
-/// REF: references/vendored/Mumble.proto : `ContextActionModify.action` and
+/// REF: runtime/references/vendored/Mumble.proto : `ContextActionModify.action` and
 ///   `ContextAction.action` are the same string.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ActionKey(pub u64);
@@ -142,7 +142,7 @@ pub enum Exhausted {
 /// once. A migration keeps its session for free, because the occupant did not
 /// change.
 ///
-/// REF: references/mumble/src/mumble/Messages.cpp : `MainWindow::msgUserRemove`
+/// REF: runtime/references/mumble/src/mumble/Messages.cpp : `MainWindow::msgUserRemove`
 ///   ends with `if (pDst != pSelf) pmModel->removeUser(pDst);`.
 #[derive(Debug)]
 pub struct IdAllocator {

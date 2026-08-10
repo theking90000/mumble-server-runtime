@@ -99,7 +99,7 @@ pub enum VoiceEvent {
     /// see, and nothing has moved. What it means is entirely the flavor's
     /// business, up to and including ignoring it.
     ///
-    /// REF: references/vendored/Mumble.proto : `UserState.channel_id` sent by a
+    /// REF: runtime/references/vendored/Mumble.proto : `UserState.channel_id` sent by a
     ///   client for its own session.
     RequestedChannel {
         connection: ConnectionId,
@@ -117,7 +117,7 @@ pub enum VoiceEvent {
     /// that state belongs to the flavor, and keeping a second one here is how
     /// the two start disagreeing.
     ///
-    /// REF: references/mumble/src/mumble/ServerHandler.cpp :
+    /// REF: runtime/references/mumble/src/mumble/ServerHandler.cpp :
     ///   `setSelfMuteDeafState` sends a `UserState` carrying both flags.
     RequestedSelfState {
         connection: ConnectionId,
@@ -132,7 +132,7 @@ pub enum VoiceEvent {
     /// the action *means* is the flavor's business alone, including doing
     /// nothing and refusing through [`crate::reply::Reply::refuse`].
     ///
-    /// REF: references/mumble/src/mumble/MainWindow.cpp : `context_triggered`
+    /// REF: runtime/references/mumble/src/mumble/MainWindow.cpp : `context_triggered`
     ///   sends back the identifier the server stored, with the selected user
     ///   and channel.
     InvokedAction {
@@ -151,7 +151,7 @@ pub enum VoiceEvent {
     /// [`crate::reply::Reply::relay`] is the one line that carries it out, and
     /// the flavor is free to rewrite the audience, the text, or both.
     ///
-    /// REF: references/mumble/src/murmur/Messages.cpp : `msgTextMessage` resolves
+    /// REF: runtime/references/mumble/src/murmur/Messages.cpp : `msgTextMessage` resolves
     ///   the targets against the sender's view, then routes.
     Said {
         connection: ConnectionId,
@@ -713,7 +713,7 @@ impl<L: ShardLogic> Shard<L> {
     /// following `ChannelRemove` would look like a removal of an occupied
     /// channel and the client would disconnect over a protocol violation.
     ///
-    /// REF: references/mumble/src/mumble/Messages.cpp : `msgUserRemove` skips
+    /// REF: runtime/references/mumble/src/mumble/Messages.cpp : `msgUserRemove` skips
     ///   `removeUser` when the victim is self; `msgChannelRemove` disconnects
     ///   when `UserModel::removeChannel(c, true)` refuses an occupied channel.
     fn detach(&mut self, connection: ConnectionId, reason: &str, handover: Option<Handover>) {
@@ -858,7 +858,7 @@ impl<L: ShardLogic> Shard<L> {
     /// action routinely arrives with a session and a channel it has nothing to
     /// do with.
     ///
-    /// REF: references/mumble/src/mumble/MainWindow.cpp : `context_triggered`
+    /// REF: runtime/references/mumble/src/mumble/MainWindow.cpp : `context_triggered`
     ///   fills `session` and `channel_id` from `qtvUsers->currentIndex()`, while
     ///   server actions live in `qmServer` and are never told about it.
     fn invoked(
@@ -938,7 +938,7 @@ impl<L: ShardLogic> Shard<L> {
     /// A private message is checked against the recipient's channel rather than
     /// the sender's, which is what the reference server does.
     ///
-    /// REF: references/mumble/src/murmur/Messages.cpp : `msgTextMessage` checks
+    /// REF: runtime/references/mumble/src/murmur/Messages.cpp : `msgTextMessage` checks
     ///   `ChanACL::TextMessage` on each named channel, and on `u->cChannel` for a
     ///   directly addressed user.
     fn said(&mut self, connection: ConnectionId, to: TextTarget, message: String) {
@@ -1122,7 +1122,7 @@ impl<L: ShardLogic> Shard<L> {
     ///   the conformance model checks. A flavor that wants everyone to read
     ///   something whoever said it uses [`crate::reply::Reply::announce`].
     ///
-    /// REF: references/mumble/src/murmur/Messages.cpp : `msgTextMessage` ends on
+    /// REF: runtime/references/mumble/src/murmur/Messages.cpp : `msgTextMessage` ends on
     ///   `users.remove(uSource)` before forwarding.
     fn deliver(&self, spoken: &Spoken) {
         let speaker = spoken

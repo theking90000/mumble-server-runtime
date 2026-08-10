@@ -34,11 +34,10 @@ touches_impl=0
 while IFS= read -r f; do
   [ -n "$f" ] || continue
   case "$f" in
-    conformance/*|fixtures/*|mumble-server-runtime-testkit/*|runtime/verification/testkit/*|runtime/verification/fixtures/*)
+    conformance/*|runtime/verification/testkit/*|runtime/verification/fixtures/*)
       touches_verifier=1 ;;
-    mumble-server-runtime-*/src/*|runtime/crates/*/src/*|integrations/controller/server-rust/src/*|control-plane/server-rust/src/*|control-plane/core/rust/src/*|control-plane/host/rust/src/*|control-plane/implementations/*/rust/src/*)
-      # le testkit est une zone vérificateur, déjà couverte au-dessus.
-      case "$f" in mumble-server-runtime-testkit/*) ;; *) touches_impl=1 ;; esac ;;
+    runtime/crates/*/src/*|integrations/controller/server-rust/src/*|control-plane/server-rust/src/*|control-plane/core/rust/src/*|control-plane/host/rust/src/*|control-plane/implementations/*/rust/src/*)
+      touches_impl=1 ;;
   esac
 done <<< "$CHANGED"
 

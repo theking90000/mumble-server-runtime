@@ -52,7 +52,7 @@ use crate::view::{Channel, Overlay, ShardView, User, UserFlags};
 /// patch composable across a replay and removes the need to know what the
 /// connection currently holds.
 ///
-/// REF: references/mumble/src/mumble/Messages.cpp : `msgChannelState` handles
+/// REF: runtime/references/mumble/src/mumble/Messages.cpp : `msgChannelState` handles
 ///   `links_remove` and `links_add` in their own blocks, independent of `links`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChannelPatch {

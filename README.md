@@ -76,7 +76,7 @@ impl ShardLogic for Match {
 
 The runnable version of this, with spectators, a vanished admin and a migration
 between two shards, is the
-[arena demo](tools/mumble-server-runtime-arena).
+[arena demo](runtime/reference/arena).
 
 ## The BungeeCord of voice
 
@@ -179,7 +179,7 @@ Two crates carry the runtime:
   migration between shards.
 
 `mumble-server-runtime-protocol` and `mumble-server-runtime-crypto` are the pure foundations: framing,
-protobuf, UDP envelopes, OCB2. `tools/mumble-server-runtime-arena` is the demo above.
+protobuf, UDP envelopes, OCB2. `runtime/reference/arena` is the demo above.
 `mumble-server-runtime-testkit` is the independent judge, a simulated Mumble client that
 applies the protocol and refuses any violation of its strict model.
 
@@ -206,7 +206,7 @@ remains readable at the `legacy-p7-final` tag.
   generated from the doc comments, every public item of every crate.
 - **[Mumble Controller JavaDoc](https://theking90000.github.io/mumble-server-runtime/controller/)**:
   the Java 8 SDK data model, lifecycle and complete public API.
-- **[`tools/mumble-server-runtime-arena/`](tools/mumble-server-runtime-arena)**:
+- **[`runtime/reference/arena/`](runtime/reference/arena)**:
   the worked example, about 1200 lines. Every fragment in the book comes from it.
 
 The first two are published from `main` by the `Pages` workflow. To build them
@@ -240,7 +240,7 @@ The live tests open loopback sockets. The toolchain is pinned in
 Mumble Server Runtime is licensed under the
 [Apache License, Version 2.0](LICENSE).
 
-The protocol references and test vectors under `references/vendored/` retain
+The protocol references and test vectors under `runtime/references/vendored/` retain
 their upstream licenses and provenance.
 
 ## Acknowledgements
@@ -252,9 +252,9 @@ endorsed by the Mumble project.
 Protocol compatibility work relies on the Mumble project's source code and
 message schemas, developed by the Mumble Developers and distributed under a
 BSD-style license. The excerpts and test vectors kept under
-`references/vendored/` retain the upstream copyright and license; see
-[`references/vendored/LICENSE`](references/vendored/LICENSE) and
-[`references/vendored/PROVENANCE.md`](references/vendored/PROVENANCE.md).
+`runtime/references/vendored/` retain the upstream copyright and license; see
+[`runtime/references/vendored/LICENSE`](runtime/references/vendored/LICENSE) and
+[`runtime/references/vendored/PROVENANCE.md`](runtime/references/vendored/PROVENANCE.md).
 
 ## AI-assisted development
 

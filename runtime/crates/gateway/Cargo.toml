@@ -9,7 +9,7 @@ authors.workspace = true
 description = "The front door of the shard runtime : TLS control plane, handshake, connection router, multi-shard registry, migration, and a UDP voice plane that never touches a shard task. Implements docs/design/guide-implementation.md steps 8 to 10."
 
 # Library only : the gateway has no flavor of its own, so it has nothing to run.
-# A composition binary (see tools/mumble-server-runtime-arena) picks one and starts it.
+# A composition binary (see runtime/reference/arena) picks one and starts it.
 [lib]
 name = "mumble_server_runtime_gateway"
 path = "src/mumble_server_runtime_gateway.rs"

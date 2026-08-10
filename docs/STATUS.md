@@ -19,9 +19,9 @@ mumble-server-runtime-gateway -> mumble-server-runtime-shard -> mumble-server-ru
   la table de routage audio ;
 - `mumble-server-runtime-gateway` possède TLS/TCP/UDP, le handshake Mumble, le registre de
   connexions, les shards et les migrations ;
-- `tools/mumble-server-runtime-arena` est le flavor de démonstration et le binaire de
+- `runtime/reference/arena` est le flavor de démonstration et le binaire de
   composition ;
-- `tools/mumble-server-runtime-stress` exerce le gateway avec des clients Mumble headless ;
+- `runtime/tools/stress` exerce le gateway avec des clients Mumble headless ;
 - `mumble-server-runtime-testkit` est le verificateur indépendant : modèle client strict,
   scénarios gateway live et oracle de publications shard.
 

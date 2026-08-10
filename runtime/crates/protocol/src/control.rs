@@ -3,8 +3,8 @@
 //! [`decode_control`] maps a framed message (type code plus payload) to a typed
 //! [`ControlMessage`]. Every type prost-decodes its payload except one:
 //!
-//! REF: references/vendored/Mumble.proto : `message UDPTunnel` — "Not used".
-//! REF: references/vendored/protocol/Connection.cpp / ServerHandler.cpp : a TCP
+//! REF: runtime/references/vendored/Mumble.proto : `message UDPTunnel` — "Not used".
+//! REF: runtime/references/vendored/protocol/Connection.cpp / ServerHandler.cpp : a TCP
 //!      frame of type `UDPTunnel` (1) carries a raw UDP audio packet at offset 6,
 //!      NOT an encoded `UDPTunnel` protobuf message. [`ControlMessage::UdpTunnel`]
 //!      therefore holds the raw bytes verbatim. `udp_tunnel_*` tests below fail if

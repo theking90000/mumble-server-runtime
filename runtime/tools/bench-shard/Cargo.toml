@@ -13,8 +13,8 @@ name = "bench-shard"
 path = "src/main.rs"
 
 [dependencies]
-mumble-server-runtime-shard = { path = "../../runtime/crates/shard" }
-mumble-server-runtime-protocol = { path = "../../runtime/crates/protocol" }
+mumble-server-runtime-shard = { path = "../../crates/shard" }
+mumble-server-runtime-protocol = { path = "../../crates/protocol" }
 tokio = { version = "1", features = ["sync"] }
 anyhow = "1"
 
