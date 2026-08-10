@@ -103,14 +103,14 @@ fn open_frame(
     instance: &[u8],
     resume_token: Vec<u8>,
 ) -> ClientFrame {
+    let mut open = OpenSession::default();
+    open.controller_id = controller.to_owned();
+    open.controller_instance_id = instance.to_vec();
+    open.resume_token = resume_token;
+    open.desired_state = Some(desired_state(1));
     ClientFrame {
         request_id: request_id(request),
-        payload: Some(ClientPayload::OpenSession(OpenSession {
-            controller_id: controller.to_owned(),
-            controller_instance_id: instance.to_vec(),
-            resume_token,
-            desired_state: Some(desired_state(1)),
-        })),
+        payload: Some(ClientPayload::OpenSession(open)),
     }
 }
 
