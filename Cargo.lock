@@ -711,6 +711,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "mumble-controller-host"
+version = "0.1.0"
+dependencies = [
+ "mumble-server-runtime-gateway",
+ "mumble-server-runtime-shard",
+ "thiserror 2.0.19",
+]
+
+[[package]]
 name = "mumble-controller-server"
 version = "0.1.0"
 dependencies = [
