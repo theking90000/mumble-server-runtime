@@ -13,8 +13,8 @@ name = "mumble-server-runtime-stress"
 path = "src/main.rs"
 
 [dependencies]
-mumble-server-runtime-protocol = { path = "../../mumble-server-runtime-protocol" }
-mumble-server-runtime-crypto = { path = "../../mumble-server-runtime-crypto" }
+mumble-server-runtime-protocol = { path = "../../runtime/crates/protocol" }
+mumble-server-runtime-crypto = { path = "../../runtime/crates/crypto" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "time"] }
 tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12", "logging"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }

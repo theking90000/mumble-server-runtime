@@ -413,7 +413,7 @@ fn apply_stat(counter: &mut u32, delta: i32) {
 
 #[cfg(test)]
 mod tests {
-    // Test asserts use expect() on Options; see mumble-server-runtime-protocol/framing.rs for
+    // Test asserts use expect() on Options; see runtime/crates/protocol/src/framing.rs for
     // why this is allowed under -D warnings.
     #![allow(clippy::expect_used)]
 
