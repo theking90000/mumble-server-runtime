@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
@@ -7,8 +7,8 @@ use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use mumble_controller_core::{
     ClaimMode, ClaimOutcome, ClaimRequest, OpenSession as CoreOpenSession, OwnershipError,
-    OwnershipRegistry, RenewOutcome, RevisionOutcome, SessionCredentials, SessionError, SessionId,
-    SessionRegistry,
+    OwnershipRegistry, ReliableCommands, RenewOutcome, RevisionOutcome, SessionCredentials,
+    SessionError, SessionId, SessionRegistry,
 };
 use mumble_server_runtime_gateway::RuntimeHandle;
 use mumble_server_runtime_shard::{ConnectionId, ReconcileReport, ShardHandle, ShardId};
@@ -93,6 +93,7 @@ pub(crate) fn spawn(
     let core_sessions = SessionRegistry::new(config.max_sessions, config.lease_duration);
     let ownership =
         OwnershipRegistry::new(config.max_participants, config.max_participants_per_session);
+    let reliable = ReliableCommands::new(config.queue_capacity);
     let actor = ControllerActor {
         config,
         runtime,
@@ -100,6 +101,7 @@ pub(crate) fn spawn(
         control_epoch,
         core_sessions,
         ownership,
+        reliable,
         sessions: HashMap::new(),
         streams: HashMap::new(),
         participants: BTreeMap::new(),
@@ -116,8 +118,6 @@ struct ControllerSession {
     responses: Option<ResponseSender>,
     observed_revision: u64,
     explicit_observations: BTreeSet<String>,
-    completed_requests: HashMap<Vec<u8>, ServerFrame>,
-    completed_order: VecDeque<Vec<u8>>,
 }
 
 #[derive(Clone)]
@@ -151,6 +151,7 @@ struct ControllerActor {
     control_epoch: Vec<u8>,
     core_sessions: SessionRegistry,
     ownership: OwnershipRegistry,
+    reliable: ReliableCommands<ServerFrame>,
     sessions: HashMap<SessionId, ControllerSession>,
     streams: HashMap<u64, SessionId>,
     participants: BTreeMap<String, Participant>,
@@ -316,6 +317,7 @@ impl ControllerActor {
         };
         let session_id = ready.session_id;
         if !ready.resumed {
+            self.reliable.attach_session(session_id);
             self.sessions.insert(
                 session_id,
                 ControllerSession {
@@ -323,8 +325,6 @@ impl ControllerActor {
                     responses: None,
                     observed_revision: 0,
                     explicit_observations: BTreeSet::new(),
-                    completed_requests: HashMap::new(),
-                    completed_order: VecDeque::new(),
                 },
             );
         } else if !self.sessions.contains_key(&session_id) {
@@ -406,12 +406,7 @@ impl ControllerActor {
         let Some(session_id) = self.streams.get(&stream_id).copied() else {
             return;
         };
-        if let Some(cached) = self
-            .sessions
-            .get(&session_id)
-            .and_then(|session| session.completed_requests.get(&request_id))
-            .cloned()
-        {
+        if let Some(cached) = self.reliable.replay(session_id, &request_id) {
             self.send_session_uncached(session_id, cached);
             return;
         }
@@ -1675,6 +1670,7 @@ impl ControllerActor {
             );
         }
         self.core_sessions.remove(session_id);
+        self.reliable.remove_session(session_id);
         if let Some(session) = self.sessions.remove(&session_id)
             && let Some(stream_id) = session.stream_id
         {
@@ -1884,19 +1880,13 @@ impl ControllerActor {
 
     fn send_session(&mut self, session_id: SessionId, frame: ServerFrame) {
         if !frame.request_id.is_empty()
-            && let Some(session) = self.sessions.get_mut(&session_id)
+            && let Err(error) =
+                self.reliable
+                    .complete(session_id, frame.request_id.clone(), frame.clone())
         {
-            if !session.completed_requests.contains_key(&frame.request_id) {
-                session.completed_order.push_back(frame.request_id.clone());
-            }
-            session
-                .completed_requests
-                .insert(frame.request_id.clone(), frame.clone());
-            while session.completed_order.len() > self.config.queue_capacity {
-                if let Some(expired) = session.completed_order.pop_front() {
-                    session.completed_requests.remove(&expired);
-                }
-            }
+            eprintln!("mumble-controller-server: dropping an unrecorded reliable result: {error}");
+            self.core_sessions.mark_resync_required(session_id);
+            return;
         }
         self.send_session_uncached(session_id, frame);
     }
@@ -2604,6 +2594,7 @@ mod tests {
         let core_sessions = SessionRegistry::new(config.max_sessions, config.lease_duration);
         let ownership =
             OwnershipRegistry::new(config.max_participants, config.max_participants_per_session);
+        let reliable = ReliableCommands::new(config.queue_capacity);
         let actor = ControllerActor {
             config,
             runtime: runtime.handle(),
@@ -2611,6 +2602,7 @@ mod tests {
             control_epoch: vec![0; 16],
             core_sessions,
             ownership,
+            reliable,
             sessions: HashMap::new(),
             streams: HashMap::new(),
             participants: BTreeMap::new(),
@@ -2641,6 +2633,7 @@ mod tests {
         actor
             .core_sessions
             .set_desired_revision(ready.session_id, 3);
+        actor.reliable.attach_session(ready.session_id);
         actor.sessions.insert(
             ready.session_id,
             ControllerSession {
@@ -2648,8 +2641,6 @@ mod tests {
                 responses: Some(responses),
                 observed_revision: 0,
                 explicit_observations: BTreeSet::new(),
-                completed_requests: HashMap::new(),
-                completed_order: VecDeque::new(),
             },
         );
         actor.streams.insert(5, ready.session_id);
