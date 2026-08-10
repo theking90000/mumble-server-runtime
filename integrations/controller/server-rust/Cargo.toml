@@ -40,7 +40,7 @@ tonic-prost-build = "=0.14.6"
 
 [dev-dependencies]
 mumble-server-runtime-protocol = { path = "../../../runtime/crates/protocol" }
-mumble-server-runtime-testkit = { path = "../../../mumble-server-runtime-testkit" }
+mumble-server-runtime-testkit = { path = "../../../runtime/verification/testkit" }
 tempfile = "3"
 tokio = { version = "1", features = ["process", "test-util"] }
 

@@ -1,6 +1,7 @@
 //! Deterministic no-panic smoke over the decoders, runnable on stable in the
 //! normal `cargo test` CI. It is a cheap proxy for the cargo-fuzz targets under
-//! `fuzz/` (which need nightly): every decoder must return, never panic, on
+//! `runtime/verification/fuzz/` (which needs nightly): every decoder must return,
+//! never panic, on
 //! arbitrary bytes (fail closed, L4). A crash here fails the test.
 
 /// xorshift64 — a tiny deterministic PRNG, so failures reproduce exactly.

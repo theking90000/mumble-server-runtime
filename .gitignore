@@ -7,6 +7,9 @@ Cargo.lock.orig
 /fuzz/target/
 /fuzz/corpus/
 /fuzz/artifacts/
+/runtime/verification/fuzz/target/
+/runtime/verification/fuzz/corpus/
+/runtime/verification/fuzz/artifacts/
 
 # Références vendored : le clone brut du dépôt mumble-voip n'est PAS commité.
 # Seuls le hash pinné (references/mumble.pin) et les extraits explicitement

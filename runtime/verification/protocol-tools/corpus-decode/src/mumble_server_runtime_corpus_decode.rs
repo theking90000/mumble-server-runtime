@@ -38,11 +38,13 @@ use mumble_server_runtime_protocol::{ControlMessage, decode_control, decode_udp,
 pub use mumble_server_runtime_protocol::UdpMessage;
 
 /// Magic header of a `.voxcap` file, format version 01.
-/// REF: tools/recording-proxy/src/capture.rs : `MAGIC` (the format's authority).
+/// REF: runtime/verification/protocol-tools/recording-proxy/src/capture.rs :
+/// `MAGIC` (the format's authority).
 const MAGIC: &[u8; 8] = b"VOXCAP01";
 
 /// Fixed size of a record header: `[dir:u8][transport:u8][ts:i64 LE][len:u32 LE]`.
-/// REF: tools/recording-proxy/src/capture.rs : `write_record` / `read_records`.
+/// REF: runtime/verification/protocol-tools/recording-proxy/src/capture.rs :
+/// `write_record` / `read_records`.
 const RECORD_HEADER_LEN: usize = 1 + 1 + 8 + 4;
 
 /// Same hard cap the writer enforces, so a corrupt length never drives an
