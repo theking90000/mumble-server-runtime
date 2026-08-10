@@ -5,6 +5,10 @@ use std::time::Duration;
 
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use mumble_controller_core::{
+    OpenSession as CoreOpenSession, RenewOutcome, SessionCredentials, SessionError, SessionId,
+    SessionRegistry,
+};
 use mumble_server_runtime_gateway::RuntimeHandle;
 use mumble_server_runtime_shard::{ConnectionId, ReconcileReport, ShardHandle, ShardId};
 use tokio::sync::{mpsc, oneshot, watch};
@@ -18,11 +22,11 @@ use crate::protocol::client_frame::Payload as ClientPayload;
 use crate::protocol::fetch_space_result::Result as FetchResult;
 use crate::protocol::{
     ClientFrame, CommandErrorCode, CommandRejected, DesiredStateReconciled, DesiredStateSnapshot,
-    FetchSpaceResult, ObservedSpacesAccepted, OpenSession, OwnershipRevocationReason,
+    FetchSpaceResult, ObservedSpacesAccepted, OwnershipRevocationReason,
     ParticipantOwnershipGranted, ParticipantOwnershipRevoked, ParticipantRegistration,
     ParticipantSpec, ParticipantSpecAccepted, ParticipantStatus, ParticipantStatusChanged,
-    ProfileRef, ResyncRequired, ServerFrame, SessionClosing, SessionReady, SpaceAbsent,
-    SpaceClosed, SpaceParticipant, SpaceSnapshot,
+    ResyncRequired, ServerFrame, SessionClosing, SessionReady, SpaceAbsent, SpaceClosed,
+    SpaceParticipant, SpaceSnapshot,
 };
 use crate::space::{ControllerSpaceLogic, RenderParticipant, RenderState};
 
@@ -85,41 +89,31 @@ pub(crate) fn spawn(
 ) -> Result<(ActorHandle, JoinHandle<()>), ActorStartError> {
     let control_epoch = random_bytes(16)?;
     let (sender, receiver) = mpsc::channel(config.queue_capacity);
+    let core_sessions = SessionRegistry::new(config.max_sessions, config.lease_duration);
     let actor = ControllerActor {
         config,
         runtime,
         sender: sender.clone(),
         control_epoch,
+        core_sessions,
         sessions: HashMap::new(),
-        resume_tokens: HashMap::new(),
         streams: HashMap::new(),
         participants: BTreeMap::new(),
         join_tokens: HashMap::new(),
         spaces: BTreeMap::new(),
-        next_session_id: 1,
         next_application_revision: 1,
     };
     let task = tokio::spawn(actor.run(receiver));
     Ok((ActorHandle { sender }, task))
 }
 
-type SessionId = u64;
-
 struct ControllerSession {
-    controller_id: String,
-    instance_id: Vec<u8>,
-    session_token: Vec<u8>,
-    resume_token: Vec<u8>,
-    expires_at: Instant,
     stream_id: Option<u64>,
     responses: Option<ResponseSender>,
-    desired_revision: u64,
     observed_revision: u64,
     explicit_observations: BTreeSet<String>,
     completed_requests: HashMap<Vec<u8>, ServerFrame>,
     completed_order: VecDeque<Vec<u8>>,
-    needs_resync: bool,
-    profile: ProfileRef,
 }
 
 #[derive(Clone)]
@@ -156,13 +150,12 @@ struct ControllerActor {
     runtime: RuntimeHandle,
     sender: mpsc::Sender<ActorCommand>,
     control_epoch: Vec<u8>,
+    core_sessions: SessionRegistry,
     sessions: HashMap<SessionId, ControllerSession>,
-    resume_tokens: HashMap<Vec<u8>, SessionId>,
     streams: HashMap<u64, SessionId>,
     participants: BTreeMap<String, Participant>,
     join_tokens: HashMap<String, String>,
     spaces: BTreeMap<String, Space>,
-    next_session_id: SessionId,
     next_application_revision: u64,
 }
 
@@ -257,51 +250,11 @@ impl ControllerActor {
             return;
         }
 
-        let now = Instant::now();
-        let resumed = self
-            .resume_tokens
-            .get(&open.resume_token)
-            .copied()
-            .filter(|session_id| {
-                self.sessions.get(session_id).is_some_and(|session| {
-                    session.controller_id == open.controller_id
-                        && session.instance_id == open.controller_instance_id
-                        && session.expires_at > now
-                })
-            });
-        let session_id = match resumed {
-            Some(session_id) => session_id,
-            None => {
-                if self.sessions.len() >= self.config.max_sessions {
-                    self.reject_stream(
-                        &responses,
-                        request_id,
-                        CommandErrorCode::ResourceExhausted,
-                        "the Controller session limit is reached",
-                    );
-                    return;
-                }
-                match self.create_session(&open, now, profile.clone()) {
-                    Ok(session_id) => session_id,
-                    Err(error) => {
-                        self.reject_stream(
-                            &responses,
-                            request_id,
-                            CommandErrorCode::InternalError,
-                            &error.to_string(),
-                        );
-                        return;
-                    }
-                }
-            }
-        };
-
-        self.attach_stream(session_id, stream_id, responses);
-        let ready = match self.session_ready(session_id) {
-            Ok(ready) => ready,
+        let session_token = match random_bytes(32) {
+            Ok(token) => token,
             Err(error) => {
-                self.reject_session(
-                    session_id,
+                self.reject_stream(
+                    &responses,
                     request_id,
                     CommandErrorCode::InternalError,
                     &error.to_string(),
@@ -309,47 +262,99 @@ impl ControllerActor {
                 return;
             }
         };
+        let resume_token = match random_bytes(32) {
+            Ok(token) => token,
+            Err(error) => {
+                self.reject_stream(
+                    &responses,
+                    request_id,
+                    CommandErrorCode::InternalError,
+                    &error.to_string(),
+                );
+                return;
+            }
+        };
+        let credentials = match SessionCredentials::new(session_token, resume_token) {
+            Ok(credentials) => credentials,
+            Err(error) => {
+                self.reject_stream(
+                    &responses,
+                    request_id,
+                    CommandErrorCode::InternalError,
+                    &error.to_string(),
+                );
+                return;
+            }
+        };
+        let ready = match self.core_sessions.open(CoreOpenSession {
+            controller_id: &open.controller_id,
+            controller_instance_id: &open.controller_instance_id,
+            resume_token: &open.resume_token,
+            profile,
+            credentials,
+            now: Instant::now().into_std(),
+        }) {
+            Ok(ready) => ready,
+            Err(SessionError::ResourceExhausted) => {
+                self.reject_stream(
+                    &responses,
+                    request_id,
+                    CommandErrorCode::ResourceExhausted,
+                    "the Controller session limit is reached",
+                );
+                return;
+            }
+            Err(error) => {
+                self.reject_stream(
+                    &responses,
+                    request_id,
+                    CommandErrorCode::InternalError,
+                    &error.to_string(),
+                );
+                return;
+            }
+        };
+        let session_id = ready.session_id;
+        if !ready.resumed {
+            self.sessions.insert(
+                session_id,
+                ControllerSession {
+                    stream_id: None,
+                    responses: None,
+                    observed_revision: 0,
+                    explicit_observations: BTreeSet::new(),
+                    completed_requests: HashMap::new(),
+                    completed_order: VecDeque::new(),
+                },
+            );
+        } else if !self.sessions.contains_key(&session_id) {
+            self.reject_stream(
+                &responses,
+                request_id,
+                CommandErrorCode::InternalError,
+                "the resumed Controller session has no Host state",
+            );
+            return;
+        }
+
+        self.attach_stream(session_id, stream_id, responses);
+        let protocol_ready = SessionReady {
+            session_token: ready.session_token,
+            resume_token: ready.resume_token,
+            control_epoch: self.control_epoch.clone(),
+            lease_duration: Some(duration_to_proto(self.config.lease_duration)),
+            profile: Some(profile::to_protocol(&ready.profile)),
+        };
         self.send_session(
             session_id,
             ServerFrame {
                 request_id: request_id.clone(),
-                payload: Some(crate::protocol::server_frame::Payload::SessionReady(ready)),
+                payload: Some(crate::protocol::server_frame::Payload::SessionReady(
+                    protocol_ready,
+                )),
             },
         );
         self.reconcile_snapshot(session_id, open.desired_state, request_id);
-    }
-
-    fn create_session(
-        &mut self,
-        open: &OpenSession,
-        now: Instant,
-        profile: ProfileRef,
-    ) -> Result<SessionId, ActorStartError> {
-        let session_id = self.next_session_id;
-        self.next_session_id = self.next_session_id.saturating_add(1);
-        let session_token = random_bytes(32)?;
-        let resume_token = random_bytes(32)?;
-        self.resume_tokens.insert(resume_token.clone(), session_id);
-        self.sessions.insert(
-            session_id,
-            ControllerSession {
-                controller_id: open.controller_id.clone(),
-                instance_id: open.controller_instance_id.clone(),
-                session_token,
-                resume_token,
-                expires_at: now + self.config.lease_duration,
-                stream_id: None,
-                responses: None,
-                desired_revision: 0,
-                observed_revision: 0,
-                explicit_observations: BTreeSet::new(),
-                completed_requests: HashMap::new(),
-                completed_order: VecDeque::new(),
-                needs_resync: false,
-                profile,
-            },
-        );
-        Ok(session_id)
     }
 
     fn attach_stream(&mut self, session_id: SessionId, stream_id: u64, responses: ResponseSender) {
@@ -364,23 +369,9 @@ impl ControllerActor {
         if let Some(session) = self.sessions.get_mut(&session_id) {
             session.stream_id = Some(stream_id);
             session.responses = Some(responses);
-            session.expires_at = Instant::now() + self.config.lease_duration;
+            self.core_sessions
+                .refresh_lease(session_id, Instant::now().into_std());
         }
-    }
-
-    fn session_ready(&mut self, session_id: SessionId) -> Result<SessionReady, ActorStartError> {
-        let new_session_token = random_bytes(32)?;
-        let Some(session) = self.sessions.get_mut(&session_id) else {
-            return Err(ActorStartError::MissingSession(session_id));
-        };
-        session.session_token = new_session_token.clone();
-        Ok(SessionReady {
-            session_token: new_session_token,
-            resume_token: session.resume_token.clone(),
-            control_epoch: self.control_epoch.clone(),
-            lease_duration: Some(duration_to_proto(self.config.lease_duration)),
-            profile: Some(session.profile.clone()),
-        })
     }
 
     fn frame(&mut self, stream_id: u64, frame: ClientFrame) {
@@ -427,7 +418,13 @@ impl ControllerActor {
 
         match payload {
             ClientPayload::RenewLease(command) => {
-                if !self.authorized(session_id, &command.session_token) {
+                let renewed = self.core_sessions.renew(
+                    session_id,
+                    &command.session_token,
+                    command.desired_state_revision,
+                    Instant::now().into_std(),
+                );
+                if matches!(renewed, Err(SessionError::InvalidSessionToken)) {
                     self.reject_session(
                         session_id,
                         request_id,
@@ -436,19 +433,16 @@ impl ControllerActor {
                     );
                     return;
                 }
-                if let Some(session) = self.sessions.get_mut(&session_id) {
-                    session.expires_at = Instant::now() + self.config.lease_duration;
+                if let Err(error) = renewed {
+                    self.reject_session(
+                        session_id,
+                        request_id,
+                        CommandErrorCode::InternalError,
+                        &error.to_string(),
+                    );
+                    return;
                 }
-                // `needs_resync` means the server already dropped at least one frame
-                // this session never saw, so its replica cannot be trusted even when
-                // the watermarks still agree.
-                let stale = self.sessions.get_mut(&session_id).is_some_and(|session| {
-                    let stale = session.needs_resync
-                        || session.desired_revision != command.desired_state_revision;
-                    session.needs_resync = false;
-                    stale
-                });
-                if stale {
+                if matches!(renewed, Ok(RenewOutcome::ResyncRequired)) {
                     self.send_session(
                         session_id,
                         ServerFrame {
@@ -647,15 +641,11 @@ impl ControllerActor {
     }
 
     fn authorized(&self, session_id: SessionId, token: &[u8]) -> bool {
-        self.sessions
-            .get(&session_id)
-            .is_some_and(|session| session.session_token == token)
+        self.core_sessions.authorize(session_id, token)
     }
 
     fn advance_desired_revision(&mut self, session_id: SessionId) {
-        if let Some(session) = self.sessions.get_mut(&session_id) {
-            session.desired_revision = session.desired_revision.saturating_add(1);
-        }
+        self.core_sessions.advance_desired_revision(session_id);
     }
 
     fn validate_snapshot(&self, snapshot: &Option<DesiredStateSnapshot>) -> Result<(), String> {
@@ -751,8 +741,9 @@ impl ControllerActor {
             );
         }
 
+        self.core_sessions
+            .set_desired_revision(session_id, snapshot.desired_state_revision);
         if let Some(session) = self.sessions.get_mut(&session_id) {
-            session.desired_revision = snapshot.desired_state_revision;
             session.explicit_observations = snapshot.observed_space_keys.into_iter().collect();
         }
         for registration in snapshot.participants {
@@ -1450,9 +1441,10 @@ impl ControllerActor {
     }
 
     fn next_deadline(&self) -> Option<Instant> {
-        self.sessions
-            .values()
-            .map(|session| session.expires_at)
+        self.core_sessions
+            .next_deadline()
+            .map(Instant::from_std)
+            .into_iter()
             .chain(
                 self.spaces
                     .values()
@@ -1463,12 +1455,7 @@ impl ControllerActor {
 
     fn expire_due(&mut self) {
         let now = Instant::now();
-        let expired_sessions: Vec<SessionId> = self
-            .sessions
-            .iter()
-            .filter(|(_, session)| session.expires_at <= now)
-            .map(|(session_id, _)| *session_id)
-            .collect();
+        let expired_sessions = self.core_sessions.expired_sessions(now.into_std());
         for session_id in expired_sessions {
             self.remove_session(session_id, OwnershipRevocationReason::SessionExpired);
         }
@@ -1512,11 +1499,11 @@ impl ControllerActor {
                 None,
             );
         }
-        if let Some(session) = self.sessions.remove(&session_id) {
-            self.resume_tokens.remove(&session.resume_token);
-            if let Some(stream_id) = session.stream_id {
-                self.streams.remove(&stream_id);
-            }
+        self.core_sessions.remove(session_id);
+        if let Some(session) = self.sessions.remove(&session_id)
+            && let Some(stream_id) = session.stream_id
+        {
+            self.streams.remove(&stream_id);
         }
     }
 
@@ -1738,9 +1725,7 @@ impl ControllerActor {
             // silently drop every later command, including RenewLease, and the lease
             // would expire on a controller that never learned anything went wrong.
             Err(mpsc::error::TrySendError::Full(_dropped)) => {
-                if let Some(session) = self.sessions.get_mut(&session_id) {
-                    session.needs_resync = true;
-                }
+                self.core_sessions.mark_resync_required(session_id);
             }
             Err(mpsc::error::TrySendError::Closed(_dropped)) => {
                 if let Some(session) = self.sessions.get_mut(&session_id) {
@@ -1842,8 +1827,6 @@ fn random_join_token() -> Result<String, ActorStartError> {
 pub enum ActorStartError {
     #[error("the operating system random source is unavailable")]
     Randomness,
-    #[error("Controller session {0} disappeared before SessionReady was built")]
-    MissingSession(u64),
 }
 
 #[cfg(test)]
@@ -2427,18 +2410,19 @@ mod tests {
     /// machine is exercised in place instead.
     fn reducer(runtime: &Runtime) -> (ControllerActor, mpsc::Receiver<ActorCommand>) {
         let (sender, receiver) = mpsc::channel(64);
+        let config = ControllerConfig::default();
+        let core_sessions = SessionRegistry::new(config.max_sessions, config.lease_duration);
         let actor = ControllerActor {
-            config: ControllerConfig::default(),
+            config,
             runtime: runtime.handle(),
             sender,
             control_epoch: vec![0; 16],
+            core_sessions,
             sessions: HashMap::new(),
-            resume_tokens: HashMap::new(),
             streams: HashMap::new(),
             participants: BTreeMap::new(),
             join_tokens: HashMap::new(),
             spaces: BTreeMap::new(),
-            next_session_id: 1,
             next_application_revision: 1,
         };
         (actor, receiver)
@@ -2449,26 +2433,33 @@ mod tests {
         capacity: usize,
     ) -> mpsc::Receiver<Result<ServerFrame, Status>> {
         let (responses, receiver) = mpsc::channel(capacity);
+        let ready = actor
+            .core_sessions
+            .open(CoreOpenSession {
+                controller_id: "controller",
+                controller_instance_id: &[9],
+                resume_token: &[],
+                profile: profile::spaces().expect("compiled Spaces profile is valid"),
+                credentials: SessionCredentials::new(vec![7; 32], vec![8; 32])
+                    .expect("valid test credentials"),
+                now: Instant::now().into_std(),
+            })
+            .expect("create attached test session");
+        actor
+            .core_sessions
+            .set_desired_revision(ready.session_id, 3);
         actor.sessions.insert(
-            1,
+            ready.session_id,
             ControllerSession {
-                controller_id: "controller".to_owned(),
-                instance_id: vec![9],
-                session_token: vec![7; 32],
-                resume_token: vec![8; 32],
-                expires_at: Instant::now() + Duration::from_secs(30),
                 stream_id: Some(5),
                 responses: Some(responses),
-                desired_revision: 3,
                 observed_revision: 0,
                 explicit_observations: BTreeSet::new(),
                 completed_requests: HashMap::new(),
                 completed_order: VecDeque::new(),
-                needs_resync: false,
-                profile: profile::spaces(),
             },
         );
-        actor.streams.insert(5, 1);
+        actor.streams.insert(5, ready.session_id);
         receiver
     }
 
@@ -2660,7 +2651,8 @@ mod tests {
         let runtime = Runtime::start();
         let (mut actor, _commands) = reducer(&runtime);
         let (responses, mut client) = mpsc::channel(8);
-        let mut unknown = profile::spaces();
+        let supported = profile::spaces().expect("compiled Spaces profile is valid");
+        let mut unknown = profile::to_protocol(&supported);
         unknown.profile_id = "unknown".to_owned();
 
         actor.open(
@@ -2679,7 +2671,7 @@ mod tests {
         );
 
         assert!(actor.sessions.is_empty());
-        assert!(actor.resume_tokens.is_empty());
+        assert!(actor.core_sessions.is_empty());
         assert!(actor.streams.is_empty());
         assert!(matches!(
             client.try_recv(),
