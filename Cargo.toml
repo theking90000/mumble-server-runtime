@@ -30,6 +30,14 @@ license = "Apache-2.0"
 repository = "https://github.com/theking90000/mumble-server-runtime"
 authors = ["Mumble Server Runtime contributors"]
 
+# The verifier inherits runtime paths from the workspace so a mechanical crate
+# move never requires an implementation diff to edit verifier-owned manifests.
+[workspace.dependencies]
+mumble-server-runtime-protocol = { path = "mumble-server-runtime-protocol" }
+mumble-server-runtime-crypto = { path = "mumble-server-runtime-crypto" }
+mumble-server-runtime-shard = { path = "mumble-server-runtime-shard" }
+mumble-server-runtime-gateway = { path = "mumble-server-runtime-gateway" }
+
 # Lints partagés — encodent une partie de R4 au niveau du compilateur. Chaque
 # crate les active via `[lints] workspace = true`. Le reste de R4 est applique
 # par les gates de `ci/`, car clippy ne peut pas l'exprimer.

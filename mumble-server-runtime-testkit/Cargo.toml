@@ -13,8 +13,8 @@ name = "mumble_server_runtime_testkit"
 path = "src/mumble_server_runtime_testkit.rs"
 
 [dependencies]
-mumble-server-runtime-protocol = { path = "../mumble-server-runtime-protocol" }
-mumble-server-runtime-crypto = { path = "../mumble-server-runtime-crypto" }
+mumble-server-runtime-protocol = { workspace = true }
+mumble-server-runtime-crypto = { workspace = true }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "time", "sync"] }
 tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12", "logging"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
@@ -24,8 +24,8 @@ anyhow = "1"
 # The judge is pointed at the public shard runtime. These stay dev-only: the
 # verifier library itself speaks only the protocol and never imports the
 # implementation it judges.
-mumble-server-runtime-gateway = { path = "../mumble-server-runtime-gateway" }
-mumble-server-runtime-shard = { path = "../mumble-server-runtime-shard" }
+mumble-server-runtime-gateway = { workspace = true }
+mumble-server-runtime-shard = { workspace = true }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "time", "sync"] }
 
 # This crate is a verifier harness whose contract is to PANIC on protocol
