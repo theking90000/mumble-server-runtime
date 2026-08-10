@@ -13,6 +13,7 @@ use tokio::time::Instant;
 use tonic::Status;
 
 use crate::config::ControllerConfig;
+use crate::profile;
 use crate::protocol::client_frame::Payload as ClientPayload;
 use crate::protocol::fetch_space_result::Result as FetchResult;
 use crate::protocol::{
@@ -20,8 +21,8 @@ use crate::protocol::{
     FetchSpaceResult, ObservedSpacesAccepted, OpenSession, OwnershipRevocationReason,
     ParticipantOwnershipGranted, ParticipantOwnershipRevoked, ParticipantRegistration,
     ParticipantSpec, ParticipantSpecAccepted, ParticipantStatus, ParticipantStatusChanged,
-    ResyncRequired, ServerFrame, SessionClosing, SessionReady, SpaceAbsent, SpaceClosed,
-    SpaceParticipant, SpaceSnapshot,
+    ProfileRef, ResyncRequired, ServerFrame, SessionClosing, SessionReady, SpaceAbsent,
+    SpaceClosed, SpaceParticipant, SpaceSnapshot,
 };
 use crate::space::{ControllerSpaceLogic, RenderParticipant, RenderState};
 
@@ -118,6 +119,7 @@ struct ControllerSession {
     completed_requests: HashMap<Vec<u8>, ServerFrame>,
     completed_order: VecDeque<Vec<u8>>,
     needs_resync: bool,
+    profile: ProfileRef,
 }
 
 #[derive(Clone)]
@@ -233,6 +235,18 @@ impl ControllerActor {
             );
             return;
         }
+        let profile = match profile::negotiate(open.profile.as_ref()) {
+            Ok(profile) => profile,
+            Err(error) => {
+                self.reject_stream(
+                    &responses,
+                    request_id,
+                    CommandErrorCode::InvalidArgument,
+                    &error.to_string(),
+                );
+                return;
+            }
+        };
         if let Err(message) = self.validate_snapshot(&open.desired_state) {
             self.reject_stream(
                 &responses,
@@ -267,7 +281,7 @@ impl ControllerActor {
                     );
                     return;
                 }
-                match self.create_session(&open, now) {
+                match self.create_session(&open, now, profile.clone()) {
                     Ok(session_id) => session_id,
                     Err(error) => {
                         self.reject_stream(
@@ -309,6 +323,7 @@ impl ControllerActor {
         &mut self,
         open: &OpenSession,
         now: Instant,
+        profile: ProfileRef,
     ) -> Result<SessionId, ActorStartError> {
         let session_id = self.next_session_id;
         self.next_session_id = self.next_session_id.saturating_add(1);
@@ -331,6 +346,7 @@ impl ControllerActor {
                 completed_requests: HashMap::new(),
                 completed_order: VecDeque::new(),
                 needs_resync: false,
+                profile,
             },
         );
         Ok(session_id)
@@ -363,6 +379,7 @@ impl ControllerActor {
             resume_token: session.resume_token.clone(),
             control_epoch: self.control_epoch.clone(),
             lease_duration: Some(duration_to_proto(self.config.lease_duration)),
+            profile: Some(session.profile.clone()),
         })
     }
 
@@ -1900,6 +1917,7 @@ mod tests {
                             controller_instance_id: instance,
                             resume_token,
                             desired_state: Some(desired),
+                            profile: None,
                         })),
                     },
                 })
@@ -2447,6 +2465,7 @@ mod tests {
                 completed_requests: HashMap::new(),
                 completed_order: VecDeque::new(),
                 needs_resync: false,
+                profile: profile::spaces(),
             },
         );
         actor.streams.insert(5, 1);
@@ -2618,6 +2637,7 @@ mod tests {
                     controller_instance_id: vec![9],
                     resume_token: Vec::new(),
                     desired_state: Some(snapshot(1, Vec::new())),
+                    profile: None,
                 })),
             },
         );
@@ -2633,6 +2653,42 @@ mod tests {
             matches!(client.try_recv(), Ok(Err(_status))),
             "the stream carries no session, so it must not stay open in silence"
         );
+    }
+
+    #[tokio::test]
+    async fn an_unknown_profile_is_rejected_before_session_creation() {
+        let runtime = Runtime::start();
+        let (mut actor, _commands) = reducer(&runtime);
+        let (responses, mut client) = mpsc::channel(8);
+        let mut unknown = profile::spaces();
+        unknown.profile_id = "unknown".to_owned();
+
+        actor.open(
+            5,
+            responses,
+            ClientFrame {
+                request_id: vec![1],
+                payload: Some(ClientPayload::OpenSession(OpenSession {
+                    controller_id: "controller".to_owned(),
+                    controller_instance_id: vec![9],
+                    resume_token: Vec::new(),
+                    desired_state: Some(snapshot(1, Vec::new())),
+                    profile: Some(unknown),
+                })),
+            },
+        );
+
+        assert!(actor.sessions.is_empty());
+        assert!(actor.resume_tokens.is_empty());
+        assert!(actor.streams.is_empty());
+        assert!(matches!(
+            client.try_recv(),
+            Ok(Ok(ServerFrame {
+                payload: Some(ServerPayload::CommandRejected(_)),
+                ..
+            }))
+        ));
+        assert!(matches!(client.try_recv(), Ok(Err(_status))));
     }
 
     #[tokio::test(start_paused = true)]

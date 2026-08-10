@@ -3,6 +3,7 @@
 
 mod actor;
 pub mod config;
+mod profile;
 mod server;
 mod service;
 mod space;
