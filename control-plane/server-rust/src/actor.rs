@@ -10,6 +10,7 @@ use mumble_controller_core::{
     OwnershipRegistry, ReliableCommands, RenewOutcome, RevisionOutcome, SessionCredentials,
     SessionError, SessionId, SessionRegistry,
 };
+use mumble_controller_host::{HostError, MumbleHost};
 use mumble_server_runtime_gateway::RuntimeHandle;
 use mumble_server_runtime_shard::{ConnectionId, ReconcileReport, ShardHandle, ShardId};
 use tokio::sync::{mpsc, oneshot, watch};
@@ -96,7 +97,7 @@ pub(crate) fn spawn(
     let reliable = ReliableCommands::new(config.queue_capacity);
     let actor = ControllerActor {
         config,
-        runtime,
+        host: MumbleHost::new(runtime),
         sender: sender.clone(),
         control_epoch,
         core_sessions,
@@ -105,7 +106,6 @@ pub(crate) fn spawn(
         sessions: HashMap::new(),
         streams: HashMap::new(),
         participants: BTreeMap::new(),
-        join_tokens: HashMap::new(),
         spaces: BTreeMap::new(),
         next_application_revision: 1,
     };
@@ -123,12 +123,10 @@ struct ControllerSession {
 #[derive(Clone)]
 struct Participant {
     participant_id: String,
-    join_token: String,
     applied_spec_revision: u64,
     applied_space_key: Option<String>,
     published_generation: u64,
     spec: ParticipantSpec,
-    connection: Option<ConnectionId>,
     self_mute: bool,
     self_deaf: bool,
     application_error: String,
@@ -146,7 +144,7 @@ struct Space {
 
 struct ControllerActor {
     config: ControllerConfig,
-    runtime: RuntimeHandle,
+    host: MumbleHost,
     sender: mpsc::Sender<ActorCommand>,
     control_epoch: Vec<u8>,
     core_sessions: SessionRegistry,
@@ -155,7 +153,6 @@ struct ControllerActor {
     sessions: HashMap<SessionId, ControllerSession>,
     streams: HashMap<u64, SessionId>,
     participants: BTreeMap<String, Participant>,
-    join_tokens: HashMap<String, String>,
     spaces: BTreeMap<String, Space>,
     next_application_revision: u64,
 }
@@ -866,7 +863,9 @@ impl ControllerActor {
         mode: ClaimMode,
     ) {
         let existing = self.ownership.get(&registration.participant_id).cloned();
-        if existing.is_some() != self.participants.contains_key(&registration.participant_id) {
+        if existing.is_some() != self.participants.contains_key(&registration.participant_id)
+            || existing.is_some() != self.host.contains(&registration.participant_id)
+        {
             self.reject_session(
                 session_id,
                 request_id,
@@ -940,7 +939,15 @@ impl ControllerActor {
                 return;
             }
         };
-        let mut connection = None;
+        if !self.host.credential_available(&join_token) {
+            self.reject_session(
+                session_id,
+                request_id,
+                CommandErrorCode::InternalError,
+                "generated Mumble credential collides with a live registration",
+            );
+            return;
+        }
         let mut self_mute = false;
         let mut self_deaf = false;
         let mut applied_space_key = None;
@@ -1005,12 +1012,10 @@ impl ControllerActor {
                 );
                 return;
             };
-            connection = previous.connection;
             self_mute = previous.self_mute;
             self_deaf = previous.self_deaf;
             applied_space_key = previous.applied_space_key.clone();
             published_generation = previous.published_generation;
-            self.join_tokens.remove(&previous.join_token);
             self.advance_desired_revision(previous_ownership.owner);
             self.send_revocation(
                 previous_ownership.owner,
@@ -1020,22 +1025,27 @@ impl ControllerActor {
                 Vec::new(),
             );
         }
+        if let Err(error) = self.host.register(&registration.participant_id, join_token) {
+            self.reject_session(
+                session_id,
+                request_id,
+                CommandErrorCode::InternalError,
+                &error.to_string(),
+            );
+            return;
+        }
         let participant = Participant {
             participant_id: registration.participant_id.clone(),
-            join_token: join_token.clone(),
             // Client revisions belong to one registration capability. A transfer
             // keeps the live connection, not the previous owner's revision space.
             applied_spec_revision: 0,
             applied_space_key,
             published_generation,
             spec,
-            connection,
             self_mute,
             self_deaf,
             application_error: String::new(),
         };
-        self.join_tokens
-            .insert(join_token, participant.participant_id.clone());
         let old_space = self
             .participants
             .insert(participant.participant_id.clone(), participant.clone())
@@ -1045,11 +1055,10 @@ impl ControllerActor {
         {
             self.refresh_space(&old_space);
             self.refresh_space(&participant.spec.space_key);
-            if let Some(connection) = participant.connection
+            if let Some(connection) = self.host.connection(&participant.participant_id)
                 && let Some(space) = self.spaces.get(&participant.spec.space_key)
             {
-                self.runtime
-                    .move_connection(connection, space.handle.shard());
+                self.host.move_connection(connection, space.handle.shard());
             }
         } else {
             self.refresh_space(&participant.spec.space_key);
@@ -1203,7 +1212,7 @@ impl ControllerActor {
         };
         let old_space = current.spec.space_key;
         let new_space = spec.space_key.clone();
-        let connection = current.connection;
+        let connection = self.host.connection(participant_id);
         if let Some(participant) = self.participants.get_mut(participant_id) {
             participant.spec = spec;
         }
@@ -1213,8 +1222,7 @@ impl ControllerActor {
             if let Some(connection) = connection
                 && let Some(space) = self.spaces.get(&new_space)
             {
-                self.runtime
-                    .move_connection(connection, space.handle.shard());
+                self.host.move_connection(connection, space.handle.shard());
             }
         }
     }
@@ -1276,12 +1284,7 @@ impl ControllerActor {
         let Some(current) = self.participants.remove(participant_id) else {
             return;
         };
-        self.join_tokens.remove(&current.join_token);
-        if let Some(connection) = current.connection
-            && let Some(peer) = self.runtime.peers().by_connection(connection)
-        {
-            peer.close();
-        }
+        self.host.revoke(participant_id);
         self.refresh_space(&current.spec.space_key);
         self.send_revocation(
             session_id,
@@ -1372,7 +1375,7 @@ impl ControllerActor {
         let revision_for_logic = Arc::clone(&rendered_application_revision);
         let revision_for_report = Arc::clone(&rendered_application_revision);
         let (report_sender, mut report_receiver) = watch::channel(None::<(u64, ReconcileReport)>);
-        let handle = self.runtime.create_shard_with_reports(
+        let handle = self.host.create_shard_with_reports(
             move |_handle| {
                 ControllerSpaceLogic::new(
                     key_for_logic,
@@ -1434,7 +1437,7 @@ impl ControllerActor {
                 let ownership = self.ownership.get(&participant.participant_id)?;
                 Some(RenderParticipant {
                     participant_id: participant.participant_id.clone(),
-                    connection: participant.connection,
+                    connection: self.host.connection(&participant.participant_id),
                     display_name: participant.spec.display_name.clone(),
                     server_mute: participant.spec.server_mute,
                     server_deaf: participant.spec.server_deaf,
@@ -1529,25 +1532,24 @@ impl ControllerActor {
             let _ignored = response.send(Err("a Mumble join token is required".to_owned()));
             return;
         };
-        let Some(participant_id) = self.join_tokens.get(&credential).cloned() else {
-            let _ignored =
-                response.send(Err("the Mumble join token is invalid or revoked".to_owned()));
-            return;
+        let attachment = match self.host.attach(&credential, connection) {
+            Ok(attachment) => attachment,
+            Err(HostError::UnknownCredential) => {
+                let _ignored =
+                    response.send(Err("the Mumble join token is invalid or revoked".to_owned()));
+                return;
+            }
+            Err(error) => {
+                let _ignored = response.send(Err(error.to_string()));
+                return;
+            }
         };
+        let participant_id = attachment.participant_id;
         let Some(current) = self.participants.get(&participant_id).cloned() else {
             let _ignored =
                 response.send(Err("the Mumble join token is invalid or revoked".to_owned()));
             return;
         };
-        if let Some(previous) = current.connection
-            && previous != connection
-            && let Some(peer) = self.runtime.peers().by_connection(previous)
-        {
-            peer.close();
-        }
-        if let Some(participant) = self.participants.get_mut(&participant_id) {
-            participant.connection = Some(connection);
-        }
         self.refresh_space(&current.spec.space_key);
         self.send_status(&participant_id);
         let result = self
@@ -1564,11 +1566,7 @@ impl ControllerActor {
             | SpaceEvent::Disconnected(connection)
             | SpaceEvent::SelfState { connection, .. } => connection,
         };
-        let participant_id = self
-            .participants
-            .values()
-            .find(|participant| participant.connection == Some(connection))
-            .map(|participant| participant.participant_id.clone());
+        let participant_id = self.host.participant(connection).map(str::to_owned);
         let Some(participant_id) = participant_id else {
             return;
         };
@@ -1580,7 +1578,7 @@ impl ControllerActor {
             match event {
                 SpaceEvent::Connected(_) => {}
                 SpaceEvent::Disconnected(_) => {
-                    participant.connection = None;
+                    self.host.disconnect(connection);
                     refresh = true;
                 }
                 SpaceEvent::SelfState {
@@ -1648,7 +1646,7 @@ impl ControllerActor {
             let Some(space) = self.spaces.remove(&space_key) else {
                 continue;
             };
-            self.runtime
+            self.host
                 .destroy_shard(space.handle.shard(), "empty Space grace elapsed");
             self.broadcast_space_closed(&space_key, &space);
         }
@@ -1693,6 +1691,19 @@ impl ControllerActor {
             );
             return;
         };
+        let Some(join_token) = self
+            .host
+            .credential(&participant.participant_id)
+            .map(str::to_owned)
+        else {
+            self.reject_session(
+                session_id,
+                request_id,
+                CommandErrorCode::InternalError,
+                "participant Host state has no Mumble credential",
+            );
+            return;
+        };
         self.send_session(
             session_id,
             ServerFrame {
@@ -1707,7 +1718,7 @@ impl ControllerActor {
                             accepted_spec_revision: ownership.client_revision,
                             applied_spec_revision: participant.applied_spec_revision,
                             published_generation: participant.published_generation,
-                            mumble_join_token: participant.join_token.clone(),
+                            mumble_join_token: join_token,
                         },
                     ),
                 ),
@@ -1747,6 +1758,7 @@ impl ControllerActor {
         let Some(ownership) = self.ownership.get(participant_id).cloned() else {
             return;
         };
+        let mumble_connected = self.host.connection(&participant.participant_id).is_some();
         self.send_session(
             ownership.owner,
             ServerFrame {
@@ -1756,7 +1768,7 @@ impl ControllerActor {
                         ParticipantStatusChanged {
                             participant_id: participant.participant_id,
                             status: Some(ParticipantStatus {
-                                mumble_connected: participant.connection.is_some(),
+                                mumble_connected,
                                 applied_space_key: participant
                                     .applied_space_key
                                     .unwrap_or_default(),
@@ -1785,7 +1797,7 @@ impl ControllerActor {
                 display_name: participant.spec.display_name.clone(),
                 server_mute: participant.spec.server_mute,
                 server_deaf: participant.spec.server_deaf,
-                mumble_connected: participant.connection.is_some(),
+                mumble_connected: self.host.connection(&participant.participant_id).is_some(),
             })
             .collect();
         Some(SpaceSnapshot {
@@ -2597,7 +2609,7 @@ mod tests {
         let reliable = ReliableCommands::new(config.queue_capacity);
         let actor = ControllerActor {
             config,
-            runtime: runtime.handle(),
+            host: MumbleHost::new(runtime.handle()),
             sender,
             control_epoch: vec![0; 16],
             core_sessions,
@@ -2606,7 +2618,6 @@ mod tests {
             sessions: HashMap::new(),
             streams: HashMap::new(),
             participants: BTreeMap::new(),
-            join_tokens: HashMap::new(),
             spaces: BTreeMap::new(),
             next_application_revision: 1,
         };
@@ -2662,16 +2673,18 @@ mod tests {
             .expect("claim test participant");
         let participant = Participant {
             participant_id: "alice".to_owned(),
-            join_token: "join".to_owned(),
             applied_spec_revision: 0,
             applied_space_key: None,
             published_generation: 0,
             spec: spec(space_key, "Alice"),
-            connection: None,
             self_mute: false,
             self_deaf: false,
             application_error: String::new(),
         };
+        actor
+            .host
+            .register("alice", "join".to_owned())
+            .expect("register test Mumble credential");
         actor.participants.insert("alice".to_owned(), participant);
     }
 

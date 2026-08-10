@@ -202,6 +202,12 @@ impl MumbleHost {
         self.bindings.contains(participant_id)
     }
 
+    /// Whether a freshly generated credential can be installed without aliasing.
+    #[must_use]
+    pub fn credential_available(&self, credential: &str) -> bool {
+        !credential.is_empty() && !self.bindings.credentials.contains_key(credential)
+    }
+
     #[must_use]
     pub fn credential(&self, participant_id: &str) -> Option<&str> {
         self.bindings.credential(participant_id)

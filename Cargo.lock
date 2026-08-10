@@ -728,6 +728,7 @@ dependencies = [
  "clap",
  "getrandom 0.4.3",
  "mumble-controller-core",
+ "mumble-controller-host",
  "mumble-server-runtime-gateway",
  "mumble-server-runtime-protocol",
  "mumble-server-runtime-shard",
