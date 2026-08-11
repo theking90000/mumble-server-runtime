@@ -1,7 +1,7 @@
 use mumble_controller_core::{ProfileError, ProfileRef, negotiate_profile};
 use mumble_controller_spaces::profile_ref;
 
-use crate::protocol::ProfileRef as ProtocolProfileRef;
+use crate::actor_messages::ProfileRef as ProtocolProfileRef;
 
 /// Select a profile compiled into this server before any session state exists.
 pub(crate) fn negotiate(requested: &ProtocolProfileRef) -> Result<ProfileRef, ProfileError> {

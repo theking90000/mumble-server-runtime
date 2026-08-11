@@ -2,12 +2,11 @@ use mumble_controller_spaces::{
     PayloadDecodeError, decode_command, decode_desired_state, decode_participant_spec,
     encode_event, encode_participant_status, protocol as spaces,
 };
-use prost::Message;
 use tonic::Status;
 
+use crate::actor_messages as model;
 use crate::core_protocol as core;
-use crate::protocol as legacy;
-pub(crate) fn from_core_frame(frame: core::ClientFrame) -> Result<legacy::ClientFrame, Status> {
+pub(crate) fn from_core_frame(frame: core::ClientFrame) -> Result<model::ClientFrame, Status> {
     use core::client_frame::Payload;
 
     let payload = match frame
@@ -15,7 +14,7 @@ pub(crate) fn from_core_frame(frame: core::ClientFrame) -> Result<legacy::Client
         .ok_or_else(|| Status::invalid_argument("ClientFrame has no payload"))?
     {
         Payload::OpenSession(message) => {
-            legacy::client_frame::Payload::OpenSession(legacy::OpenSession {
+            model::client_frame::Payload::OpenSession(model::OpenSession {
                 controller_id: message.controller_id,
                 controller_instance_id: message.controller_instance_id,
                 resume_token: message.resume_token,
@@ -24,19 +23,19 @@ pub(crate) fn from_core_frame(frame: core::ClientFrame) -> Result<legacy::Client
             })
         }
         Payload::RenewLease(message) => {
-            legacy::client_frame::Payload::RenewLease(legacy::RenewLease {
+            model::client_frame::Payload::RenewLease(model::RenewLease {
                 session_token: message.session_token,
                 desired_state_revision: message.desired_state_revision,
             })
         }
         Payload::SyncDesiredState(message) => {
-            legacy::client_frame::Payload::SyncDesiredState(legacy::SyncDesiredState {
+            model::client_frame::Payload::SyncDesiredState(model::SyncDesiredState {
                 session_token: message.session_token,
                 desired_state: message.desired_state.map(from_core_snapshot).transpose()?,
             })
         }
         Payload::RegisterParticipant(message) => {
-            legacy::client_frame::Payload::RegisterParticipant(legacy::RegisterParticipant {
+            model::client_frame::Payload::RegisterParticipant(model::RegisterParticipant {
                 session_token: message.session_token,
                 participant: message
                     .participant
@@ -45,18 +44,18 @@ pub(crate) fn from_core_frame(frame: core::ClientFrame) -> Result<legacy::Client
             })
         }
         Payload::SetParticipantSpec(message) => {
-            legacy::client_frame::Payload::SetParticipantSpec(legacy::SetParticipantSpec {
+            model::client_frame::Payload::SetParticipantSpec(model::SetParticipantSpec {
                 session_token: message.session_token,
                 participant_id: message.participant_id,
                 ownership_token: message.ownership_token,
                 client_spec_revision: message.client_spec_revision,
-                spec: Some(to_legacy_participant_spec(decode_participant_spec_payload(
+                spec: Some(to_actor_participant_spec(decode_participant_spec_payload(
                     message.profile_spec,
                 )?)),
             })
         }
         Payload::ReleaseParticipant(message) => {
-            legacy::client_frame::Payload::ReleaseParticipant(legacy::ReleaseParticipant {
+            model::client_frame::Payload::ReleaseParticipant(model::ReleaseParticipant {
                 session_token: message.session_token,
                 participant_id: message.participant_id,
                 registration_id: message.registration_id,
@@ -67,12 +66,12 @@ pub(crate) fn from_core_frame(frame: core::ClientFrame) -> Result<legacy::Client
             return from_profile_command(frame.request_id, message);
         }
         Payload::CloseSession(message) => {
-            legacy::client_frame::Payload::CloseSession(legacy::CloseSession {
+            model::client_frame::Payload::CloseSession(model::CloseSession {
                 session_token: message.session_token,
             })
         }
     };
-    Ok(legacy::ClientFrame {
+    Ok(model::ClientFrame {
         request_id: frame.request_id,
         payload: Some(payload),
     })
@@ -81,7 +80,7 @@ pub(crate) fn from_core_frame(frame: core::ClientFrame) -> Result<legacy::Client
 fn from_profile_command(
     request_id: Vec<u8>,
     message: core::ProfileCommand,
-) -> Result<legacy::ClientFrame, Status> {
+) -> Result<model::ClientFrame, Status> {
     use spaces::command::Command;
 
     let command = decode_command_payload(message.payload)?;
@@ -90,20 +89,20 @@ fn from_profile_command(
         .ok_or_else(|| Status::invalid_argument("Spaces command has no command"))?
     {
         Command::ReplaceObservedSpaces(command) => {
-            legacy::client_frame::Payload::ReplaceObservedSpaces(legacy::ReplaceObservedSpaces {
+            model::client_frame::Payload::ReplaceObservedSpaces(model::ReplaceObservedSpaces {
                 session_token: message.session_token,
                 observed_spaces_revision: command.observed_spaces_revision,
                 space_keys: command.space_keys,
             })
         }
         Command::FetchSpace(command) => {
-            legacy::client_frame::Payload::FetchSpace(legacy::FetchSpace {
+            model::client_frame::Payload::FetchSpace(model::FetchSpace {
                 session_token: message.session_token,
                 space_key: command.space_key,
             })
         }
     };
-    Ok(legacy::ClientFrame {
+    Ok(model::ClientFrame {
         request_id,
         payload: Some(payload),
     })
@@ -111,9 +110,9 @@ fn from_profile_command(
 
 fn from_core_snapshot(
     snapshot: core::DesiredStateSnapshot,
-) -> Result<legacy::DesiredStateSnapshot, Status> {
+) -> Result<model::DesiredStateSnapshot, Status> {
     let profile_state = decode_desired_state_payload(snapshot.profile_state)?;
-    Ok(legacy::DesiredStateSnapshot {
+    Ok(model::DesiredStateSnapshot {
         desired_state_revision: snapshot.desired_state_revision,
         participants: snapshot
             .participants
@@ -126,20 +125,20 @@ fn from_core_snapshot(
 
 fn from_core_registration(
     registration: core::ParticipantRegistration,
-) -> Result<legacy::ParticipantRegistration, Status> {
-    Ok(legacy::ParticipantRegistration {
+) -> Result<model::ParticipantRegistration, Status> {
+    Ok(model::ParticipantRegistration {
         participant_id: registration.participant_id,
         registration_id: registration.registration_id,
         ownership_token: registration.ownership_token,
         client_spec_revision: registration.client_spec_revision,
-        spec: Some(to_legacy_participant_spec(decode_participant_spec_payload(
+        spec: Some(to_actor_participant_spec(decode_participant_spec_payload(
             registration.profile_spec,
         )?)),
     })
 }
 
-pub(crate) fn to_core_frame(frame: legacy::ServerFrame) -> Result<core::ServerFrame, String> {
-    use legacy::server_frame::Payload;
+pub(crate) fn to_core_frame(frame: model::ServerFrame) -> Result<core::ServerFrame, String> {
+    use model::server_frame::Payload;
 
     let payload = match frame
         .payload
@@ -169,7 +168,7 @@ pub(crate) fn to_core_frame(frame: legacy::ServerFrame) -> Result<core::ServerFr
                     accepted_spec_revision: message.accepted_spec_revision,
                     applied_spec_revision: message.applied_spec_revision,
                     published_generation: message.published_generation,
-                    connection_credential: message.mumble_join_token,
+                    connection_credential: message.connection_credential,
                 },
             )
         }
@@ -198,17 +197,23 @@ pub(crate) fn to_core_frame(frame: legacy::ServerFrame) -> Result<core::ServerFr
             })
         }
         Payload::ObservedSpacesAccepted(message) => profile_event(
-            spaces::event::Event::ObservedSpacesAccepted(transcode(message)?),
+            spaces::event::Event::ObservedSpacesAccepted(spaces::ObservedSpacesAccepted {
+                observed_spaces_revision: message.observed_spaces_revision,
+            }),
         ),
-        Payload::SpaceSnapshot(message) => {
-            profile_event(spaces::event::Event::SpaceSnapshot(transcode(message)?))
-        }
+        Payload::SpaceSnapshot(message) => profile_event(spaces::event::Event::SpaceSnapshot(
+            to_spaces_snapshot(message),
+        )),
         Payload::SpaceClosed(message) => {
-            profile_event(spaces::event::Event::SpaceClosed(transcode(message)?))
+            profile_event(spaces::event::Event::SpaceClosed(spaces::SpaceClosed {
+                space_key: message.space_key,
+                incarnation_id: message.incarnation_id,
+                final_space_revision: message.final_space_revision,
+            }))
         }
-        Payload::FetchSpaceResult(message) => {
-            profile_event(spaces::event::Event::FetchSpaceResult(transcode(message)?))
-        }
+        Payload::FetchSpaceResult(message) => profile_event(
+            spaces::event::Event::FetchSpaceResult(to_spaces_fetch(message)),
+        ),
         Payload::ResyncRequired(message) => {
             core::server_frame::Payload::ResyncRequired(core::ResyncRequired {
                 reason: message.reason,
@@ -240,14 +245,14 @@ fn profile_event(event: spaces::event::Event) -> core::server_frame::Payload {
     })
 }
 
-fn to_core_status(status: legacy::ParticipantStatus) -> core::ParticipantStatus {
+fn to_core_status(status: model::ParticipantStatus) -> core::ParticipantStatus {
     let profile_status = spaces::ParticipantStatus {
         applied_space_key: status.applied_space_key,
         self_mute: status.self_mute,
         self_deaf: status.self_deaf,
     };
     core::ParticipantStatus {
-        connected: status.mumble_connected,
+        connected: status.connected,
         accepted_spec_revision: status.accepted_spec_revision,
         applied_spec_revision: status.applied_spec_revision,
         published_generation: status.published_generation,
@@ -258,15 +263,15 @@ fn to_core_status(status: legacy::ParticipantStatus) -> core::ParticipantStatus 
     }
 }
 
-fn from_core_profile(profile: core::ProfileRef) -> legacy::ProfileRef {
-    legacy::ProfileRef {
+fn from_core_profile(profile: core::ProfileRef) -> model::ProfileRef {
+    model::ProfileRef {
         profile_id: profile.profile_id,
         schema_version: profile.schema_version,
         descriptor_digest: profile.descriptor_digest,
     }
 }
 
-fn to_core_profile(profile: legacy::ProfileRef) -> core::ProfileRef {
+fn to_core_profile(profile: model::ProfileRef) -> core::ProfileRef {
     core::ProfileRef {
         profile_id: profile.profile_id,
         schema_version: profile.schema_version,
@@ -295,8 +300,8 @@ fn decode_participant_spec_payload(
         .map_err(payload_status)
 }
 
-fn to_legacy_participant_spec(spec: spaces::ParticipantSpec) -> legacy::ParticipantSpec {
-    legacy::ParticipantSpec {
+fn to_actor_participant_spec(spec: spaces::ParticipantSpec) -> model::ParticipantSpec {
+    model::ParticipantSpec {
         space_key: spec.space_key,
         display_name: spec.display_name,
         server_mute: spec.server_mute,
@@ -312,12 +317,38 @@ fn payload_status(error: PayloadDecodeError) -> Status {
     }
 }
 
-fn transcode<From, To>(message: From) -> Result<To, String>
-where
-    From: Message,
-    To: Message + Default,
-{
-    To::decode(message.encode_to_vec().as_slice()).map_err(|error| error.to_string())
+fn to_spaces_snapshot(message: model::SpaceSnapshot) -> spaces::SpaceSnapshot {
+    spaces::SpaceSnapshot {
+        space_key: message.space_key,
+        incarnation_id: message.incarnation_id,
+        space_revision: message.space_revision,
+        participants: message
+            .participants
+            .into_iter()
+            .map(|participant| spaces::SpaceParticipant {
+                participant_id: participant.participant_id,
+                display_name: participant.display_name,
+                server_mute: participant.server_mute,
+                server_deaf: participant.server_deaf,
+                connected: participant.connected,
+            })
+            .collect(),
+        published_generation: message.published_generation,
+    }
+}
+
+fn to_spaces_fetch(message: model::FetchSpaceResult) -> spaces::FetchSpaceResult {
+    let result = message.result.map(|result| match result {
+        model::fetch_space_result::Result::Snapshot(snapshot) => {
+            spaces::fetch_space_result::Result::Snapshot(to_spaces_snapshot(snapshot))
+        }
+        model::fetch_space_result::Result::Absent(absent) => {
+            spaces::fetch_space_result::Result::Absent(spaces::SpaceAbsent {
+                space_key: absent.space_key,
+            })
+        }
+    });
+    spaces::FetchSpaceResult { result }
 }
 
 #[cfg(test)]
