@@ -22,7 +22,7 @@ java {
 }
 
 val spacesDescriptor = layout.buildDirectory.file("descriptors/controller-spaces-v1.pb")
-val expectedSpacesDescriptorDigest = project.file("../../contract/controller-spaces-v1.pb.sha256")
+val expectedSpacesDescriptorDigest = project.file("../../protocol/controller-spaces-v1.pb.sha256")
 val profileMetadataDirectory = layout.buildDirectory.dir("generated/sources/profileMetadata/java")
 val generateControllerProfileMetadata = tasks.register("generateControllerProfileMetadata") {
     inputs.file(expectedSpacesDescriptorDigest)
@@ -58,18 +58,18 @@ sourceSets {
     main {
         java.srcDir(profileMetadataDirectory)
         proto {
-            srcDir("../../contract/src/main/proto")
+            srcDir("../../protocol/src/main/proto")
         }
     }
     create("spacesContract") {
         proto {
-            srcDir("../../contract/src/main/proto")
+            srcDir("../../protocol/src/main/proto")
         }
     }
 }
 
 dependencies {
-    api(project(":core:clients:controller-core"))
+    api(project(":coordination:sdk:controller-core"))
     implementation("com.google.protobuf:protobuf-java:3.25.8")
     compileOnly("javax.annotation:javax.annotation-api:1.3.2")
 

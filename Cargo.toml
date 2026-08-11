@@ -25,7 +25,7 @@ members = [
     # Adaptation Mumble : authentification, connexions et opérations runtime.
     "control/runtime-adapter/rust",
     # Profil métier fourni : un shard et un domaine audio par Space nommée.
-    "control-plane/implementations/spaces/rust",
+    "implementations/spaces/rust",
     # Application Controller : gRPC declaratif compose au-dessus du runtime.
     "control-plane/server-rust",
 ]

@@ -190,8 +190,9 @@ for many remote controllers targeting one host, plus the adapter to Mumble
 Server Runtime. **Spaces** is the provided implementation: its Java SDK assigns
 participants to named Spaces and its Rust host materializes them as runtime
 shards without exposing shard identifiers. The generic pieces live under
-`control/`; the Spaces files remain temporarily under `control-plane/` while
-they migrate to the sibling `implementations/spaces/` tree.
+`control/`, and the Spaces protocol, Rust model, and Java SDK live under
+`implementations/spaces/`. Only the runnable host and Bukkit example remain at
+transitional `control-plane/` paths.
 
 This creates three entry points:
 

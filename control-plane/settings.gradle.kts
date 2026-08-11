@@ -18,10 +18,14 @@ dependencyResolutionManagement {
 }
 
 rootProject.name = "mumble-controller"
-include("core:clients:controller-core")
-project(":core").projectDir = file("../control/coordination")
-project(":core:clients").projectDir = file("../control/coordination/sdk")
-project(":core:clients:controller-core").projectDir = file("../control/coordination/sdk/java")
-include("implementations:spaces:clients:controller-spaces")
-project(":implementations:spaces:clients:controller-spaces").projectDir =
-    file("implementations/spaces/clients/java")
+include("coordination:sdk:controller-core")
+project(":coordination").projectDir = file("../control/coordination")
+project(":coordination:sdk").projectDir = file("../control/coordination/sdk")
+project(":coordination:sdk:controller-core").projectDir =
+    file("../control/coordination/sdk/java")
+include("implementations:spaces:sdk:controller-spaces")
+project(":implementations").projectDir = file("../implementations")
+project(":implementations:spaces").projectDir = file("../implementations/spaces")
+project(":implementations:spaces:sdk").projectDir = file("../implementations/spaces/sdk")
+project(":implementations:spaces:sdk:controller-spaces").projectDir =
+    file("../implementations/spaces/sdk/java")

@@ -32,6 +32,6 @@ rootProject.name = "voice-example-plugin"
 includeBuild("../..") {
     dependencySubstitution {
         substitute(module("be.theking90000.mumble:controller-spaces"))
-            .using(project(":implementations:spaces:clients:controller-spaces"))
+            .using(project(":implementations:spaces:sdk:controller-spaces"))
     }
 }
