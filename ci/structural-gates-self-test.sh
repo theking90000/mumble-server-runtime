@@ -51,6 +51,21 @@ assert_controller_gate_ignores_build_artifact() {
   fi
 }
 
+assert_legacy_controller_contract_rejected() {
+  local fixture="$TEMP_ROOT/controller-legacy-contract"
+
+  mkdir -p "$fixture/ci" \
+    "$fixture/control-plane/contract/src/main/proto/mumble/controller/v1"
+  cp "$ROOT/ci/gates.sh" "$fixture/ci/gates.sh"
+  printf '%s\n' 'syntax = "proto3";' \
+    > "$fixture/control-plane/contract/src/main/proto/mumble/controller/v1/controller.proto"
+
+  if (cd "$fixture" && ci/gates.sh >/dev/null 2>&1); then
+    echo "structural-gates-self-test.sh: gates.sh accepted the legacy Controller contract layer" >&2
+    exit 1
+  fi
+}
+
 assert_boundary_rejects() {
   local layout="$1"
   local implementation_file="$2"
@@ -122,6 +137,10 @@ assert_controller_gate_rejects core-java-spaces \
 assert_controller_gate_rejects core-contract-spaces \
   control-plane/core/contract/src/main/proto/example/core.proto \
   'message FetchSpace {}'
+assert_controller_gate_rejects legacy-controller-package \
+  control-plane/core/contract/src/main/proto/example/core.proto \
+  'package mumble.controller.v1;'
+assert_legacy_controller_contract_rejected
 assert_controller_gate_rejects spaces-java-session-engine \
   control-plane/implementations/spaces/clients/java/src/main/java/example/SpacesSession.java \
   'final class SpacesSession implements CoreTransport {}'
