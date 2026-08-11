@@ -39,6 +39,8 @@ controller_layer_files() {
     [ -d "$layer" ] || continue
     find "$layer" -type f \
       \( -name '*.rs' -o -name '*.java' -o -name '*.proto' -o -name '*.kt' \) \
+      ! -path '*/build/*' \
+      ! -path '*/target/*' \
       2>/dev/null || true
   done
 }
@@ -116,7 +118,10 @@ forbid "controller-host/no-spaces" \
 
 echo "== Gates globaux (tout le workspace) =="
 
-mapfile -t all_files < <(find . -type d -name target -prune -o -name '*.rs' ! -path '*/tests/*' ! -name '*_test.rs' -print 2>/dev/null || true)
+mapfile -t all_files < <(find . \
+  \( -type d -name target -o -type d -name build \) -prune -o \
+  -name '*.rs' ! -path '*/tests/*' ! -name '*_test.rs' -print \
+  2>/dev/null || true)
 if [ "${#all_files[@]}" -gt 0 ]; then
   forbid "no-unwrap"           '\.unwrap\(\)'                       "${all_files[@]}"
   forbid "no-static-mut"       '\bstatic +mut\b'                    "${all_files[@]}"

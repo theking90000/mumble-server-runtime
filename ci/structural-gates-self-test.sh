@@ -37,6 +37,20 @@ assert_controller_gate_rejects() {
   fi
 }
 
+assert_controller_gate_ignores_build_artifact() {
+  local fixture="$TEMP_ROOT/controller-build-artifact"
+
+  mkdir -p "$fixture/ci" "$fixture/control-plane/core/clients/java/build/generated"
+  cp "$ROOT/ci/gates.sh" "$fixture/ci/gates.sh"
+  printf '%s\n' 'use tonic::Status;' \
+    > "$fixture/control-plane/core/clients/java/build/generated/Generated.java"
+
+  if ! (cd "$fixture" && ci/gates.sh >/dev/null 2>&1); then
+    echo "structural-gates-self-test.sh: gates.sh scanned a generated build artifact" >&2
+    exit 1
+  fi
+}
+
 assert_boundary_rejects() {
   local layout="$1"
   local implementation_file="$2"
@@ -108,6 +122,7 @@ assert_controller_gate_rejects core-java-spaces \
 assert_controller_gate_rejects core-contract-spaces \
   control-plane/core/contract/src/main/proto/example/core.proto \
   'message FetchSpace {}'
+assert_controller_gate_ignores_build_artifact
 assert_controller_gate_rejects host-spaces control-plane/host/rust/src/host.rs \
   'use mumble_controller_spaces::SpaceKey;'
 assert_dependency_rejects core-runtime \
