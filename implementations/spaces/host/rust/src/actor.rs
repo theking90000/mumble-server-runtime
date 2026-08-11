@@ -1253,20 +1253,21 @@ impl ControllerActor {
     }
 
     fn apply_spec(&mut self, participant_id: &str, spec: SpaceParticipantSpec) {
-        let Some(current) = self.spaces_state.participants.get(participant_id).cloned() else {
+        let Some(change) = self
+            .spaces_state
+            .replace_participant_spec(participant_id, spec)
+        else {
             return;
         };
-        let old_space = current.spec.space_key().as_str().to_owned();
-        let new_space = spec.space_key().as_str().to_owned();
         let connection = self.host.connection(participant_id);
-        if let Some(participant) = self.spaces_state.participants.get_mut(participant_id) {
-            participant.spec = spec;
-        }
-        self.refresh_space(&old_space);
-        if new_space != old_space {
-            self.refresh_space(&new_space);
+        self.refresh_space(&change.previous_space_key);
+        if change.desired_space_key != change.previous_space_key {
+            self.refresh_space(&change.desired_space_key);
             if let Some(connection) = connection
-                && let Some(space) = self.spaces_state.materialized.get(&new_space)
+                && let Some(space) = self
+                    .spaces_state
+                    .materialized
+                    .get(&change.desired_space_key)
             {
                 self.host
                     .move_connection(connection, space.shard_handle().shard());
