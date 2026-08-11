@@ -258,8 +258,8 @@ async fn takeover_fences_stale_commands_and_request_replays_are_idempotent() {
     };
     assert_ne!(second_grant.ownership_token, first_grant.ownership_token);
     assert_ne!(
-        second_grant.mumble_join_token,
-        first_grant.mumble_join_token
+        second_grant.connection_credential,
+        first_grant.connection_credential
     );
 
     first
