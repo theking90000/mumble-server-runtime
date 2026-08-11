@@ -20,4 +20,8 @@ interface CoreTransport {
 
         void onClosed(Throwable failure, boolean retryable);
     }
+
+    interface Factory {
+        CoreTransport create();
+    }
 }
