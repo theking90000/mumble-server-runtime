@@ -108,7 +108,7 @@ forbid "controller-core/no-runtime" \
 forbid "controller-core/no-transport" \
        '(tokio|tonic|std::net)' "${controller_core_files[@]}"
 forbid "controller-core/no-spaces" \
-       '(SpaceKey|SpaceSnapshot|SpaceParticipant|FetchSpace|ObservedSpaces|mumble[_-]controller[_-]spaces)' "${controller_core_files[@]}"
+       '(SpaceKey|SpaceSnapshot|SpaceParticipant|FetchSpace|ObservedSpaces|mumble[_-]controller[_-]spaces|be\.theking90000\.mumble\.controller\.spaces)' "${controller_core_files[@]}"
 
 # --- Controller Host : runtime bridge without a concrete profile policy ---
 mapfile -t controller_host_files < <(controller_layer_files \
