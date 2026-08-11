@@ -13,18 +13,19 @@ as-is. The SDK has no Minecraft dependency, and nothing here is required by it.
 ## Building
 
 ```sh
-cd control-plane/reference/bukkit-spaces
-../../gradlew build
+cd implementations/spaces/bukkit
+../../../control-plane/gradlew build
 ```
 
 The relocated, self-contained jar lands in
 `build/libs/voice-example-plugin-0.1.0-SNAPSHOT.jar`.
 
 This is a separate Gradle build, not a module of `mumble-controller`. The SDK
-dependency is substituted onto `:implementations:spaces:sdk:controller-spaces` of the neighbouring build, so the
-example always compiles against the sources in this repository. Keeping it out
-of the SDK build also keeps `./gradlew check` there free of the Spigot
-repository, which is why CI does not build the example.
+dependency is substituted onto `:implementations:spaces:sdk:controller-spaces`
+of the repository's temporary Gradle composition build, so the example always
+compiles against the sources in this repository. Keeping it out of the SDK
+build also keeps `./gradlew check` there free of the Spigot repository, which is
+why CI does not build the example.
 
 ## Differences from the book page
 

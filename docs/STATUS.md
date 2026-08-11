@@ -31,8 +31,8 @@ Le benchmark actif est `ci/bench-shard.sh`.
 
 Le socle générique est désormais sous `control/`. Le protocole, le modèle Rust
 et le SDK Java Spaces sont sous `implementations/spaces/`, ainsi que le host
-exécutable. Seuls la référence Bukkit et le build Gradle transitoire gardent
-encore un chemin `control-plane/`.
+exécutable et la référence Bukkit. Seul le build Gradle transitoire garde encore
+un chemin `control-plane/`.
 Les deux responsabilités sont séparées dans les contrats et les SDK :
 
 - Coordination possède sessions, reprise, leases, fencing, révisions,

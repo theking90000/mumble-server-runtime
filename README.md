@@ -191,8 +191,8 @@ Server Runtime. **Spaces** is the provided implementation: its Java SDK assigns
 participants to named Spaces and its Rust host materializes them as runtime
 shards without exposing shard identifiers. The generic pieces live under
 `control/`, and the Spaces protocol, Rust model, and Java SDK live under
-`implementations/spaces/`, including the runnable host. Only the Bukkit example
-and the temporary Gradle composition build remain under `control-plane/`.
+`implementations/spaces/`, including the runnable host and Bukkit example. Only
+the temporary Gradle composition build remains under `control-plane/`.
 
 This creates three entry points:
 
