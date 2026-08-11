@@ -29,7 +29,7 @@ rootProject.name = "voice-example-plugin"
 // `mumble-controller` build so that `./gradlew check` there never reaches for the
 // Spigot repository. The composite build below resolves the SDK dependency from
 // the sources next door instead of a published artifact.
-includeBuild("../../../control-plane") {
+includeBuild("../../..") {
     dependencySubstitution {
         substitute(module("be.theking90000.mumble:controller-spaces"))
             .using(project(":implementations:spaces:sdk:controller-spaces"))

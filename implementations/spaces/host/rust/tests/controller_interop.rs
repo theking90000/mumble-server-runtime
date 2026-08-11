@@ -31,9 +31,8 @@ impl JavaController {
             .ancestors()
             .nth(4)
             .expect("Spaces host is four levels below the repository root");
-        let controller_dir = repository_root.join("control-plane");
-        let mut command = Command::new(controller_dir.join("gradlew"));
-        command.current_dir(controller_dir).arg("--no-daemon");
+        let mut command = Command::new(repository_root.join("gradlew"));
+        command.current_dir(repository_root).arg("--no-daemon");
         if let (Ok(java_home), Ok(java8_home)) =
             (std::env::var("JAVA_HOME"), std::env::var("JAVA8_HOME"))
         {

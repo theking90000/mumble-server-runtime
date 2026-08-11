@@ -75,8 +75,8 @@ published -> the Mumble generation produced by that render
 
 The generic integration lives under `control/`. The entire Spaces vertical,
 including its protocol, Rust model, Java SDK, runnable host, and Bukkit example,
-lives in the sibling implementation tree. Only the Gradle composition build
-still has a transitional path:
+lives in the sibling implementation tree. The root Gradle build only composes
+the Java modules across those ownership boundaries:
 
 ```text
 control/                    reusable coordination and runtime adaptation

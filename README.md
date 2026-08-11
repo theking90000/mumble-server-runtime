@@ -191,8 +191,8 @@ Server Runtime. **Spaces** is the provided implementation: its Java SDK assigns
 participants to named Spaces and its Rust host materializes them as runtime
 shards without exposing shard identifiers. The generic pieces live under
 `control/`, and the Spaces protocol, Rust model, and Java SDK live under
-`implementations/spaces/`, including the runnable host and Bukkit example. Only
-the temporary Gradle composition build remains under `control-plane/`.
+`implementations/spaces/`, including the runnable host and Bukkit example. The
+root Gradle build composes the Java modules without changing their ownership.
 
 This creates three entry points:
 
@@ -240,7 +240,7 @@ RUSTFLAGS="-D warnings" cargo clippy --workspace --all-targets --all-features
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --all-features
 RUSTFLAGS="-D warnings" cargo test --workspace --all-features
 cargo run --release -p bench-shard   # cost of one shard turn
-(cd control-plane && ./gradlew check) # controller contract + Java 8 SDK
+./gradlew check               # Coordination and Spaces Java 8 SDKs
 ci/controller-interop.sh       # real Java SDK -> Rust server -> Mumble path
 ```
 
