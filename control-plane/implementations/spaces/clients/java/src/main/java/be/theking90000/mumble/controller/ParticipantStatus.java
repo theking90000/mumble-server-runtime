@@ -9,7 +9,7 @@ import java.util.Optional;
  * generation are unsigned 64-bit values represented as Java {@code long}s.</p>
  */
 public final class ParticipantStatus {
-    private final boolean mumbleConnected;
+    private final boolean connected;
     private final SpaceKey appliedSpaceKey;
     private final boolean selfMute;
     private final boolean selfDeaf;
@@ -19,7 +19,7 @@ public final class ParticipantStatus {
     private final String applicationError;
 
     ParticipantStatus(
-            boolean mumbleConnected,
+            boolean connected,
             SpaceKey appliedSpaceKey,
             boolean selfMute,
             boolean selfDeaf,
@@ -27,7 +27,7 @@ public final class ParticipantStatus {
             long appliedSpecRevision,
             long publishedGeneration,
             String applicationError) {
-        this.mumbleConnected = mumbleConnected;
+        this.connected = connected;
         this.appliedSpaceKey = appliedSpaceKey;
         this.selfMute = selfMute;
         this.selfDeaf = selfDeaf;
@@ -42,8 +42,8 @@ public final class ParticipantStatus {
      *
      * @return current connection presence
      */
-    public boolean mumbleConnected() {
-        return mumbleConnected;
+    public boolean connected() {
+        return connected;
     }
 
     /**

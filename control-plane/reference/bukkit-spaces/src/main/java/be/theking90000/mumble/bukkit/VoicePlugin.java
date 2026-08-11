@@ -2,7 +2,7 @@ package be.theking90000.mumble.bukkit;
 
 import be.theking90000.mumble.controller.ControllerId;
 import be.theking90000.mumble.controller.ControllerSession;
-import be.theking90000.mumble.controller.MumbleJoinToken;
+import be.theking90000.mumble.controller.ConnectionCredential;
 import be.theking90000.mumble.controller.ParticipantHandle;
 import be.theking90000.mumble.controller.ParticipantId;
 import be.theking90000.mumble.controller.ParticipantSpec;
@@ -126,7 +126,7 @@ public final class VoicePlugin extends JavaPlugin implements Listener {
             scoreboard.show(player);
         }
 
-        handle.whenMumbleJoinTokenAvailable().thenAccept(token -> {
+        handle.whenConnectionCredentialAvailable().thenAccept(token -> {
             // Back to the server thread before touching the player.
             Bukkit.getScheduler().runTask(this, () -> sendJoinLink(player, token));
         });
@@ -187,7 +187,7 @@ public final class VoicePlugin extends JavaPlugin implements Listener {
      * @param player recipient, checked for presence
      * @param token current credential for that player
      */
-    void sendJoinLink(Player player, MumbleJoinToken token) {
+    void sendJoinLink(Player player, ConnectionCredential token) {
         if (!player.isOnline()) {
             debug("Dropped join link for " + player.getName() + ", already offline");
             return;
@@ -214,7 +214,7 @@ public final class VoicePlugin extends JavaPlugin implements Listener {
         }
     }
 
-    String joinLink(Player player, MumbleJoinToken token) {
+    String joinLink(Player player, ConnectionCredential token) {
         return "mumble://" + player.getName() + ":" + token.value() + "@" + publicHost;
     }
 

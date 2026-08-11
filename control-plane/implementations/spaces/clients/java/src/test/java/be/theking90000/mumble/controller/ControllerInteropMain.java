@@ -34,10 +34,10 @@ public final class ControllerInteropMain {
         ParticipantHandle bob = primary.registerParticipant(
                 ParticipantId.of("bob"), spec("lobby", "Bob", false));
         primary.start().get(TIMEOUT_SECONDS, TimeUnit.SECONDS);
-        String aliceToken = alice.whenMumbleJoinTokenAvailable()
+        String aliceToken = alice.whenConnectionCredentialAvailable()
                 .get(TIMEOUT_SECONDS, TimeUnit.SECONDS)
                 .value();
-        String bobToken = bob.whenMumbleJoinTokenAvailable()
+        String bobToken = bob.whenConnectionCredentialAvailable()
                 .get(TIMEOUT_SECONDS, TimeUnit.SECONDS)
                 .value();
         try (BufferedWriter tokens = Files.newBufferedWriter(
@@ -111,7 +111,7 @@ public final class ControllerInteropMain {
                 alice = transfer.registerParticipant(
                         ParticipantId.of("alice"), spec("handoff", "Alice transferred", false));
                 alice.whenOwned().get(TIMEOUT_SECONDS, TimeUnit.SECONDS);
-                alice.whenMumbleJoinTokenAvailable().get(TIMEOUT_SECONDS, TimeUnit.SECONDS);
+                alice.whenConnectionCredentialAvailable().get(TIMEOUT_SECONDS, TimeUnit.SECONDS);
                 awaitApplied(alice, alice.latestStatus()
                         .map(ParticipantStatus::acceptedSpecRevision)
                         .orElse(1L), "handoff");

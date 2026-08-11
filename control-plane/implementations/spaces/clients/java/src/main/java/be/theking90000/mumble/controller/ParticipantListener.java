@@ -33,7 +33,7 @@ public interface ParticipantListener {
      * @param participant handle associated with the credential
      * @param token current Mumble join credential
      */
-    default void onMumbleJoinTokenChanged(ParticipantHandle participant, MumbleJoinToken token) {
+    default void onConnectionCredentialChanged(ParticipantHandle participant, ConnectionCredential token) {
     }
 
     /**

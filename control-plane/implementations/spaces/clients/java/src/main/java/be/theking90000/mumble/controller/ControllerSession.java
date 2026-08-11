@@ -766,13 +766,13 @@ public final class ControllerSession {
             failPermanently(new ControllerException("ownership grant contains an empty token"));
             return;
         }
-        if (granted.getMumbleJoinToken().isEmpty()) {
+        if (granted.getConnectionCredential().isEmpty()) {
             failPermanently(new ControllerException("ownership grant contains an empty Mumble join token"));
             return;
         }
         handle.ownershipGranted(
                 granted.getOwnershipToken(),
-                granted.getMumbleJoinToken(),
+                granted.getConnectionCredential(),
                 granted.getClientSpecRevision(),
                 granted.getAcceptedSpecRevision(),
                 granted.getAppliedSpecRevision(),
@@ -834,7 +834,7 @@ public final class ControllerSession {
                 ? null
                 : SpaceKey.of(spacesStatus.getAppliedSpaceKey());
         handle.updateStatus(new ParticipantStatus(
-                coreStatus.getMumbleConnected(),
+                coreStatus.getConnected(),
                 appliedSpace,
                 spacesStatus.getSelfMute(),
                 spacesStatus.getSelfDeaf(),
@@ -1142,7 +1142,7 @@ public final class ControllerSession {
                     participant.getDisplayName(),
                     participant.getServerMute(),
                     participant.getServerDeaf(),
-                    participant.getMumbleConnected()));
+                    participant.getConnected()));
         }
         return new SpaceSnapshot(
                 SpaceKey.of(wire.getSpaceKey()),

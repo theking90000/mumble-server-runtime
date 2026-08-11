@@ -1,7 +1,7 @@
 package be.theking90000.mumble.bukkit;
 
 import be.theking90000.mumble.controller.ControllerException;
-import be.theking90000.mumble.controller.MumbleJoinToken;
+import be.theking90000.mumble.controller.ConnectionCredential;
 import be.theking90000.mumble.controller.ParticipantHandle;
 import be.theking90000.mumble.controller.ParticipantStatus;
 import be.theking90000.mumble.controller.SpaceKey;
@@ -84,7 +84,7 @@ final class VoiceCommand implements CommandExecutor, TabCompleter {
             error(sender, "No voice participant is registered for you; rejoin the server.");
             return true;
         }
-        Optional<MumbleJoinToken> token = handle.mumbleJoinToken();
+        Optional<ConnectionCredential> token = handle.connectionCredential();
         if (!token.isPresent()) {
             error(sender, "The runtime has not issued a join token yet; try again shortly.");
             return true;
@@ -119,7 +119,7 @@ final class VoiceCommand implements CommandExecutor, TabCompleter {
         }
         ParticipantStatus current = status.get();
         sender.sendMessage(ChatColor.AQUA + "Mumble " + ChatColor.WHITE
-                + (current.mumbleConnected() ? "connected" : "not joined")
+                + (current.connected() ? "connected" : "not joined")
                 + ChatColor.GRAY + ", applied space "
                 + (current.appliedSpaceKey().isPresent()
                         ? current.appliedSpaceKey().get().value() : "none")
@@ -169,7 +169,7 @@ final class VoiceCommand implements CommandExecutor, TabCompleter {
                 + ", " + snapshot.participants().size() + " participant(s)");
         for (SpaceParticipant participant : snapshot.participants()) {
             StringBuilder flags = new StringBuilder();
-            if (!participant.mumbleConnected()) {
+            if (!participant.connected()) {
                 flags.append(" pending");
             }
             if (participant.serverMute()) {
@@ -209,7 +209,7 @@ final class VoiceCommand implements CommandExecutor, TabCompleter {
             sender.sendMessage(ChatColor.WHITE + " - " + handle.desiredSpec().displayName()
                     + ChatColor.GRAY + " " + handle.state()
                     + " in " + handle.desiredSpec().spaceKey().value()
-                    + ", mumble " + (status.isPresent() && status.get().mumbleConnected()
+                    + ", mumble " + (status.isPresent() && status.get().connected()
                             ? "connected" : "not joined"));
         }
         return true;

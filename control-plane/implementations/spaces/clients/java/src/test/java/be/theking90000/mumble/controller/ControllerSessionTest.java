@@ -35,7 +35,7 @@ final class ControllerSessionTest {
     private static final ByteString RESUME_TOKEN = ByteString.copyFromUtf8("resume-token");
     private static final ByteString CONTROL_EPOCH = ByteString.copyFromUtf8("control-epoch");
     private static final ByteString OWNERSHIP_TOKEN = ByteString.copyFromUtf8("ownership-token");
-    private static final String MUMBLE_JOIN_TOKEN = "mumble-join-token";
+    private static final String CONNECTION_CREDENTIAL = "mumble-join-token";
 
     @Test
     void initialSnapshotBecomesActiveOnlyAfterReadyAndReconciliation() {
@@ -75,9 +75,9 @@ final class ControllerSessionTest {
         assertTrue(observed.isDone());
         assertEquals(ParticipantHandleState.OWNED, participant.state());
         assertTrue(participant.whenOwned().isDone());
-        assertEquals(MUMBLE_JOIN_TOKEN, participant.whenMumbleJoinTokenAvailable().join().value());
-        assertEquals(MUMBLE_JOIN_TOKEN, participant.mumbleJoinToken().get().value());
-        assertFalse(participant.mumbleJoinToken().get().toString().contains(MUMBLE_JOIN_TOKEN));
+        assertEquals(CONNECTION_CREDENTIAL, participant.whenConnectionCredentialAvailable().join().value());
+        assertEquals(CONNECTION_CREDENTIAL, participant.connectionCredential().get().value());
+        assertFalse(participant.connectionCredential().get().toString().contains(CONNECTION_CREDENTIAL));
     }
 
     @Test
@@ -123,18 +123,18 @@ final class ControllerSessionTest {
         assertEquals(8L, first.join().publishedGeneration());
         assertEquals(firstOpen.getOpenSession().getControllerInstanceId(),
                 reconnect.getOpenSession().getControllerInstanceId());
-        assertEquals(MUMBLE_JOIN_TOKEN, participant.mumbleJoinToken().get().value());
+        assertEquals(CONNECTION_CREDENTIAL, participant.connectionCredential().get().value());
     }
 
     @Test
-    void aReacquisitionRotatesTheMumbleJoinTokenAndNotifiesListeners() {
+    void aReacquisitionRotatesTheConnectionCredentialAndNotifiesListeners() {
         Fixture fixture = new Fixture();
         ParticipantHandle participant = fixture.session.registerParticipant(
                 ParticipantId.of("player-1"), spec("lobby", "One"));
         final java.util.List<String> observed = new java.util.ArrayList<String>();
         participant.addListener(new ParticipantListener() {
             @Override
-            public void onMumbleJoinTokenChanged(ParticipantHandle ignored, MumbleJoinToken token) {
+            public void onConnectionCredentialChanged(ParticipantHandle ignored, ConnectionCredential token) {
                 observed.add(token.value());
             }
         });
@@ -142,9 +142,9 @@ final class ControllerSessionTest {
 
         fixture.grant(participant, participant.clientSpecRevision(), "rotated-token");
 
-        assertEquals(Arrays.asList(MUMBLE_JOIN_TOKEN, "rotated-token"), observed);
-        assertEquals("rotated-token", participant.mumbleJoinToken().get().value());
-        assertEquals(MUMBLE_JOIN_TOKEN, participant.whenMumbleJoinTokenAvailable().join().value());
+        assertEquals(Arrays.asList(CONNECTION_CREDENTIAL, "rotated-token"), observed);
+        assertEquals("rotated-token", participant.connectionCredential().get().value());
+        assertEquals(CONNECTION_CREDENTIAL, participant.whenConnectionCredentialAvailable().join().value());
     }
 
     @Test
@@ -165,7 +165,7 @@ final class ControllerSessionTest {
                 .build());
 
         assertEquals(ParticipantHandleState.REVOKED, participant.state());
-        assertFalse(participant.mumbleJoinToken().isPresent());
+        assertFalse(participant.connectionCredential().isPresent());
         assertFalse(fixture.session.participant(participant.participantId()).isPresent());
         CompletionException failure = assertThrows(CompletionException.class, update::join);
         assertTrue(failure.getCause() instanceof OwnershipLostException);
@@ -508,7 +508,7 @@ final class ControllerSessionTest {
                         .SpaceParticipant.newBuilder()
                         .setParticipantId("player-1")
                         .setDisplayName(participantName)
-                        .setMumbleConnected(true)
+                        .setConnected(true)
                         .build())
                 .setPublishedGeneration(7L)
                 .build();
@@ -564,7 +564,7 @@ final class ControllerSessionTest {
         }
 
         private void grant(ParticipantHandle participant, long clientRevision) {
-            grant(participant, clientRevision, MUMBLE_JOIN_TOKEN);
+            grant(participant, clientRevision, CONNECTION_CREDENTIAL);
         }
 
         private void grant(ParticipantHandle participant, long clientRevision, String joinToken) {
@@ -573,7 +573,7 @@ final class ControllerSessionTest {
                             .setParticipantId(participant.participantId().value())
                             .setRegistrationId(participant.registrationId())
                             .setOwnershipToken(OWNERSHIP_TOKEN)
-                            .setMumbleJoinToken(joinToken)
+                            .setConnectionCredential(joinToken)
                             .setClientSpecRevision(clientRevision)
                             .setAcceptedSpecRevision(10L)
                             .setAppliedSpecRevision(9L)

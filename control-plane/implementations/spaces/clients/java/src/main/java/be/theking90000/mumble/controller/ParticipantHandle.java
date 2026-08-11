@@ -31,14 +31,14 @@ public final class ParticipantHandle {
     private final CopyOnWriteArrayList<ParticipantListener> listeners =
             new CopyOnWriteArrayList<ParticipantListener>();
     private final CompletableFuture<Void> firstOwnership = new CompletableFuture<Void>();
-    private final CompletableFuture<MumbleJoinToken> firstMumbleJoinToken =
-            new CompletableFuture<MumbleJoinToken>();
+    private final CompletableFuture<ConnectionCredential> firstConnectionCredential =
+            new CompletableFuture<ConnectionCredential>();
     private final NavigableMap<Long, CompletableFuture<AcceptedRevision>> pendingSpecs =
             new TreeMap<Long, CompletableFuture<AcceptedRevision>>();
     private ParticipantHandleState state = ParticipantHandleState.ACQUIRING;
     private ParticipantSpec desiredSpec;
     private ParticipantStatus latestStatus;
-    private MumbleJoinToken mumbleJoinToken;
+    private ConnectionCredential connectionCredential;
     private ByteString ownershipToken = ByteString.EMPTY;
     private long clientSpecRevision = 1L;
     private long acceptedClientSpecRevision;
@@ -121,9 +121,9 @@ public final class ParticipantHandle {
      *
      * @return current bearer credential, or empty before ownership and after termination
      */
-    public Optional<MumbleJoinToken> mumbleJoinToken() {
+    public Optional<ConnectionCredential> connectionCredential() {
         synchronized (session.monitor()) {
-            return Optional.ofNullable(mumbleJoinToken);
+            return Optional.ofNullable(connectionCredential);
         }
     }
 
@@ -131,13 +131,13 @@ public final class ParticipantHandle {
      * Returns a future for the first Mumble join credential granted to this handle.
      *
      * <p>The future completes exceptionally if the handle terminates before its first grant. Later
-     * rotations are reported through {@link ParticipantListener#onMumbleJoinTokenChanged(
-     * ParticipantHandle, MumbleJoinToken)} and are visible through {@link #mumbleJoinToken()}.</p>
+     * rotations are reported through {@link ParticipantListener#onConnectionCredentialChanged(
+     * ParticipantHandle, ConnectionCredential)} and are visible through {@link #connectionCredential()}.</p>
      *
      * @return stable future completed with the first granted credential
      */
-    public CompletableFuture<MumbleJoinToken> whenMumbleJoinTokenAvailable() {
-        return firstMumbleJoinToken;
+    public CompletableFuture<ConnectionCredential> whenConnectionCredentialAvailable() {
+        return firstConnectionCredential;
     }
 
     /**
@@ -220,7 +220,7 @@ public final class ParticipantHandle {
 
     void ownershipGranted(
             ByteString token,
-            String joinToken,
+            String credential,
             long acceptedClientRevision,
             long acceptedRevision,
             long appliedRevision,
@@ -230,7 +230,7 @@ public final class ParticipantHandle {
         if (state != ParticipantHandleState.CLOSED) {
             changeState(ParticipantHandleState.OWNED);
             firstOwnership.complete(null);
-            updateMumbleJoinToken(new MumbleJoinToken(joinToken));
+            updateConnectionCredential(new ConnectionCredential(credential));
         }
         completeSpecsThrough(new AcceptedRevision(
                 acceptedClientRevision,
@@ -265,10 +265,10 @@ public final class ParticipantHandle {
             return;
         }
         OwnershipLostException failure = new OwnershipLostException(participantId, reason);
-        mumbleJoinToken = null;
+        connectionCredential = null;
         changeState(ParticipantHandleState.REVOKED);
         firstOwnership.completeExceptionally(failure);
-        firstMumbleJoinToken.completeExceptionally(failure);
+        firstConnectionCredential.completeExceptionally(failure);
         failPendingSpecs(failure);
         for (final ParticipantListener listener : listeners) {
             session.dispatch(new Runnable() {
@@ -290,9 +290,9 @@ public final class ParticipantHandle {
         unregisterFuture = new CompletableFuture<Void>();
         SessionClosedException failure = new SessionClosedException(
                 "participant " + participantId + " was unregistered");
-        mumbleJoinToken = null;
+        connectionCredential = null;
         firstOwnership.completeExceptionally(failure);
-        firstMumbleJoinToken.completeExceptionally(failure);
+        firstConnectionCredential.completeExceptionally(failure);
         failPendingSpecs(failure);
         changeState(ParticipantHandleState.CLOSED);
         return unregisterFuture;
@@ -304,7 +304,7 @@ public final class ParticipantHandle {
 
     void releaseAcknowledged() {
         ownershipToken = ByteString.EMPTY;
-        mumbleJoinToken = null;
+        connectionCredential = null;
         if (unregisterFuture != null) {
             unregisterFuture.complete(null);
         }
@@ -352,17 +352,17 @@ public final class ParticipantHandle {
         pendingSpecs.clear();
     }
 
-    private void updateMumbleJoinToken(final MumbleJoinToken token) {
-        if (mumbleJoinToken != null && mumbleJoinToken.value().equals(token.value())) {
+    private void updateConnectionCredential(final ConnectionCredential token) {
+        if (connectionCredential != null && connectionCredential.value().equals(token.value())) {
             return;
         }
-        mumbleJoinToken = token;
-        firstMumbleJoinToken.complete(token);
+        connectionCredential = token;
+        firstConnectionCredential.complete(token);
         for (final ParticipantListener listener : listeners) {
             session.dispatch(new Runnable() {
                 @Override
                 public void run() {
-                    listener.onMumbleJoinTokenChanged(ParticipantHandle.this, token);
+                    listener.onConnectionCredentialChanged(ParticipantHandle.this, token);
                 }
             });
         }

@@ -8,19 +8,19 @@ public final class SpaceParticipant {
     private final String displayName;
     private final boolean serverMute;
     private final boolean serverDeaf;
-    private final boolean mumbleConnected;
+    private final boolean connected;
 
     SpaceParticipant(
             ParticipantId participantId,
             String displayName,
             boolean serverMute,
             boolean serverDeaf,
-            boolean mumbleConnected) {
+            boolean connected) {
         this.participantId = Objects.requireNonNull(participantId, "participantId");
         this.displayName = Objects.requireNonNull(displayName, "displayName");
         this.serverMute = serverMute;
         this.serverDeaf = serverDeaf;
-        this.mumbleConnected = mumbleConnected;
+        this.connected = connected;
     }
 
     /**
@@ -64,7 +64,7 @@ public final class SpaceParticipant {
      *
      * @return connection presence at this snapshot revision
      */
-    public boolean mumbleConnected() {
-        return mumbleConnected;
+    public boolean connected() {
+        return connected;
     }
 }

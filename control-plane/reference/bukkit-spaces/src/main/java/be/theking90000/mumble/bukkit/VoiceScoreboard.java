@@ -138,7 +138,7 @@ final class VoiceScoreboard {
 
         Optional<ParticipantStatus> status = handle.latestStatus();
         ParticipantSpec spec = handle.desiredSpec();
-        boolean connected = status.isPresent() && status.get().mumbleConnected();
+        boolean connected = status.isPresent() && status.get().connected();
         board.line(2, connected ? ChatColor.GREEN : ChatColor.YELLOW,
                 connected ? "connected" : "not joined");
 
