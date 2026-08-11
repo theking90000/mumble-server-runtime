@@ -27,7 +27,7 @@ members = [
     # Profil métier fourni : un shard et un domaine audio par Space nommée.
     "implementations/spaces/rust",
     # Application Controller : gRPC declaratif compose au-dessus du runtime.
-    "control-plane/server-rust",
+    "implementations/spaces/host/rust",
 ]
 
 [workspace.package]
@@ -38,10 +38,10 @@ license = "Apache-2.0"
 repository = "https://github.com/theking90000/mumble-server-runtime"
 authors = ["Mumble Server Runtime contributors"]
 
-# The verifier inherits runtime paths from the workspace so a mechanical crate
+# Verifiers inherit mutable internal paths from the workspace so a mechanical
 # move never requires an implementation diff to edit verifier-owned manifests.
 [workspace.dependencies]
-mumble-controller-server = { path = "control-plane/server-rust" }
+mumble-controller-server = { path = "implementations/spaces/host/rust" }
 mumble-server-runtime-protocol = { path = "runtime/crates/protocol" }
 mumble-server-runtime-crypto = { path = "runtime/crates/crypto" }
 mumble-server-runtime-shard = { path = "runtime/crates/shard" }

@@ -1,8 +1,8 @@
 # Remote control integration
 
-This directory is the transitional home of the runnable Spaces host, the Gradle
-composition build, and the Bukkit example. It does not add Controller network
-IO or business state to the runtime's core crates.
+This directory is the transitional home of the Gradle composition build and the
+Bukkit example. It does not add Controller network IO or business state to the
+runtime's core crates.
 
 The target repository layout separates two sibling concerns:
 
@@ -24,7 +24,7 @@ Current paths during the mechanical migration:
 - `../implementations/spaces/protocol`: the versioned Spaces payloads;
 - `../implementations/spaces/rust`: the host-side Spaces model and rendering;
 - `../implementations/spaces/sdk/java`: the typed Spaces SDK facade;
-- `server-rust`: the runnable Spaces host, still at its transitional path;
+- `../implementations/spaces/host/rust`: the runnable Spaces host;
 - `reference/bukkit-spaces`: a buildable Spigot 1.8 plugin using the SDK, kept as
   a separate Gradle build.
 

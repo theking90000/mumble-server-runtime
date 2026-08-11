@@ -6,8 +6,8 @@
 `mumble-controller-server` is currently the runnable host for the provided
 Spaces implementation. It composes the generic Coordination protocol, the
 Spaces payload protocol, the Runtime Adapter, and the gateway/shard runtime.
-Its current package name and `control-plane/server-rust` path are transitional;
-the target ownership path is `implementations/spaces/host/rust`.
+Its source lives at `implementations/spaces/host/rust`; the existing package and
+binary names remain stable during the repository migration.
 
 One Tokio actor currently serializes session leases,
 participant ownership, join credentials, observations, Space lifetimes and

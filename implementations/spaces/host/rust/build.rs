@@ -1,6 +1,6 @@
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let core_protocol = "../../control/coordination/protocol/src/main/proto/mumble/controller/core/v1/controller.proto";
-    let core_include = "../../control/coordination/protocol/src/main/proto";
+    let core_protocol = "../../../../control/coordination/protocol/src/main/proto/mumble/controller/core/v1/controller.proto";
+    let core_include = "../../../../control/coordination/protocol/src/main/proto";
     let protoc = protoc_bin_vendored::protoc_bin_path()?;
 
     println!("cargo:rerun-if-changed={core_protocol}");
