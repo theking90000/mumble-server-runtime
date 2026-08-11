@@ -36,7 +36,7 @@ while IFS= read -r f; do
   case "$f" in
     conformance/*|runtime/verification/testkit/*|runtime/verification/fixtures/*|control-plane/verification/*)
       touches_verifier=1 ;;
-    runtime/crates/*/src/*|control-plane/server-rust/src/*|control-plane/server/rust/src/*|control-plane/core/rust/src/*|control-plane/host/rust/src/*|control-plane/implementations/*/rust/src/*)
+    runtime/crates/*/src/*|control-plane/server-rust/src/*|control-plane/server/rust/src/*|control-plane/contract/*|control-plane/sdk-java/*|control-plane/core/contract/*|control-plane/core/rust/src/*|control-plane/core/clients/*|control-plane/host/rust/src/*|control-plane/implementations/*/contract/*|control-plane/implementations/*/rust/src/*|control-plane/implementations/*/clients/*)
       touches_impl=1 ;;
   esac
 done <<< "$CHANGED"
