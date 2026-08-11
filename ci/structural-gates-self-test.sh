@@ -118,7 +118,7 @@ assert_controller_gate_rejects core-spaces control-plane/core/rust/src/controlle
   'struct SpaceSnapshot;'
 assert_controller_gate_rejects core-java-spaces \
   control-plane/core/clients/java/src/main/java/example/ControllerSession.java \
-  'import example.spaces.SpaceKey;'
+  'import be.theking90000.mumble.controller.spaces.SpacesClient;'
 assert_controller_gate_rejects core-contract-spaces \
   control-plane/core/contract/src/main/proto/example/core.proto \
   'message FetchSpace {}'
