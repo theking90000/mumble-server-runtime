@@ -122,6 +122,20 @@ mapfile -t controller_spaces_java_files < <(controller_layer_files \
 forbid "controller-spaces-java/no-core-engine" \
        '(OpenSession|RenewLease|SyncDesiredState|ReliableRequestTracker|CoreSessionLifecycle|GrpcCoreTransport|implements +CoreTransport)' "${controller_spaces_java_files[@]}"
 
+# --- Controller contracts : the pre-split schema must not return ---
+if [ -d control-plane/contract ]; then
+  while IFS= read -r file; do
+    report "[controller/no-legacy-contract-layer] $file"
+  done < <(find control-plane/contract -type f \
+    ! -path '*/build/*' \
+    ! -path '*/target/*' \
+    2>/dev/null || true)
+fi
+
+mapfile -t controller_source_files < <(controller_layer_files control-plane)
+forbid "controller/no-legacy-proto-package" \
+       'mumble\.controller\.v1' "${controller_source_files[@]}"
+
 echo "== Gates globaux (tout le workspace) =="
 
 mapfile -t all_files < <(find . \
