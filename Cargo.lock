@@ -754,6 +754,7 @@ name = "mumble-controller-spaces"
 version = "0.1.0"
 dependencies = [
  "mumble-controller-host",
+ "thiserror 2.0.19",
 ]
 
 [[package]]
