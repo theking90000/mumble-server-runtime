@@ -1,0 +1,22 @@
+[package]
+name = "mumble-controller-host"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Mumble runtime host for generic Controller synchronization"
+publish = false
+
+[lib]
+name = "mumble_controller_host"
+path = "src/mumble_controller_host.rs"
+
+[dependencies]
+mumble-server-runtime-gateway = { path = "../../../runtime/crates/gateway" }
+mumble-server-runtime-shard = { path = "../../../runtime/crates/shard" }
+thiserror = "2"
+
+[lints]
+workspace = true
