@@ -825,7 +825,7 @@ impl ControllerActor {
                 return;
             }
         };
-        if !self.spaces_state.participants.contains_key(&participant_id) {
+        if !self.spaces_state.contains_participant(&participant_id) {
             self.reject_session(
                 session_id,
                 request_id,
@@ -869,7 +869,7 @@ impl ControllerActor {
         if revision_advanced {
             self.apply_spec(&participant_id, spec);
         }
-        if let Some(participant) = self.spaces_state.participants.get(&participant_id).cloned() {
+        if let Some(participant) = self.spaces_state.participant(&participant_id).cloned() {
             self.send_grant(session_id, &participant, request_id);
         }
     }
@@ -906,8 +906,7 @@ impl ControllerActor {
         if existing.is_some()
             != self
                 .spaces_state
-                .participants
-                .contains_key(&registration.participant_id)
+                .contains_participant(&registration.participant_id)
             || existing.is_some() != self.host.contains(&registration.participant_id)
         {
             self.reject_session(
@@ -919,7 +918,7 @@ impl ControllerActor {
             return;
         }
         if existing.is_none()
-            && self.spaces_state.participants.len() >= self.config.max_participants
+            && self.spaces_state.participant_count() >= self.config.max_participants
         {
             self.reject_session(
                 session_id,
@@ -1041,8 +1040,7 @@ impl ControllerActor {
         if let Some(previous_ownership) = previous_ownership {
             let Some(previous) = self
                 .spaces_state
-                .participants
-                .get(&registration.participant_id)
+                .participant(&registration.participant_id)
                 .cloned()
             else {
                 self.reject_session(
@@ -1089,8 +1087,7 @@ impl ControllerActor {
         };
         let old_space = self
             .spaces_state
-            .participants
-            .insert(participant.participant_id.clone(), participant.clone())
+            .insert_participant(participant.clone())
             .map(|previous| previous.spec.space_key().as_str().to_owned());
         if let Some(old_space) = old_space
             && old_space != participant.spec.space_key().as_str()
@@ -1100,8 +1097,7 @@ impl ControllerActor {
             if let Some(connection) = self.host.connection(&participant.participant_id)
                 && let Some(space) = self
                     .spaces_state
-                    .materialized
-                    .get(participant.spec.space_key().as_str())
+                    .space(participant.spec.space_key().as_str())
             {
                 self.host
                     .move_connection(connection, space.shard_handle().shard());
@@ -1122,7 +1118,7 @@ impl ControllerActor {
         spec: SpaceParticipantSpec,
         request_id: Vec<u8>,
     ) {
-        let Some(current) = self.spaces_state.participants.get(&participant_id).cloned() else {
+        let Some(current) = self.spaces_state.participant(&participant_id).cloned() else {
             self.reject_session(
                 session_id,
                 request_id,
@@ -1227,7 +1223,7 @@ impl ControllerActor {
                 return;
             }
         }
-        let Some(participant) = self.spaces_state.participants.get(&participant_id).cloned() else {
+        let Some(participant) = self.spaces_state.participant(&participant_id).cloned() else {
             return;
         };
         let Some(ownership) = self.ownership.get(&participant_id) else {
@@ -1264,10 +1260,7 @@ impl ControllerActor {
         if change.desired_space_key != change.previous_space_key {
             self.refresh_space(&change.desired_space_key);
             if let Some(connection) = connection
-                && let Some(space) = self
-                    .spaces_state
-                    .materialized
-                    .get(&change.desired_space_key)
+                && let Some(space) = self.spaces_state.space(&change.desired_space_key)
             {
                 self.host
                     .move_connection(connection, space.shard_handle().shard());
@@ -1284,7 +1277,7 @@ impl ControllerActor {
         reason: OwnershipRevocationReason,
         request_id: Option<Vec<u8>>,
     ) {
-        if !self.spaces_state.participants.contains_key(participant_id) {
+        if !self.spaces_state.contains_participant(participant_id) {
             if let Some(request_id) = request_id {
                 let (code, message) = if self.ownership.get(participant_id).is_some() {
                     (
@@ -1329,7 +1322,7 @@ impl ControllerActor {
                 return;
             }
         };
-        let Some(current) = self.spaces_state.participants.remove(participant_id) else {
+        let Some(current) = self.spaces_state.remove_participant(participant_id) else {
             return;
         };
         self.host.revoke(participant_id);
@@ -1402,10 +1395,10 @@ impl ControllerActor {
     }
 
     fn ensure_space(&mut self, space_key: &str) -> Result<(), String> {
-        if self.spaces_state.materialized.contains_key(space_key) {
+        if self.spaces_state.contains_space(space_key) {
             return Ok(());
         }
-        if self.spaces_state.materialized.len() >= self.config.max_spaces {
+        if self.spaces_state.space_count() >= self.config.max_spaces {
             return Err("the materialized Space limit is reached".to_owned());
         }
         let incarnation_id = random_bytes(16).map_err(|error| error.to_string())?;
@@ -1460,7 +1453,7 @@ impl ControllerActor {
                 }
             }
         });
-        self.spaces_state.materialized.insert(
+        self.spaces_state.insert_space(
             space_key.to_owned(),
             MaterializedSpace::new(handle, incarnation_id, desired),
         );
@@ -1470,8 +1463,7 @@ impl ControllerActor {
     fn refresh_space(&mut self, space_key: &str) {
         let participants: Vec<RenderParticipant> = self
             .spaces_state
-            .participants
-            .values()
+            .participants()
             .filter(|participant| participant.spec.space_key().as_str() == space_key)
             .filter_map(|participant| {
                 let ownership = self.ownership.get(&participant.participant_id)?;
@@ -1488,7 +1480,7 @@ impl ControllerActor {
             })
             .collect();
         let application_revision = self.spaces_state.take_application_revision();
-        let Some(space) = self.spaces_state.materialized.get_mut(space_key) else {
+        let Some(space) = self.spaces_state.space_mut(space_key) else {
             return;
         };
         space.refresh(
@@ -1537,7 +1529,7 @@ impl ControllerActor {
             }
         };
         let participant_id = attachment.participant_id;
-        let Some(current) = self.spaces_state.participants.get(&participant_id).cloned() else {
+        let Some(current) = self.spaces_state.participant(&participant_id).cloned() else {
             let _ignored =
                 response.send(Err("the Mumble join token is invalid or revoked".to_owned()));
             return;
@@ -1546,8 +1538,7 @@ impl ControllerActor {
         self.send_status(&participant_id);
         let result = self
             .spaces_state
-            .materialized
-            .get(current.spec.space_key().as_str())
+            .space(current.spec.space_key().as_str())
             .map(|space| space.shard_handle().shard())
             .ok_or_else(|| "the participant Space is not materialized".to_owned());
         let _ignored = response.send(result);
@@ -1599,8 +1590,8 @@ impl ControllerActor {
             .into_iter()
             .chain(
                 self.spaces_state
-                    .materialized
-                    .values()
+                    .spaces()
+                    .map(|(_, space)| space)
                     .filter_map(MaterializedSpace::close_deadline)
                     .map(Instant::from_std),
             )
@@ -1615,25 +1606,23 @@ impl ControllerActor {
         }
         let closed_spaces: Vec<String> = self
             .spaces_state
-            .materialized
-            .iter()
+            .spaces()
             .filter(|(_, space)| {
                 space
                     .close_deadline()
                     .is_some_and(|deadline| deadline <= now.into_std())
             })
-            .map(|(space_key, _)| space_key.clone())
+            .map(|(space_key, _)| space_key.to_owned())
             .collect();
         for space_key in closed_spaces {
             if self
                 .spaces_state
-                .participants
-                .values()
+                .participants()
                 .any(|participant| participant.spec.space_key().as_str() == space_key)
             {
                 continue;
             }
-            let Some(space) = self.spaces_state.materialized.remove(&space_key) else {
+            let Some(space) = self.spaces_state.remove_space(&space_key) else {
                 continue;
             };
             self.host
@@ -1742,7 +1731,7 @@ impl ControllerActor {
     }
 
     fn send_status(&mut self, participant_id: &str) {
-        let Some(participant) = self.spaces_state.participants.get(participant_id).cloned() else {
+        let Some(participant) = self.spaces_state.participant(participant_id).cloned() else {
             return;
         };
         let Some(ownership) = self.ownership.get(participant_id).cloned() else {
@@ -1777,11 +1766,10 @@ impl ControllerActor {
     }
 
     fn space_snapshot(&self, space_key: &str) -> Option<SpaceSnapshot> {
-        let space = self.spaces_state.materialized.get(space_key)?;
+        let space = self.spaces_state.space(space_key)?;
         let participants = self
             .spaces_state
-            .participants
-            .values()
+            .participants()
             .filter(|participant| participant.spec.space_key().as_str() == space_key)
             .map(|participant| SpaceParticipant {
                 participant_id: participant.participant_id.clone(),
@@ -1803,10 +1791,10 @@ impl ControllerActor {
     fn send_effective_space_snapshots(&mut self, session_id: SessionId) {
         let keys: Vec<String> = self
             .spaces_state
-            .materialized
-            .keys()
+            .spaces()
+            .map(|(space_key, _)| space_key)
             .filter(|space_key| self.session_observes(session_id, space_key))
-            .cloned()
+            .map(str::to_owned)
             .collect();
         for key in keys {
             if let Some(snapshot) = self.space_snapshot(&key) {
@@ -1874,7 +1862,7 @@ impl ControllerActor {
         self.sessions
             .get(&session_id)
             .is_some_and(|session| session.spaces.observes(space_key))
-            || self.spaces_state.participants.values().any(|participant| {
+            || self.spaces_state.participants().any(|participant| {
                 self.ownership
                     .get(&participant.participant_id)
                     .is_some_and(|ownership| ownership.owner == session_id)
@@ -2683,10 +2671,7 @@ mod tests {
             .host
             .register("alice", "join".to_owned())
             .expect("register test Mumble credential");
-        actor
-            .spaces_state
-            .participants
-            .insert("alice".to_owned(), participant);
+        actor.spaces_state.insert_participant(participant);
     }
 
     fn payloads(receiver: &mut mpsc::Receiver<Result<ServerFrame, Status>>) -> Vec<ServerPayload> {
@@ -2715,10 +2700,13 @@ mod tests {
 
         actor.refresh_space("lobby");
         let lobby_revision = actor.spaces_state.latest_application_revision();
-        if let Some(participant) = actor.spaces_state.participants.get_mut("alice") {
-            participant.spec =
-                decode_space_spec(spec("arena", "Alice")).expect("valid Spaces test spec");
-        }
+        actor
+            .spaces_state
+            .replace_participant_spec(
+                "alice",
+                decode_space_spec(spec("arena", "Alice")).expect("valid Spaces test spec"),
+            )
+            .expect("Alice exists");
         actor.refresh_space("arena");
         let arena_revision = actor.spaces_state.latest_application_revision();
 
@@ -2731,7 +2719,10 @@ mod tests {
             },
         );
         assert_eq!(
-            actor.spaces_state.participants["alice"]
+            actor
+                .spaces_state
+                .participant("alice")
+                .expect("Alice exists")
                 .applied_space_key
                 .as_deref(),
             Some("arena")
@@ -2746,14 +2737,22 @@ mod tests {
             },
         );
         assert_eq!(
-            actor.spaces_state.participants["alice"]
+            actor
+                .spaces_state
+                .participant("alice")
+                .expect("Alice exists")
                 .applied_space_key
                 .as_deref(),
             Some("arena"),
             "a report rendered before the move republished the Space Alice left"
         );
         assert_eq!(
-            actor.spaces_state.participants["alice"].published_generation, 9,
+            actor
+                .spaces_state
+                .participant("alice")
+                .expect("Alice exists")
+                .published_generation,
+            9,
             "the stale report also rewound the published generation"
         );
     }

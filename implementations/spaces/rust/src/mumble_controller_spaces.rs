@@ -292,8 +292,8 @@ impl MaterializedSpace {
 /// Mumble connections. This aggregate keeps the remaining Spaces-specific
 /// state and its monotonically increasing application revision together.
 pub struct SpacesState {
-    pub participants: BTreeMap<String, ParticipantState>,
-    pub materialized: BTreeMap<String, MaterializedSpace>,
+    participants: BTreeMap<String, ParticipantState>,
+    materialized: BTreeMap<String, MaterializedSpace>,
     next_application_revision: u64,
 }
 
@@ -334,6 +334,70 @@ impl SpacesState {
     #[must_use]
     pub fn latest_application_revision(&self) -> u64 {
         self.next_application_revision.saturating_sub(1)
+    }
+
+    #[must_use]
+    pub fn contains_participant(&self, participant_id: &str) -> bool {
+        self.participants.contains_key(participant_id)
+    }
+
+    #[must_use]
+    pub fn participant_count(&self) -> usize {
+        self.participants.len()
+    }
+
+    #[must_use]
+    pub fn participant(&self, participant_id: &str) -> Option<&ParticipantState> {
+        self.participants.get(participant_id)
+    }
+
+    pub fn participants(&self) -> impl Iterator<Item = &ParticipantState> {
+        self.participants.values()
+    }
+
+    pub fn insert_participant(
+        &mut self,
+        participant: ParticipantState,
+    ) -> Option<ParticipantState> {
+        self.participants
+            .insert(participant.participant_id.clone(), participant)
+    }
+
+    pub fn remove_participant(&mut self, participant_id: &str) -> Option<ParticipantState> {
+        self.participants.remove(participant_id)
+    }
+
+    #[must_use]
+    pub fn contains_space(&self, space_key: &str) -> bool {
+        self.materialized.contains_key(space_key)
+    }
+
+    #[must_use]
+    pub fn space_count(&self) -> usize {
+        self.materialized.len()
+    }
+
+    #[must_use]
+    pub fn space(&self, space_key: &str) -> Option<&MaterializedSpace> {
+        self.materialized.get(space_key)
+    }
+
+    pub fn space_mut(&mut self, space_key: &str) -> Option<&mut MaterializedSpace> {
+        self.materialized.get_mut(space_key)
+    }
+
+    pub fn spaces(&self) -> impl Iterator<Item = (&str, &MaterializedSpace)> {
+        self.materialized
+            .iter()
+            .map(|(space_key, space)| (space_key.as_str(), space))
+    }
+
+    pub fn insert_space(&mut self, space_key: String, space: MaterializedSpace) {
+        self.materialized.insert(space_key, space);
+    }
+
+    pub fn remove_space(&mut self, space_key: &str) -> Option<MaterializedSpace> {
+        self.materialized.remove(space_key)
     }
 
     /// Replace the validated business specification of one participant.
