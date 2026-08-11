@@ -11,9 +11,9 @@ use mumble_controller_core::{
 };
 use mumble_controller_host::{HostError, MumbleHost, snapshot_channel};
 use mumble_controller_spaces::{
-    ControllerSpaceLogic, MaterializedSpace, ParticipantSpec as SpaceParticipantSpec,
-    ParticipantState as Participant, RenderParticipant, RenderState,
-    SessionState as SpacesSessionState, SpaceEvent, SpaceEventKind, SpaceKey, SpaceReport,
+    ControllerSpaceLogic, MaterializedSpace, ParticipantEventOutcome,
+    ParticipantSpec as SpaceParticipantSpec, ParticipantState as Participant, RenderParticipant,
+    RenderState, SessionState as SpacesSessionState, SpaceEvent, SpaceKey, SpaceReport,
     SpaceReporter, SpacesState, SpacesValidationError,
 };
 use mumble_server_runtime_gateway::RuntimeHandle;
@@ -1559,29 +1559,23 @@ impl ControllerActor {
         let Some(participant_id) = participant_id else {
             return;
         };
-        let mut refresh = false;
-        if let Some(participant) = self.spaces_state.participants.get_mut(&participant_id) {
-            if participant.spec.space_key().as_str() != space_key {
-                return;
-            }
-            match event.kind {
-                SpaceEventKind::Connected => {}
-                SpaceEventKind::Disconnected => {
+        match self
+            .spaces_state
+            .apply_participant_event(&participant_id, space_key, event.kind)
+        {
+            ParticipantEventOutcome::WrongSpace => return,
+            ParticipantEventOutcome::ParticipantMissing => {}
+            ParticipantEventOutcome::Applied {
+                disconnect,
+                refresh,
+            } => {
+                if disconnect {
                     self.host.disconnect(connection);
-                    refresh = true;
                 }
-                SpaceEventKind::SelfState {
-                    self_mute,
-                    self_deaf,
-                } => {
-                    participant.self_mute = self_mute;
-                    participant.self_deaf = self_deaf;
-                    refresh = true;
+                if refresh {
+                    self.refresh_space(space_key);
                 }
             }
-        }
-        if refresh {
-            self.refresh_space(space_key);
         }
         self.send_status(&participant_id);
     }
