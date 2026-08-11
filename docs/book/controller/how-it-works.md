@@ -73,8 +73,9 @@ published -> the Mumble generation produced by that render
 
 ## Repository layout
 
-The current checkout still stores the integration under `control-plane` while
-the repository migrates to two sibling trees:
+The generic integration now lives under `control/`. Spaces remains temporarily
+under `control-plane/implementations/spaces` while it migrates to the sibling
+implementation tree:
 
 ```text
 control/                    reusable coordination and runtime adaptation

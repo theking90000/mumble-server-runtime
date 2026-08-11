@@ -29,8 +29,9 @@ Le benchmark actif est `ci/bench-shard.sh`.
 
 ## Control et implémentation Spaces
 
-`control-plane` est encore le chemin physique transitoire. Il contient deux
-responsabilités déjà séparées dans les contrats et les SDK :
+Le socle générique est désormais sous `control/`, tandis que la verticale
+Spaces reste temporairement sous `control-plane/`. Les deux responsabilités
+sont séparées dans les contrats et les SDK :
 
 - Coordination possède sessions, reprise, leases, fencing, révisions,
   déduplication, backpressure et commandes fiables ;

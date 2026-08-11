@@ -50,6 +50,7 @@ jobs:
           cache-dependency-path: |
             control-plane/**/*.gradle.kts
             control-plane/gradle/wrapper/gradle-wrapper.properties
+            control/**/*.gradle.kts
 
       - name: mdbook build
         run: mdbook build

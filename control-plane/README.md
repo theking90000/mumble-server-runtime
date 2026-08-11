@@ -15,12 +15,12 @@ The word **controller** names a remote application using the protocol. Control
 is the framework it talks to. Spaces is one complete implementation built on
 that framework, not a concept owned by Coordination.
 
-Current paths, before the mechanical migration:
+Current paths during the mechanical migration:
 
-- `core/contract`: the generic coordination Protobuf/gRPC contract;
-- `core/rust`: runtime-independent coordination state;
-- `core/clients/java`: the Java 8 compatible Coordination SDK;
-- `host/rust`: the generic adapter to Mumble Server Runtime;
+- `../control/coordination/protocol`: the generic Coordination Protobuf/gRPC contract;
+- `../control/coordination/rust`: runtime-independent coordination state;
+- `../control/coordination/sdk/java`: the Java 8 compatible Coordination SDK;
+- `../control/runtime-adapter/rust`: the generic adapter to Mumble Server Runtime;
 - `implementations/spaces/contract`: the versioned Spaces payloads;
 - `implementations/spaces/rust`: the host-side Spaces model and rendering;
 - `implementations/spaces/clients/java`: the typed Spaces SDK facade;
