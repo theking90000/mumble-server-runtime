@@ -116,6 +116,12 @@ mapfile -t controller_host_files < <(controller_layer_files \
 forbid "controller-host/no-spaces" \
        '(SpaceKey|SpaceSnapshot|SpaceParticipant|FetchSpace|ObservedSpaces|mumble[_-]controller[_-]spaces)' "${controller_host_files[@]}"
 
+# --- Java Spaces : typed profile facade, never a second Core session engine ---
+mapfile -t controller_spaces_java_files < <(controller_layer_files \
+  control-plane/implementations/spaces/clients/java/src/main/java)
+forbid "controller-spaces-java/no-core-engine" \
+       '(OpenSession|RenewLease|SyncDesiredState|ReliableRequestTracker|CoreSessionLifecycle|GrpcCoreTransport|implements +CoreTransport)' "${controller_spaces_java_files[@]}"
+
 echo "== Gates globaux (tout le workspace) =="
 
 mapfile -t all_files < <(find . \

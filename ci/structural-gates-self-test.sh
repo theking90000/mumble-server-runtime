@@ -122,6 +122,9 @@ assert_controller_gate_rejects core-java-spaces \
 assert_controller_gate_rejects core-contract-spaces \
   control-plane/core/contract/src/main/proto/example/core.proto \
   'message FetchSpace {}'
+assert_controller_gate_rejects spaces-java-session-engine \
+  control-plane/implementations/spaces/clients/java/src/main/java/example/SpacesSession.java \
+  'final class SpacesSession implements CoreTransport {}'
 assert_controller_gate_ignores_build_artifact
 assert_controller_gate_rejects host-spaces control-plane/host/rust/src/host.rs \
   'use mumble_controller_spaces::SpaceKey;'
