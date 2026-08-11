@@ -1,0 +1,201 @@
+syntax = "proto3";
+
+package mumble.controller.core.v1;
+
+import "google/protobuf/duration.proto";
+
+option java_multiple_files = true;
+option java_outer_classname = "ControllerCoreProtocol";
+option java_package = "be.theking90000.mumble.controller.internal.core.v1";
+
+service ControllerService {
+  rpc Connect(stream ClientFrame) returns (stream ServerFrame);
+}
+
+message ProfileRef {
+  string profile_id = 1;
+  uint32 schema_version = 2;
+  string descriptor_digest = 3;
+}
+
+message ProfilePayload {
+  bytes protobuf = 1;
+}
+
+message ClientFrame {
+  bytes request_id = 1;
+  oneof payload {
+    OpenSession open_session = 10;
+    RenewLease renew_lease = 11;
+    SyncDesiredState sync_desired_state = 12;
+    RegisterParticipant register_participant = 13;
+    SetParticipantSpec set_participant_spec = 14;
+    ReleaseParticipant release_participant = 15;
+    ProfileCommand profile_command = 16;
+    CloseSession close_session = 17;
+  }
+}
+
+message ServerFrame {
+  bytes request_id = 1;
+  oneof payload {
+    SessionReady session_ready = 10;
+    DesiredStateReconciled desired_state_reconciled = 11;
+    ParticipantOwnershipGranted participant_ownership_granted = 12;
+    ParticipantOwnershipRevoked participant_ownership_revoked = 13;
+    ParticipantSpecAccepted participant_spec_accepted = 14;
+    ParticipantStatusChanged participant_status_changed = 15;
+    ProfileEvent profile_event = 16;
+    ResyncRequired resync_required = 17;
+    CommandRejected command_rejected = 18;
+    SessionClosing session_closing = 19;
+  }
+}
+
+message OpenSession {
+  string controller_id = 1;
+  bytes controller_instance_id = 2;
+  bytes resume_token = 3;
+  DesiredStateSnapshot desired_state = 4;
+  ProfileRef profile = 5;
+}
+
+message RenewLease {
+  bytes session_token = 1;
+  uint64 desired_state_revision = 2;
+}
+
+message SyncDesiredState {
+  bytes session_token = 1;
+  DesiredStateSnapshot desired_state = 2;
+}
+
+message DesiredStateSnapshot {
+  uint64 desired_state_revision = 1;
+  repeated ParticipantRegistration participants = 2;
+  ProfilePayload profile_state = 3;
+}
+
+message ParticipantRegistration {
+  string participant_id = 1;
+  bytes registration_id = 2;
+  bytes ownership_token = 3;
+  uint64 client_spec_revision = 4;
+  ProfilePayload profile_spec = 5;
+}
+
+message RegisterParticipant {
+  bytes session_token = 1;
+  ParticipantRegistration participant = 2;
+}
+
+message SetParticipantSpec {
+  bytes session_token = 1;
+  string participant_id = 2;
+  bytes ownership_token = 3;
+  uint64 client_spec_revision = 4;
+  ProfilePayload profile_spec = 5;
+}
+
+message ReleaseParticipant {
+  bytes session_token = 1;
+  string participant_id = 2;
+  bytes registration_id = 3;
+  bytes ownership_token = 4;
+}
+
+message ProfileCommand {
+  bytes session_token = 1;
+  ProfilePayload payload = 2;
+}
+
+message CloseSession {
+  bytes session_token = 1;
+}
+
+message SessionReady {
+  bytes session_token = 1;
+  bytes resume_token = 2;
+  bytes control_epoch = 3;
+  google.protobuf.Duration lease_duration = 4;
+  ProfileRef profile = 5;
+}
+
+message DesiredStateReconciled {
+  uint64 desired_state_revision = 1;
+}
+
+message ParticipantOwnershipGranted {
+  string participant_id = 1;
+  bytes registration_id = 2;
+  bytes ownership_token = 3;
+  uint64 client_spec_revision = 4;
+  uint64 accepted_spec_revision = 5;
+  uint64 applied_spec_revision = 6;
+  uint64 published_generation = 7;
+  string mumble_join_token = 8;
+}
+
+enum OwnershipRevocationReason {
+  OWNERSHIP_REVOCATION_REASON_UNSPECIFIED = 0;
+  OWNERSHIP_REPLACED = 1;
+  SESSION_EXPIRED = 2;
+  PARTICIPANT_RELEASED = 3;
+  REGISTRATION_REJECTED = 4;
+}
+
+message ParticipantOwnershipRevoked {
+  string participant_id = 1;
+  bytes registration_id = 2;
+  OwnershipRevocationReason reason = 3;
+}
+
+message ParticipantSpecAccepted {
+  string participant_id = 1;
+  uint64 client_spec_revision = 2;
+  uint64 accepted_spec_revision = 3;
+  uint64 applied_spec_revision = 4;
+  uint64 published_generation = 5;
+}
+
+message ParticipantStatus {
+  bool mumble_connected = 1;
+  uint64 accepted_spec_revision = 2;
+  uint64 applied_spec_revision = 3;
+  uint64 published_generation = 4;
+  string application_error = 5;
+  ProfilePayload profile_status = 6;
+}
+
+message ParticipantStatusChanged {
+  string participant_id = 1;
+  ParticipantStatus status = 2;
+}
+
+message ProfileEvent {
+  ProfilePayload payload = 1;
+}
+
+message ResyncRequired {
+  string reason = 1;
+}
+
+enum CommandErrorCode {
+  COMMAND_ERROR_CODE_UNSPECIFIED = 0;
+  INVALID_ARGUMENT = 1;
+  NOT_FOUND = 2;
+  OWNERSHIP_LOST = 3;
+  STALE_REVISION = 4;
+  SESSION_EXPIRED_ERROR = 5;
+  RESOURCE_EXHAUSTED = 6;
+  INTERNAL_ERROR = 7;
+}
+
+message CommandRejected {
+  CommandErrorCode code = 1;
+  string message = 2;
+}
+
+message SessionClosing {
+  string reason = 1;
+}

@@ -1,8 +1,8 @@
 package be.theking90000.mumble.controller;
 
 import be.theking90000.mumble.controller.internal.protocol.v1.ClientFrame;
-import be.theking90000.mumble.controller.internal.protocol.v1.ControllerServiceGrpc;
 import be.theking90000.mumble.controller.internal.protocol.v1.ServerFrame;
+import be.theking90000.mumble.controller.internal.core.v1.ControllerServiceGrpc;
 import io.grpc.ManagedChannel;
 import io.grpc.Status;
 import io.grpc.netty.shaded.io.grpc.netty.GrpcSslContexts;
@@ -19,7 +19,8 @@ final class GrpcControllerTransport implements ControllerTransport {
     private final TlsConfig tlsConfig;
     private final Object lock = new Object();
     private ManagedChannel channel;
-    private StreamObserver<ClientFrame> requestObserver;
+    private StreamObserver<be.theking90000.mumble.controller.internal.core.v1.ClientFrame>
+            requestObserver;
     private Listener listener;
     private boolean closed;
     private boolean terminated;
@@ -42,10 +43,12 @@ final class GrpcControllerTransport implements ControllerTransport {
             createdChannel = channel;
         }
 
-        StreamObserver<ServerFrame> responses = new StreamObserver<ServerFrame>() {
+        StreamObserver<be.theking90000.mumble.controller.internal.core.v1.ServerFrame> responses =
+                new StreamObserver<be.theking90000.mumble.controller.internal.core.v1.ServerFrame>() {
             @Override
-            public void onNext(ServerFrame frame) {
-                value.onFrame(frame);
+            public void onNext(
+                    be.theking90000.mumble.controller.internal.core.v1.ServerFrame frame) {
+                value.onFrame(WireAdapter.fromCore(frame));
             }
 
             @Override
@@ -63,7 +66,8 @@ final class GrpcControllerTransport implements ControllerTransport {
             }
         };
 
-        StreamObserver<ClientFrame> requests = ControllerServiceGrpc
+        StreamObserver<be.theking90000.mumble.controller.internal.core.v1.ClientFrame> requests =
+                ControllerServiceGrpc
                 .newStub(createdChannel)
                 .connect(responses);
         synchronized (lock) {
@@ -86,7 +90,7 @@ final class GrpcControllerTransport implements ControllerTransport {
                 return failedFuture(new ControllerException("controller transport is not connected"));
             }
             try {
-                requestObserver.onNext(frame);
+                requestObserver.onNext(WireAdapter.toCore(frame));
                 return CompletableFuture.completedFuture(null);
             } catch (RuntimeException failure) {
                 return failedFuture(new ControllerException("failed to send controller frame", failure));

@@ -9,7 +9,8 @@ use tokio_stream::wrappers::TcpListenerStream;
 
 use crate::actor;
 use crate::config::{ConfigError, ControllerConfig};
-use crate::protocol::controller_service_server::ControllerServiceServer;
+use crate::core_protocol::controller_service_server::ControllerServiceServer as CoreServiceServer;
+use crate::protocol::controller_service_server::ControllerServiceServer as LegacyServiceServer;
 use crate::service::{ControllerRouter, service};
 
 /// Both public listeners and their owned background tasks.
@@ -58,13 +59,18 @@ impl RunningControllerServer {
                 .map_err(|error| error.to_string())
         });
 
-        let grpc = ControllerServiceServer::from_arc(service(actor, config.queue_capacity))
+        let controller_service = service(actor, config.queue_capacity);
+        let core_grpc = CoreServiceServer::from_arc(controller_service.clone())
+            .max_decoding_message_size(config.grpc_max_frame_bytes)
+            .max_encoding_message_size(config.grpc_max_frame_bytes);
+        let legacy_grpc = LegacyServiceServer::from_arc(controller_service)
             .max_decoding_message_size(config.grpc_max_frame_bytes)
             .max_encoding_message_size(config.grpc_max_frame_bytes);
         let (grpc_shutdown, shutdown) = oneshot::channel();
         let grpc_task = tokio::spawn(
             tonic::transport::Server::builder()
-                .add_service(grpc)
+                .add_service(core_grpc)
+                .add_service(legacy_grpc)
                 .serve_with_incoming_shutdown(TcpListenerStream::new(listener), async {
                     let _closed = shutdown.await;
                 }),

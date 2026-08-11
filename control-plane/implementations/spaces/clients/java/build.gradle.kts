@@ -21,14 +21,14 @@ java {
     withJavadocJar()
 }
 
-val controllerDescriptor = layout.buildDirectory.file("descriptors/controller-v1.pb")
-val expectedControllerDescriptorDigest = rootProject.file("contract/controller-v1.pb.sha256")
+val spacesDescriptor = layout.buildDirectory.file("descriptors/controller-spaces-v1.pb")
+val expectedSpacesDescriptorDigest = project.file("../../contract/controller-spaces-v1.pb.sha256")
 val profileMetadataDirectory = layout.buildDirectory.dir("generated/sources/profileMetadata/java")
 val generateControllerProfileMetadata = tasks.register("generateControllerProfileMetadata") {
-    inputs.file(expectedControllerDescriptorDigest)
+    inputs.file(expectedSpacesDescriptorDigest)
     outputs.dir(profileMetadataDirectory)
     doLast {
-        val digest = expectedControllerDescriptorDigest.readText().trim()
+        val digest = expectedSpacesDescriptorDigest.readText().trim()
         require(digest.matches(Regex("[0-9a-f]{64}"))) {
             "Controller descriptor digest must be 64 lowercase hexadecimal characters"
         }
@@ -74,6 +74,12 @@ sourceSets {
         java.srcDir(profileMetadataDirectory)
         proto {
             srcDir("../../../../contract/src/main/proto")
+            srcDir("../../contract/src/main/proto")
+        }
+    }
+    create("spacesContract") {
+        proto {
+            srcDir("../../contract/src/main/proto")
         }
     }
 }
@@ -105,10 +111,10 @@ protobuf {
             plugins {
                 create("grpc")
             }
-            if (name == "generateProto") {
+            if (name == "generateSpacesContractProto") {
                 generateDescriptorSet = true
                 descriptorSetOptions.path = layout.buildDirectory
-                    .file("descriptors/controller-v1.pb")
+                    .file("descriptors/controller-spaces-v1.pb")
                     .get()
                     .asFile
                     .absolutePath
@@ -166,19 +172,19 @@ tasks.register<JavaExec>("controllerInterop") {
 }
 
 val verifyControllerDescriptor = tasks.register("verifyControllerDescriptor") {
-    dependsOn(tasks.named("generateProto"))
-    inputs.file(controllerDescriptor)
-    inputs.file(expectedControllerDescriptorDigest)
+    dependsOn(tasks.named("generateSpacesContractProto"))
+    inputs.file(spacesDescriptor)
+    inputs.file(expectedSpacesDescriptorDigest)
     doLast {
-        val bytes = controllerDescriptor.get().asFile.readBytes()
+        val bytes = spacesDescriptor.get().asFile.readBytes()
         val actual = MessageDigest.getInstance("SHA-256")
             .digest(bytes)
             .joinToString("") { byte: Byte -> "%02x".format(byte.toInt() and 0xff) }
-        val expected = expectedControllerDescriptorDigest.readText().trim()
+        val expected = expectedSpacesDescriptorDigest.readText().trim()
         if (actual != expected) {
             throw GradleException(
-                "controller-v1 descriptor changed: expected $expected, got $actual; " +
-                    "review field compatibility and update contract/controller-v1.pb.sha256 intentionally"
+                "controller-spaces-v1 descriptor changed: expected $expected, got $actual; " +
+                    "review field compatibility and update the Spaces descriptor pin intentionally"
             )
         }
     }
