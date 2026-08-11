@@ -1,11 +1,7 @@
 use mumble_controller_core::{ProfileError, ProfileRef, negotiate_profile};
+use mumble_controller_spaces::profile_ref;
 
 use crate::protocol::ProfileRef as ProtocolProfileRef;
-
-pub(crate) const SPACES_PROFILE_ID: &str = "mumble.controller.spaces";
-pub(crate) const SPACES_SCHEMA_VERSION: u32 = 1;
-const SPACES_DESCRIPTOR_DIGEST: &str =
-    include_str!("../../implementations/spaces/contract/controller-spaces-v1.pb.sha256");
 
 /// Select a profile compiled into this server before any session state exists.
 pub(crate) fn negotiate(
@@ -28,11 +24,7 @@ pub(crate) fn negotiate(
 }
 
 pub(crate) fn spaces() -> Result<ProfileRef, ProfileError> {
-    ProfileRef::new(
-        SPACES_PROFILE_ID.to_owned(),
-        SPACES_SCHEMA_VERSION,
-        SPACES_DESCRIPTOR_DIGEST.trim().to_owned(),
-    )
+    profile_ref()
 }
 
 pub(crate) fn to_protocol(profile: &ProfileRef) -> ProtocolProfileRef {

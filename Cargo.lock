@@ -753,7 +753,11 @@ dependencies = [
 name = "mumble-controller-spaces"
 version = "0.1.0"
 dependencies = [
+ "mumble-controller-core",
  "mumble-controller-host",
+ "prost 0.14.4",
+ "prost-build 0.14.4",
+ "protoc-bin-vendored",
  "thiserror 2.0.19",
 ]
 

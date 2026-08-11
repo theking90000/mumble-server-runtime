@@ -1,12 +1,12 @@
+use mumble_controller_spaces::{
+    PayloadDecodeError, decode_command, decode_desired_state, decode_participant_spec,
+    encode_event, encode_participant_status, protocol as spaces,
+};
 use prost::Message;
 use tonic::Status;
 
 use crate::core_protocol as core;
 use crate::protocol as legacy;
-use crate::spaces_protocol as spaces;
-
-const MAX_PROFILE_PAYLOAD_BYTES: usize = 1_048_576;
-
 pub(crate) fn from_core_frame(frame: core::ClientFrame) -> Result<legacy::ClientFrame, Status> {
     use core::client_frame::Payload;
 
@@ -50,10 +50,9 @@ pub(crate) fn from_core_frame(frame: core::ClientFrame) -> Result<legacy::Client
                 participant_id: message.participant_id,
                 ownership_token: message.ownership_token,
                 client_spec_revision: message.client_spec_revision,
-                spec: Some(decode_payload(
+                spec: Some(to_legacy_participant_spec(decode_participant_spec_payload(
                     message.profile_spec,
-                    "participant profile spec",
-                )?),
+                )?)),
             })
         }
         Payload::ReleaseParticipant(message) => {
@@ -85,7 +84,7 @@ fn from_profile_command(
 ) -> Result<legacy::ClientFrame, Status> {
     use spaces::command::Command;
 
-    let command: spaces::Command = decode_payload(message.payload, "Spaces command")?;
+    let command = decode_command_payload(message.payload)?;
     let payload = match command
         .command
         .ok_or_else(|| Status::invalid_argument("Spaces command has no command"))?
@@ -113,10 +112,7 @@ fn from_profile_command(
 fn from_core_snapshot(
     snapshot: core::DesiredStateSnapshot,
 ) -> Result<legacy::DesiredStateSnapshot, Status> {
-    let profile_state: spaces::DesiredState = match snapshot.profile_state {
-        Some(payload) => decode_payload(Some(payload), "Spaces desired state")?,
-        None => spaces::DesiredState::default(),
-    };
+    let profile_state = decode_desired_state_payload(snapshot.profile_state)?;
     Ok(legacy::DesiredStateSnapshot {
         desired_state_revision: snapshot.desired_state_revision,
         participants: snapshot
@@ -136,10 +132,9 @@ fn from_core_registration(
         registration_id: registration.registration_id,
         ownership_token: registration.ownership_token,
         client_spec_revision: registration.client_spec_revision,
-        spec: Some(decode_payload(
+        spec: Some(to_legacy_participant_spec(decode_participant_spec_payload(
             registration.profile_spec,
-            "participant profile spec",
-        )?),
+        )?)),
     })
 }
 
@@ -240,7 +235,7 @@ pub(crate) fn to_core_frame(frame: legacy::ServerFrame) -> Result<core::ServerFr
 fn profile_event(event: spaces::event::Event) -> core::server_frame::Payload {
     core::server_frame::Payload::ProfileEvent(core::ProfileEvent {
         payload: Some(core::ProfilePayload {
-            protobuf: spaces::Event { event: Some(event) }.encode_to_vec(),
+            protobuf: encode_event(event),
         }),
     })
 }
@@ -258,7 +253,7 @@ fn to_core_status(status: legacy::ParticipantStatus) -> core::ParticipantStatus 
         published_generation: status.published_generation,
         application_error: status.application_error,
         profile_status: Some(core::ProfilePayload {
-            protobuf: profile_status.encode_to_vec(),
+            protobuf: encode_participant_status(profile_status),
         }),
     }
 }
@@ -279,20 +274,42 @@ fn to_core_profile(profile: legacy::ProfileRef) -> core::ProfileRef {
     }
 }
 
-fn decode_payload<M>(payload: Option<core::ProfilePayload>, label: &str) -> Result<M, Status>
-where
-    M: Message + Default,
-{
-    let bytes = payload
-        .ok_or_else(|| Status::invalid_argument(format!("{label} is missing")))?
-        .protobuf;
-    if bytes.len() > MAX_PROFILE_PAYLOAD_BYTES {
-        return Err(Status::resource_exhausted(format!(
-            "{label} exceeds {MAX_PROFILE_PAYLOAD_BYTES} bytes"
-        )));
+fn decode_command_payload(
+    payload: Option<core::ProfilePayload>,
+) -> Result<spaces::Command, Status> {
+    decode_command(payload.as_ref().map(|payload| payload.protobuf.as_slice()))
+        .map_err(payload_status)
+}
+
+fn decode_desired_state_payload(
+    payload: Option<core::ProfilePayload>,
+) -> Result<spaces::DesiredState, Status> {
+    decode_desired_state(payload.as_ref().map(|payload| payload.protobuf.as_slice()))
+        .map_err(payload_status)
+}
+
+fn decode_participant_spec_payload(
+    payload: Option<core::ProfilePayload>,
+) -> Result<spaces::ParticipantSpec, Status> {
+    decode_participant_spec(payload.as_ref().map(|payload| payload.protobuf.as_slice()))
+        .map_err(payload_status)
+}
+
+fn to_legacy_participant_spec(spec: spaces::ParticipantSpec) -> legacy::ParticipantSpec {
+    legacy::ParticipantSpec {
+        space_key: spec.space_key,
+        display_name: spec.display_name,
+        server_mute: spec.server_mute,
+        server_deaf: spec.server_deaf,
     }
-    M::decode(bytes.as_slice())
-        .map_err(|error| Status::invalid_argument(format!("invalid {label}: {error}")))
+}
+
+fn payload_status(error: PayloadDecodeError) -> Status {
+    if error.is_too_large() {
+        Status::resource_exhausted(error.to_string())
+    } else {
+        Status::invalid_argument(error.to_string())
+    }
 }
 
 fn transcode<From, To>(message: From) -> Result<To, String>
@@ -332,7 +349,7 @@ mod tests {
                 core::ProfileCommand {
                     session_token: vec![2],
                     payload: Some(core::ProfilePayload {
-                        protobuf: vec![0; MAX_PROFILE_PAYLOAD_BYTES + 1],
+                        protobuf: vec![0; mumble_controller_spaces::MAX_PROFILE_PAYLOAD_BYTES + 1],
                     }),
                 },
             )),
