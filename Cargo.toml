@@ -41,6 +41,7 @@ authors = ["Mumble Server Runtime contributors"]
 # The verifier inherits runtime paths from the workspace so a mechanical crate
 # move never requires an implementation diff to edit verifier-owned manifests.
 [workspace.dependencies]
+mumble-controller-server = { path = "control-plane/server-rust" }
 mumble-server-runtime-protocol = { path = "runtime/crates/protocol" }
 mumble-server-runtime-crypto = { path = "runtime/crates/crypto" }
 mumble-server-runtime-shard = { path = "runtime/crates/shard" }
