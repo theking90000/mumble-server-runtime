@@ -63,11 +63,8 @@ import java.util.function.Supplier;
  * an application or Mumble publication acknowledgement.</p>
  */
 public final class ControllerSession {
-    private static final long INITIAL_RECONNECT_MILLIS = 250L;
-    private static final long MAX_RECONNECT_MILLIS = 10_000L;
-    private static final double RECONNECT_JITTER = 0.20d;
-
     private final Object monitor = new Object();
+    private final CoreSessionLifecycle lifecycle = new CoreSessionLifecycle();
     private final ControllerId controllerId;
     private final ByteString controllerInstanceId;
     private final ControllerTransport.Factory transportFactory;
@@ -96,7 +93,6 @@ public final class ControllerSession {
     private final CompletableFuture<Void> startFuture = new CompletableFuture<Void>();
     private final CompletableFuture<Void> stopFuture = new CompletableFuture<Void>();
 
-    private ControllerSessionState state = ControllerSessionState.NEW;
     private ControllerTransport transport;
     private ByteString resumeToken = ByteString.EMPTY;
     private ByteString sessionToken = ByteString.EMPTY;
@@ -107,7 +103,6 @@ public final class ControllerSession {
     private long reconciledStateRevision;
     private boolean sessionReady;
     private boolean reconciliationReceived;
-    private int reconnectAttempt;
     private SessionScheduler.Cancellable reconnectTask;
     private SessionScheduler.Cancellable leaseTask;
 
@@ -164,7 +159,7 @@ public final class ControllerSession {
      */
     public ControllerSessionState state() {
         synchronized (monitor) {
-            return state;
+            return lifecycle.state();
         }
     }
 
@@ -180,7 +175,7 @@ public final class ControllerSession {
      */
     public CompletableFuture<Void> start() {
         synchronized (monitor) {
-            if (state != ControllerSessionState.NEW) {
+            if (lifecycle.state() != ControllerSessionState.NEW) {
                 return startFuture;
             }
             changeState(ControllerSessionState.CONNECTING);
@@ -227,7 +222,7 @@ public final class ControllerSession {
                     spec);
             participants.put(participantId, handle);
             desiredStateRevision++;
-            if (state == ControllerSessionState.ACTIVE) {
+            if (lifecycle.state() == ControllerSessionState.ACTIVE) {
                 sendRegister(handle);
             }
             return handle;
@@ -381,14 +376,15 @@ public final class ControllerSession {
      */
     public CompletableFuture<Void> stop() {
         synchronized (monitor) {
-            if (state == ControllerSessionState.CLOSED) {
+            if (lifecycle.state() == ControllerSessionState.CLOSED) {
                 return stopFuture;
             }
-            if (state == ControllerSessionState.NEW || state == ControllerSessionState.FAILED) {
+            if (lifecycle.state() == ControllerSessionState.NEW
+                    || lifecycle.state() == ControllerSessionState.FAILED) {
                 closeLocally();
                 return stopFuture;
             }
-            if (state == ControllerSessionState.STOPPING) {
+            if (lifecycle.state() == ControllerSessionState.STOPPING) {
                 return stopFuture;
             }
             changeState(ControllerSessionState.STOPPING);
@@ -465,7 +461,7 @@ public final class ControllerSession {
             requireCurrentHandle(handle);
             CompletableFuture<AcceptedRevision> future = handle.replaceDesiredSpec(spec);
             desiredStateRevision++;
-            if (state == ControllerSessionState.ACTIVE
+            if (lifecycle.state() == ControllerSessionState.ACTIVE
                     && handle.state() == ParticipantHandleState.OWNED) {
                 sendSpec(handle, handle.clientSpecRevision());
             }
@@ -479,13 +475,13 @@ public final class ControllerSession {
             CompletableFuture<Void> future = handle.beginUnregister();
             desiredStateRevision++;
             if (handle.ownershipToken().isEmpty()) {
-                if (state == ControllerSessionState.NEW) {
+                if (lifecycle.state() == ControllerSessionState.NEW) {
                     handle.releaseAcknowledged();
                     participants.remove(handle.participantId());
                 }
                 return future;
             }
-            if (state == ControllerSessionState.ACTIVE) {
+            if (lifecycle.state() == ControllerSessionState.ACTIVE) {
                 sendRelease(handle);
             }
             return future;
@@ -514,7 +510,7 @@ public final class ControllerSession {
                 pendingObservedSpaces.put(observedSpacesRevision, pending);
             }
             pending.futures.add(future);
-            if (state == ControllerSessionState.ACTIVE) {
+            if (lifecycle.state() == ControllerSessionState.ACTIVE) {
                 sendObservedSpaces(future);
             }
             return future;
@@ -522,9 +518,9 @@ public final class ControllerSession {
     }
 
     private void connectNow() {
-        if (state == ControllerSessionState.CLOSED
-                || state == ControllerSessionState.STOPPING
-                || state == ControllerSessionState.FAILED) {
+        if (lifecycle.state() == ControllerSessionState.CLOSED
+                || lifecycle.state() == ControllerSessionState.STOPPING
+                || lifecycle.state() == ControllerSessionState.FAILED) {
             return;
         }
         try {
@@ -558,7 +554,8 @@ public final class ControllerSession {
                 source.close();
                 return;
             }
-            if (state == ControllerSessionState.STOPPING || state == ControllerSessionState.CLOSED) {
+            if (lifecycle.state() == ControllerSessionState.STOPPING
+                    || lifecycle.state() == ControllerSessionState.CLOSED) {
                 transport.close();
                 return;
             }
@@ -591,8 +588,8 @@ public final class ControllerSession {
         Objects.requireNonNull(frame, "frame");
         synchronized (monitor) {
             if (source != transport
-                    || state == ControllerSessionState.CLOSED
-                    || state == ControllerSessionState.FAILED) {
+                    || lifecycle.state() == ControllerSessionState.CLOSED
+                    || lifecycle.state() == ControllerSessionState.FAILED) {
                 return;
             }
             switch (frame.getPayloadCase()) {
@@ -661,11 +658,12 @@ public final class ControllerSession {
     }
 
     private void handleTransportFailure(Throwable failure, boolean retryable) {
-        if (state == ControllerSessionState.STOPPING) {
+        if (lifecycle.state() == ControllerSessionState.STOPPING) {
             closeLocally();
             return;
         }
-        if (state == ControllerSessionState.CLOSED || state == ControllerSessionState.FAILED) {
+        if (lifecycle.state() == ControllerSessionState.CLOSED
+                || lifecycle.state() == ControllerSessionState.FAILED) {
             return;
         }
         if (!retryable) {
@@ -744,7 +742,7 @@ public final class ControllerSession {
                 || Long.compareUnsigned(reconciledStateRevision, desiredStateRevision) < 0) {
             return;
         }
-        reconnectAttempt = 0;
+        lifecycle.resetReconnectBackoff();
         changeState(ControllerSessionState.ACTIVE);
         startFuture.complete(null);
         for (ParticipantHandle handle : new ArrayList<ParticipantHandle>(participants.values())) {
@@ -957,7 +955,7 @@ public final class ControllerSession {
     }
 
     private void beginResynchronization() {
-        if (state == ControllerSessionState.STOPPING) {
+        if (lifecycle.state() == ControllerSessionState.STOPPING) {
             return;
         }
         reconciliationReceived = false;
@@ -1146,8 +1144,8 @@ public final class ControllerSession {
             @Override
             public void run() {
                 synchronized (monitor) {
-                    if ((state != ControllerSessionState.ACTIVE
-                                    && state != ControllerSessionState.RECONCILING)
+                    if ((lifecycle.state() != ControllerSessionState.ACTIVE
+                                    && lifecycle.state() != ControllerSessionState.RECONCILING)
                             || sessionToken.isEmpty()) {
                         return;
                     }
@@ -1172,11 +1170,7 @@ public final class ControllerSession {
         if (reconnectTask != null) {
             reconnectTask.cancel();
         }
-        long exponent = 1L << Math.min(reconnectAttempt, 20);
-        long base = Math.min(MAX_RECONNECT_MILLIS, INITIAL_RECONNECT_MILLIS * exponent);
-        double factor = 1.0d - RECONNECT_JITTER + random.nextDouble() * RECONNECT_JITTER * 2.0d;
-        long delayMillis = Math.max(1L, Math.round(base * factor));
-        reconnectAttempt++;
+        long delayMillis = lifecycle.nextReconnectDelayMillis(random.nextDouble());
         reconnectTask = scheduler.schedule(new Runnable() {
             @Override
             public void run() {
@@ -1231,10 +1225,11 @@ public final class ControllerSession {
     }
 
     private void failPermanently(ControllerException failure) {
-        if (state == ControllerSessionState.FAILED || state == ControllerSessionState.CLOSED) {
+        if (lifecycle.state() == ControllerSessionState.FAILED
+                || lifecycle.state() == ControllerSessionState.CLOSED) {
             return;
         }
-        if (state == ControllerSessionState.STOPPING) {
+        if (lifecycle.state() == ControllerSessionState.STOPPING) {
             // A shutdown already in flight ends as a completed shutdown, never as a failure.
             closeLocally();
             return;
@@ -1293,11 +1288,10 @@ public final class ControllerSession {
     }
 
     private void changeState(ControllerSessionState next) {
-        if (state == next) {
+        if (lifecycle.state() == next) {
             return;
         }
-        final ControllerSessionState previous = state;
-        state = next;
+        final ControllerSessionState previous = lifecycle.transitionTo(next);
         for (final ControllerSessionListener listener : sessionListeners) {
             dispatch(new Runnable() {
                 @Override
@@ -1324,16 +1318,16 @@ public final class ControllerSession {
     }
 
     private void ensureNotTerminal() {
-        if (state == ControllerSessionState.STOPPING
-                || state == ControllerSessionState.CLOSED
-                || state == ControllerSessionState.FAILED) {
-            throw new SessionClosedException("controller session is " + state);
+        if (lifecycle.state() == ControllerSessionState.STOPPING
+                || lifecycle.state() == ControllerSessionState.CLOSED
+                || lifecycle.state() == ControllerSessionState.FAILED) {
+            throw new SessionClosedException("controller session is " + lifecycle.state());
         }
     }
 
     private void ensureActive() {
-        if (state != ControllerSessionState.ACTIVE) {
-            throw new ControllerException("controller session is not active: " + state);
+        if (lifecycle.state() != ControllerSessionState.ACTIVE) {
+            throw new ControllerException("controller session is not active: " + lifecycle.state());
         }
     }
 
