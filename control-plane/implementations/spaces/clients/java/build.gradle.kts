@@ -87,9 +87,6 @@ sourceSets {
 dependencies {
     api(project(":core:clients:controller-core"))
     implementation("com.google.protobuf:protobuf-java:3.25.8")
-    implementation("io.grpc:grpc-protobuf:1.81.0")
-    implementation("io.grpc:grpc-stub:1.81.0")
-    implementation("io.grpc:grpc-netty-shaded:1.81.0")
     compileOnly("javax.annotation:javax.annotation-api:1.3.2")
 
     testImplementation(platform("org.junit:junit-bom:5.14.1"))
