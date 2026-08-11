@@ -2,7 +2,7 @@ package be.theking90000.mumble.controller;
 
 import java.util.Objects;
 
-/** Logical identity of a participant, independent from transient Mumble connection identifiers. */
+/** Logical identity of a participant, independent from transient connection identifiers. */
 public final class ParticipantId {
     private final String value;
 

@@ -53,7 +53,7 @@ repository, which is why CI does not build the example.
 
 | Subcommand | Effect |
 | --- | --- |
-| `/voice` or `/voice link` | Reprints the join link from `mumbleJoinToken()`. |
+| `/voice` or `/voice link` | Reprints the join link from `connectionCredential()`. |
 | `/voice status` | Session state and controller id; for a player, handle state, applied Space, self mute and deaf, and the accepted, applied and generation revisions. |
 | `/voice space [key]` | `fetchSpace` on the given key, or on the caller's own world Space. Lists the members the runtime reports. |
 | `/voice board` | Toggles the sidebar. |

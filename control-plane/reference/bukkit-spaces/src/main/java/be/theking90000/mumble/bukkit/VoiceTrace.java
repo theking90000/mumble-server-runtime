@@ -3,7 +3,7 @@ package be.theking90000.mumble.bukkit;
 import be.theking90000.mumble.controller.ControllerSession;
 import be.theking90000.mumble.controller.ControllerSessionListener;
 import be.theking90000.mumble.controller.ControllerSessionState;
-import be.theking90000.mumble.controller.MumbleJoinToken;
+import be.theking90000.mumble.controller.ConnectionCredential;
 import be.theking90000.mumble.controller.ParticipantHandle;
 import be.theking90000.mumble.controller.ParticipantHandleState;
 import be.theking90000.mumble.controller.ParticipantListener;
@@ -60,7 +60,7 @@ final class VoiceTrace implements ControllerSessionListener, ParticipantListener
             return;
         }
         plugin.debug("Participant " + name(participant)
-                + " connected=" + status.mumbleConnected()
+                + " connected=" + status.connected()
                 + " space=" + (status.appliedSpaceKey().isPresent()
                         ? status.appliedSpaceKey().get().value() : "none")
                 + " selfMute=" + status.selfMute()
@@ -71,7 +71,7 @@ final class VoiceTrace implements ControllerSessionListener, ParticipantListener
     }
 
     @Override
-    public void onMumbleJoinTokenChanged(ParticipantHandle participant, MumbleJoinToken token) {
+    public void onConnectionCredentialChanged(ParticipantHandle participant, ConnectionCredential token) {
         // The token is a bearer credential. Log that one arrived, never its value.
         plugin.debug("Join token issued for " + name(participant));
     }
@@ -93,7 +93,7 @@ final class VoiceTrace implements ControllerSessionListener, ParticipantListener
                 members.append(", ");
             }
             members.append(participant.displayName());
-            if (!participant.mumbleConnected()) {
+            if (!participant.connected()) {
                 members.append("(pending)");
             }
             if (participant.serverMute()) {

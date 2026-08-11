@@ -51,7 +51,7 @@ public final class AcceptedRevision {
     }
 
     /**
-     * Returns the Mumble publication generation visible when this acknowledgement was produced.
+     * Returns the runtime publication generation visible when this acknowledgement was produced.
      *
      * @return the publication generation, which does not by itself prove that this spec is published
      */

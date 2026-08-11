@@ -46,7 +46,7 @@
  *         ParticipantSpec.builder(SpaceKey.of("lobby"), "Alex").build());
  *
  * session.start()
- *     .thenCompose(ignored -> player.whenMumbleJoinTokenAvailable())
+ *     .thenCompose(ignored -> player.whenConnectionCredentialAvailable())
  *     .thenAccept(token -> givePasswordToPlayer(token.value()));
  * }</pre>
  */
