@@ -7,7 +7,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 
-final class ScriptedControllerTransport implements ControllerTransport {
+final class ScriptedControllerTransport implements CoreTransport {
     private final List<ClientFrame> sent = new ArrayList<ClientFrame>();
     private Listener listener;
     private boolean closed;
@@ -57,12 +57,12 @@ final class ScriptedControllerTransport implements ControllerTransport {
         listener.onConnected();
     }
 
-    static final class Factory implements ControllerTransport.Factory {
+    static final class Factory implements CoreTransport.Factory {
         private final List<ScriptedControllerTransport> transports =
                 new ArrayList<ScriptedControllerTransport>();
 
         @Override
-        public ControllerTransport create() {
+        public CoreTransport create() {
             ScriptedControllerTransport transport = new ScriptedControllerTransport();
             transports.add(transport);
             return transport;
