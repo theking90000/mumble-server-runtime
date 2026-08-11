@@ -1,12 +1,14 @@
 //! Built-in Controller profile that renders one root channel and audio domain per named Space.
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use mumble_controller_host::runtime::{
-    Audience, ConnectionId, DomainId, Narrow, Occupant, Reply, Scope, ScopeSet, ShardBuilder,
-    ShardLogic, UserFlags, VoiceEvent,
+    Audience, ConnectionId, DomainId, Narrow, Occupant, ReconcileReport, Reply, Scope, ScopeSet,
+    ShardBuilder, ShardHandle, ShardLogic, UserFlags, VoiceEvent,
 };
-use mumble_controller_host::{SnapshotReader, VersionedSnapshot};
+use mumble_controller_host::{SnapshotPublisher, SnapshotReader, VersionedSnapshot};
 
 /// Stable business identity of one named Space.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -83,6 +85,119 @@ pub enum SpacesValidationError {
     InvalidSpaceKey,
     #[error("display_name must contain between 1 and 64 characters")]
     InvalidDisplayName,
+}
+
+/// Profile-owned state for one materialized Space.
+pub struct MaterializedSpace {
+    handle: ShardHandle,
+    incarnation_id: Vec<u8>,
+    space_revision: u64,
+    published_generation: u64,
+    desired: SnapshotPublisher<RenderState>,
+    render_history: BTreeMap<u64, BTreeMap<String, u64>>,
+    close_deadline: Option<Instant>,
+}
+
+impl MaterializedSpace {
+    #[must_use]
+    pub fn new(
+        handle: ShardHandle,
+        incarnation_id: Vec<u8>,
+        desired: SnapshotPublisher<RenderState>,
+    ) -> Self {
+        Self {
+            handle,
+            incarnation_id,
+            space_revision: 0,
+            published_generation: 0,
+            desired,
+            render_history: BTreeMap::new(),
+            close_deadline: None,
+        }
+    }
+
+    #[must_use]
+    pub fn shard_handle(&self) -> &ShardHandle {
+        &self.handle
+    }
+
+    #[must_use]
+    pub fn incarnation_id(&self) -> &[u8] {
+        &self.incarnation_id
+    }
+
+    #[must_use]
+    pub fn revision(&self) -> u64 {
+        self.space_revision
+    }
+
+    #[must_use]
+    pub fn published_generation(&self) -> u64 {
+        self.published_generation
+    }
+
+    #[must_use]
+    pub fn close_deadline(&self) -> Option<Instant> {
+        self.close_deadline
+    }
+
+    pub fn refresh(
+        &mut self,
+        application_revision: u64,
+        space_key: &str,
+        participants: Vec<RenderParticipant>,
+        now: Instant,
+        empty_space_grace: Duration,
+    ) {
+        let revisions = participants
+            .iter()
+            .map(|participant| {
+                (
+                    participant.participant_id.clone(),
+                    participant.accepted_revision,
+                )
+            })
+            .collect();
+        self.space_revision = self.space_revision.saturating_add(1);
+        self.close_deadline = if participants.is_empty() {
+            self.close_deadline.or(Some(now + empty_space_grace))
+        } else {
+            None
+        };
+        self.render_history.insert(application_revision, revisions);
+        self.desired.publish(Arc::new(RenderState {
+            application_revision,
+            space_key: space_key.to_owned(),
+            participants,
+        }));
+        self.handle.wake();
+    }
+
+    pub fn reconcile(
+        &mut self,
+        application_revision: u64,
+        report: &ReconcileReport,
+    ) -> Option<SpaceReconciliation> {
+        let revisions = self.render_history.get(&application_revision).cloned()?;
+        let refusal = report.refused.as_ref().map(ToString::to_string);
+        if refusal.is_none() {
+            self.published_generation = report.version;
+        }
+        self.render_history
+            .retain(|revision, _| *revision > application_revision);
+        Some(SpaceReconciliation {
+            revisions,
+            refusal,
+            published_generation: report.version,
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SpaceReconciliation {
+    pub revisions: BTreeMap<String, u64>,
+    pub refusal: Option<String>,
+    pub published_generation: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

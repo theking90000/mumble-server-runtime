@@ -13,8 +13,8 @@ pub use snapshot::{
 /// Runtime rendering vocabulary exposed to compiled Controller profiles.
 pub mod runtime {
     pub use mumble_server_runtime_shard::{
-        Audience, ChannelKey, ConnectionId, DomainId, Narrow, Occupant, Reply, Scope, ScopeSet,
-        ShardBuilder, ShardLogic, Spoken, UserFlags, VoiceEvent,
+        Audience, ChannelKey, ConnectionId, DomainId, Narrow, Occupant, ReconcileReport, Reply,
+        Scope, ScopeSet, ShardBuilder, ShardHandle, ShardLogic, Spoken, UserFlags, VoiceEvent,
     };
 }
 
