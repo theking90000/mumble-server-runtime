@@ -36,7 +36,7 @@
   - [Troubleshooting](controller/troubleshooting.md)
   - [Reference: the model](controller/how-it-works.md)
   - [Reference: lifecycles](controller/java.md)
-  - [Reference: the Rust server](controller/server.md)
+  - [Reference: the Spaces Rust host](controller/server.md)
 - [API documentation](reference/api.md)
 
 <!--

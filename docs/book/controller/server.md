@@ -1,13 +1,23 @@
-# Reference: the Rust server
+# Reference: the Spaces Rust host
 
 > Internals and complete option list. [Getting started](getting-started.md)
 > covers what is needed to run the process.
 
-`mumble-controller-server` composes the Controller protocol over the existing
-gateway and shard runtime. One Tokio actor serializes session leases,
+`mumble-controller-server` is currently the runnable host for the provided
+Spaces implementation. It composes the generic Coordination protocol, the
+Spaces payload protocol, the Runtime Adapter, and the gateway/shard runtime.
+Its current package name and `control-plane/server-rust` path are transitional;
+the target ownership path is `implementations/spaces/host/rust`.
+
+One Tokio actor currently serializes session leases,
 participant ownership, join credentials, observations, Space lifetimes and
 Mumble connection bindings. There is no distributed lock or application-level
 compare-and-swap operation.
+
+The target architecture moves generic session, lease, fencing, revision and
+reliable-request decisions behind Coordination while Spaces keeps observations,
+Space lifetimes and snapshots. The process remains the composition root for the
+concrete Spaces implementation.
 
 Each materialized Space owns one dynamic shard. Its `ShardLogic` reads an
 immutable, revisioned snapshot published by the actor and never waits for gRPC.
