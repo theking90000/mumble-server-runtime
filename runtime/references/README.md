@@ -1,18 +1,16 @@
-# runtime/references/ — vendored protocol sources (R1)
+# Vendored protocol sources
 
-Protocol truth is documented here.
+Protocol truth. Every claim about the Mumble wire format traces back here,
+pinned to the exact upstream commit recorded in `mumble.pin`.
 
-## `runtime/references/mumble/` — pinned clone of the mumble-voip repository
+What is kept in version control lives under `vendored/`: `Mumble.proto` and
+`MumbleUDP.proto`, the OCB2 test vectors for `CryptState`, and the protocol
+sources describing framing and the connection lifecycle. Upstream copyright and
+license are retained, in `vendored/LICENSE` and `vendored/PROVENANCE.md`. The
+OCB2 vectors are consumed directly as golden fixtures by the crypto crate's
+tests.
 
-The raw clone is not committed (see `.gitignore`). What is versioned:
-
-- `runtime/references/mumble.pin`: the exact commit hash of the reference mumble-voip repository.
-  Any claim about the wire format is traceable to this commit.
-- the excerpts explicitly vendored under `runtime/references/vendored/`: `Mumble.proto`,
-  `MumbleUDP.proto`, and the OCB2 test vectors for `CryptState` (the official
-  repository tests become crypto fixtures in Phase 1).
-
-### Reproduce the clone locally
+The full clone under `mumble/` is excluded by `.gitignore`. To reproduce it:
 
 ```bash
 git clone https://github.com/mumble-voip/mumble runtime/references/mumble
