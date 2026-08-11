@@ -219,7 +219,16 @@ impl ControllerActor {
             );
             return;
         }
-        let profile = match profile::negotiate(open.profile.as_ref()) {
+        let Some(requested_profile) = open.profile.as_ref() else {
+            self.reject_stream(
+                &responses,
+                request_id,
+                CommandErrorCode::InvalidArgument,
+                "OpenSession requires a negotiated profile",
+            );
+            return;
+        };
+        let profile = match profile::negotiate(requested_profile) {
             Ok(profile) => profile,
             Err(error) => {
                 self.reject_stream(
@@ -2082,6 +2091,7 @@ mod tests {
             let stream_id = self.next_stream;
             self.next_stream += 1;
             let (responses, receiver) = mpsc::channel(capacity);
+            let profile = profile::spaces().expect("compiled Spaces profile is valid");
             self.actor
                 .sender()
                 .send(ActorCommand::Open {
@@ -2094,7 +2104,7 @@ mod tests {
                             controller_instance_id: instance,
                             resume_token,
                             desired_state: Some(desired),
-                            profile: None,
+                            profile: Some(profile::to_protocol(&profile)),
                         })),
                     },
                 })
@@ -2872,6 +2882,40 @@ mod tests {
                     resume_token: Vec::new(),
                     desired_state: Some(snapshot(1, Vec::new())),
                     profile: Some(unknown),
+                })),
+            },
+        );
+
+        assert!(actor.sessions.is_empty());
+        assert!(actor.core_sessions.is_empty());
+        assert!(actor.streams.is_empty());
+        assert!(matches!(
+            client.try_recv(),
+            Ok(Ok(ServerFrame {
+                payload: Some(ServerPayload::CommandRejected(_)),
+                ..
+            }))
+        ));
+        assert!(matches!(client.try_recv(), Ok(Err(_status))));
+    }
+
+    #[tokio::test]
+    async fn a_missing_profile_is_rejected_before_session_creation() {
+        let runtime = Runtime::start();
+        let (mut actor, _commands) = reducer(&runtime);
+        let (responses, mut client) = mpsc::channel(8);
+
+        actor.open(
+            5,
+            responses,
+            ClientFrame {
+                request_id: vec![1],
+                payload: Some(ClientPayload::OpenSession(OpenSession {
+                    controller_id: "controller".to_owned(),
+                    controller_instance_id: vec![9],
+                    resume_token: Vec::new(),
+                    desired_state: Some(snapshot(1, Vec::new())),
+                    profile: None,
                 })),
             },
         );

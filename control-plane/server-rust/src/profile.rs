@@ -4,22 +4,13 @@ use mumble_controller_spaces::profile_ref;
 use crate::protocol::ProfileRef as ProtocolProfileRef;
 
 /// Select a profile compiled into this server before any session state exists.
-pub(crate) fn negotiate(
-    requested: Option<&ProtocolProfileRef>,
-) -> Result<ProfileRef, ProfileError> {
+pub(crate) fn negotiate(requested: &ProtocolProfileRef) -> Result<ProfileRef, ProfileError> {
     let supported = spaces()?;
-    let requested = match requested {
-        Some(requested) => ProfileRef::new(
-            requested.profile_id.clone(),
-            requested.schema_version,
-            requested.descriptor_digest.clone(),
-        )?,
-        None => {
-            // The migration stack keeps the current v1 client usable until the Java
-            // modules switch to explicit negotiation. This path is removed at cutover.
-            supported.clone()
-        }
-    };
+    let requested = ProfileRef::new(
+        requested.profile_id.clone(),
+        requested.schema_version,
+        requested.descriptor_digest.clone(),
+    )?;
     negotiate_profile(&requested, &supported)
 }
 
@@ -45,23 +36,23 @@ mod tests {
             panic!("compiled Spaces profile is valid");
         };
         let protocol = to_protocol(&supported);
-        assert_eq!(negotiate(Some(&protocol)), Ok(supported.clone()));
+        assert_eq!(negotiate(&protocol), Ok(supported.clone()));
 
         let mut unknown = protocol.clone();
         unknown.profile_id = "unknown".to_owned();
-        assert_eq!(negotiate(Some(&unknown)), Err(ProfileError::UnknownProfile));
+        assert_eq!(negotiate(&unknown), Err(ProfileError::UnknownProfile));
 
         let mut wrong_version = protocol.clone();
         wrong_version.schema_version = supported.schema_version() + 1;
         assert_eq!(
-            negotiate(Some(&wrong_version)),
+            negotiate(&wrong_version),
             Err(ProfileError::UnknownSchemaVersion)
         );
 
         let mut wrong_digest = protocol;
         wrong_digest.descriptor_digest = "wrong".to_owned();
         assert_eq!(
-            negotiate(Some(&wrong_digest)),
+            negotiate(&wrong_digest),
             Err(ProfileError::DescriptorMismatch)
         );
     }
