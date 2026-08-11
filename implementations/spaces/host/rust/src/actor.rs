@@ -12,8 +12,9 @@ use mumble_controller_core::{
 use mumble_controller_host::{HostError, MumbleHost, snapshot_channel};
 use mumble_controller_spaces::{
     ControllerSpaceLogic, MaterializedSpace, ParticipantSpec as SpaceParticipantSpec,
-    ParticipantState as Participant, RenderParticipant, RenderState, SpaceEvent, SpaceEventKind,
-    SpaceKey, SpaceReport, SpaceReporter, SpacesValidationError,
+    ParticipantState as Participant, RenderParticipant, RenderState,
+    SessionState as SpacesSessionState, SpaceEvent, SpaceEventKind, SpaceKey, SpaceReport,
+    SpaceReporter, SpacesValidationError,
 };
 use mumble_server_runtime_gateway::RuntimeHandle;
 use mumble_server_runtime_shard::{ConnectionId, ReconcileReport, ShardId};
@@ -119,8 +120,7 @@ pub(crate) fn spawn(
 struct ControllerSession {
     stream_id: Option<u64>,
     responses: Option<ResponseSender>,
-    observed_revision: u64,
-    explicit_observations: BTreeSet<String>,
+    spaces: SpacesSessionState,
 }
 
 struct ControllerActor {
@@ -310,8 +310,7 @@ impl ControllerActor {
                 ControllerSession {
                     stream_id: None,
                     responses: None,
-                    observed_revision: 0,
-                    explicit_observations: BTreeSet::new(),
+                    spaces: SpacesSessionState::default(),
                 },
             );
         } else if !self.sessions.contains_key(&session_id) {
@@ -734,7 +733,9 @@ impl ControllerActor {
         self.core_sessions
             .set_desired_revision(session_id, snapshot.desired_state_revision);
         if let Some(session) = self.sessions.get_mut(&session_id) {
-            session.explicit_observations = snapshot.observed_space_keys.into_iter().collect();
+            session
+                .spaces
+                .replace_snapshot_observations(snapshot.observed_space_keys);
         }
         for registration in snapshot.participants {
             self.register_from_snapshot(session_id, registration, request_id.clone());
@@ -1360,18 +1361,18 @@ impl ControllerActor {
             );
             return;
         }
-        if let Some(session) = self.sessions.get_mut(&session_id) {
-            if revision < session.observed_revision {
-                self.reject_session(
-                    session_id,
-                    request_id,
-                    CommandErrorCode::StaleRevision,
-                    "observation revision moved backwards",
-                );
-                return;
-            }
-            session.observed_revision = revision;
-            session.explicit_observations = set;
+        let stale = self
+            .sessions
+            .get_mut(&session_id)
+            .is_some_and(|session| session.spaces.replace_observations(revision, set).is_err());
+        if stale {
+            self.reject_session(
+                session_id,
+                request_id,
+                CommandErrorCode::StaleRevision,
+                "observation revision moved backwards",
+            );
+            return;
         }
         self.send_session(
             session_id,
@@ -1861,7 +1862,7 @@ impl ControllerActor {
         let sessions: Vec<SessionId> = self
             .sessions
             .iter()
-            .filter(|(_, session)| session.explicit_observations.contains(space_key))
+            .filter(|(_, session)| session.spaces.observes(space_key))
             .map(|(session_id, _)| *session_id)
             .collect();
         for session_id in sessions {
@@ -1884,7 +1885,7 @@ impl ControllerActor {
     fn session_observes(&self, session_id: SessionId, space_key: &str) -> bool {
         self.sessions
             .get(&session_id)
-            .is_some_and(|session| session.explicit_observations.contains(space_key))
+            .is_some_and(|session| session.spaces.observes(space_key))
             || self.participants.values().any(|participant| {
                 self.ownership
                     .get(&participant.participant_id)
@@ -2662,8 +2663,7 @@ mod tests {
             ControllerSession {
                 stream_id: Some(5),
                 responses: Some(responses),
-                observed_revision: 0,
-                explicit_observations: BTreeSet::new(),
+                spaces: SpacesSessionState::default(),
             },
         );
         actor.streams.insert(5, ready.session_id);
