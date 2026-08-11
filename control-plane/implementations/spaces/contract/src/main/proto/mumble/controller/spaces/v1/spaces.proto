@@ -1,0 +1,86 @@
+syntax = "proto3";
+
+package mumble.controller.spaces.v1;
+
+option java_multiple_files = true;
+option java_outer_classname = "ControllerSpacesProtocol";
+option java_package = "be.theking90000.mumble.controller.internal.spaces.v1";
+
+message DesiredState {
+  repeated string observed_space_keys = 1;
+}
+
+message ParticipantSpec {
+  string space_key = 1;
+  string display_name = 2;
+  bool server_mute = 3;
+  bool server_deaf = 4;
+}
+
+message ParticipantStatus {
+  string applied_space_key = 1;
+  bool self_mute = 2;
+  bool self_deaf = 3;
+}
+
+message Command {
+  oneof command {
+    ReplaceObservedSpaces replace_observed_spaces = 1;
+    FetchSpace fetch_space = 2;
+  }
+}
+
+message ReplaceObservedSpaces {
+  uint64 observed_spaces_revision = 1;
+  repeated string space_keys = 2;
+}
+
+message FetchSpace {
+  string space_key = 1;
+}
+
+message Event {
+  oneof event {
+    ObservedSpacesAccepted observed_spaces_accepted = 1;
+    SpaceSnapshot space_snapshot = 2;
+    SpaceClosed space_closed = 3;
+    FetchSpaceResult fetch_space_result = 4;
+  }
+}
+
+message ObservedSpacesAccepted {
+  uint64 observed_spaces_revision = 1;
+}
+
+message SpaceParticipant {
+  string participant_id = 1;
+  string display_name = 2;
+  bool server_mute = 3;
+  bool server_deaf = 4;
+  bool mumble_connected = 5;
+}
+
+message SpaceSnapshot {
+  string space_key = 1;
+  bytes incarnation_id = 2;
+  uint64 space_revision = 3;
+  repeated SpaceParticipant participants = 4;
+  uint64 published_generation = 5;
+}
+
+message SpaceClosed {
+  string space_key = 1;
+  bytes incarnation_id = 2;
+  uint64 final_space_revision = 3;
+}
+
+message FetchSpaceResult {
+  oneof result {
+    SpaceSnapshot snapshot = 1;
+    SpaceAbsent absent = 2;
+  }
+}
+
+message SpaceAbsent {
+  string space_key = 1;
+}

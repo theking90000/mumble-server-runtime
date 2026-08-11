@@ -5,13 +5,16 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use mumble_server_runtime_gateway::{ConnectionIdentity, ConnectionRouter, RouteDecision};
 use mumble_server_runtime_shard::ConnectionId;
 use tokio::sync::{mpsc, oneshot};
-use tokio_stream::Stream;
 use tokio_stream::wrappers::ReceiverStream;
+use tokio_stream::{Stream, StreamExt};
 use tonic::{Request, Response, Status, Streaming};
 
 use crate::actor::{ActorCommand, ActorHandle};
-use crate::protocol::controller_service_server::ControllerService;
-use crate::protocol::{ClientFrame, ServerFrame};
+use crate::core_protocol::controller_service_server::ControllerService as CoreControllerService;
+use crate::core_protocol::{ClientFrame as CoreClientFrame, ServerFrame as CoreServerFrame};
+use crate::protocol::controller_service_server::ControllerService as LegacyControllerService;
+use crate::protocol::{ClientFrame as LegacyClientFrame, ServerFrame as LegacyServerFrame};
+use crate::wire::{from_core_frame, to_core_frame};
 
 pub(crate) struct GrpcControllerService {
     actor: ActorHandle,
@@ -30,12 +33,13 @@ impl GrpcControllerService {
 }
 
 #[tonic::async_trait]
-impl ControllerService for GrpcControllerService {
-    type ConnectStream = Pin<Box<dyn Stream<Item = Result<ServerFrame, Status>> + Send + 'static>>;
+impl CoreControllerService for GrpcControllerService {
+    type ConnectStream =
+        Pin<Box<dyn Stream<Item = Result<CoreServerFrame, Status>> + Send + 'static>>;
 
     async fn connect(
         &self,
-        request: Request<Streaming<ClientFrame>>,
+        request: Request<Streaming<CoreClientFrame>>,
     ) -> Result<Response<Self::ConnectStream>, Status> {
         let stream_id = self.next_stream_id.fetch_add(1, Ordering::Relaxed);
         let mut incoming = request.into_inner();
@@ -44,6 +48,90 @@ impl ControllerService for GrpcControllerService {
 
         // Detached intentionally: the task owns exactly one gRPC request stream and terminates
         // when that stream closes. Actor state is notified in its tail.
+        tokio::spawn(async move {
+            let first = match incoming.message().await {
+                Ok(Some(frame)) => match from_core_frame(frame) {
+                    Ok(frame) => frame,
+                    Err(status) => {
+                        let _result = responses.send(Err(status)).await;
+                        return;
+                    }
+                },
+                Ok(None) => {
+                    let _result = responses
+                        .send(Err(Status::invalid_argument("Controller stream is empty")))
+                        .await;
+                    return;
+                }
+                Err(status) => {
+                    let _result = responses.send(Err(status)).await;
+                    return;
+                }
+            };
+            if actor
+                .send(ActorCommand::Open {
+                    stream_id,
+                    responses: responses.clone(),
+                    frame: first,
+                })
+                .await
+                .is_err()
+            {
+                let _result = responses
+                    .send(Err(Status::unavailable("Controller actor stopped")))
+                    .await;
+                return;
+            }
+
+            loop {
+                match incoming.message().await {
+                    Ok(Some(frame)) => {
+                        let frame = match from_core_frame(frame) {
+                            Ok(frame) => frame,
+                            Err(status) => {
+                                let _result = responses.send(Err(status)).await;
+                                return;
+                            }
+                        };
+                        if actor
+                            .send(ActorCommand::Frame { stream_id, frame })
+                            .await
+                            .is_err()
+                        {
+                            let _result = responses
+                                .send(Err(Status::unavailable("Controller actor stopped")))
+                                .await;
+                            return;
+                        }
+                    }
+                    Ok(None) => break,
+                    Err(_status) => break,
+                }
+            }
+            let _result = actor.send(ActorCommand::StreamClosed { stream_id }).await;
+        });
+
+        let outgoing = ReceiverStream::new(outgoing)
+            .map(|result| result.and_then(|frame| to_core_frame(frame).map_err(Status::internal)));
+        Ok(Response::new(Box::pin(outgoing)))
+    }
+}
+
+#[tonic::async_trait]
+impl LegacyControllerService for GrpcControllerService {
+    type ConnectStream =
+        Pin<Box<dyn Stream<Item = Result<LegacyServerFrame, Status>> + Send + 'static>>;
+
+    async fn connect(
+        &self,
+        request: Request<Streaming<LegacyClientFrame>>,
+    ) -> Result<Response<Self::ConnectStream>, Status> {
+        let stream_id = self.next_stream_id.fetch_add(1, Ordering::Relaxed);
+        let mut incoming = request.into_inner();
+        let (responses, outgoing) = mpsc::channel(self.queue_capacity);
+        let actor = self.actor.sender();
+
+        // Kept only while the independent Core verifier migrates to the generic contract.
         tokio::spawn(async move {
             let first = match incoming.message().await {
                 Ok(Some(frame)) => frame,

@@ -4,7 +4,8 @@ use crate::protocol::ProfileRef as ProtocolProfileRef;
 
 pub(crate) const SPACES_PROFILE_ID: &str = "mumble.controller.spaces";
 pub(crate) const SPACES_SCHEMA_VERSION: u32 = 1;
-const SPACES_DESCRIPTOR_DIGEST: &str = include_str!("../../contract/controller-v1.pb.sha256");
+const SPACES_DESCRIPTOR_DIGEST: &str =
+    include_str!("../../implementations/spaces/contract/controller-spaces-v1.pb.sha256");
 
 /// Select a profile compiled into this server before any session state exists.
 pub(crate) fn negotiate(
