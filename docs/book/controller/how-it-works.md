@@ -78,7 +78,8 @@ The contract and the Java SDK live under `control-plane`:
 - `contract` holds the canonical versioned Protobuf/gRPC definition. Its
   compiled descriptor digest is pinned in CI, so a wire-incompatible edit fails
   the build rather than reaching a release.
-- `sdk-java` holds the Java 8 compatible SDK.
+- `core/clients/java` holds common Java synchronization types;
+- `implementations/spaces/clients/java` holds the Java 8 compatible Spaces client.
 - `server-rust` holds the composed server described in
   [Reference: the Rust server](server.md).
 

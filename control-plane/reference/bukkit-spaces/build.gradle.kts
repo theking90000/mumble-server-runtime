@@ -17,9 +17,9 @@ java {
 }
 
 dependencies {
-    // Substituted onto `:sdk-java` of the neighbouring build by settings.gradle.kts,
+    // Substituted onto the Spaces Java client of the neighbouring build,
     // so this example always compiles against the SDK sources in this repository.
-    implementation("be.theking90000.mumble:controller:0.1.0-SNAPSHOT")
+    implementation("be.theking90000.mumble:controller-spaces:0.1.0-SNAPSHOT")
 
     // The server provides the Bukkit API at runtime; it must never enter the jar.
     compileOnly("org.spigotmc:spigot-api:1.8.8-R0.1-SNAPSHOT")

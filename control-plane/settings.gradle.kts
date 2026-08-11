@@ -18,5 +18,8 @@ dependencyResolutionManagement {
 }
 
 rootProject.name = "mumble-controller"
-include("core:clients:java")
-include("sdk-java")
+include("core:clients:controller-core")
+project(":core:clients:controller-core").projectDir = file("core/clients/java")
+include("implementations:spaces:clients:controller-spaces")
+project(":implementations:spaces:clients:controller-spaces").projectDir =
+    file("implementations/spaces/clients/java")

@@ -15,14 +15,14 @@ connects a real Mumble client to it.
 The SDK is published as a single artifact:
 
 ```text
-be.theking90000.mumble:controller
+be.theking90000.mumble:controller-spaces
 ```
 
 Gradle (Kotlin DSL):
 
 ```kotlin
 dependencies {
-    implementation("be.theking90000.mumble:controller:0.1.0")
+    implementation("be.theking90000.mumble:controller-spaces:0.1.0")
 }
 ```
 
@@ -30,7 +30,7 @@ Gradle (Groovy DSL):
 
 ```groovy
 dependencies {
-    implementation 'be.theking90000.mumble:controller:0.1.0'
+    implementation 'be.theking90000.mumble:controller-spaces:0.1.0'
 }
 ```
 

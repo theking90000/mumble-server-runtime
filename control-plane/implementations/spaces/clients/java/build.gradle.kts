@@ -10,7 +10,7 @@ group = "be.theking90000.mumble"
 version = "0.1.0-SNAPSHOT"
 
 base {
-    archivesName.set("controller")
+    archivesName.set("controller-spaces")
 }
 
 java {
@@ -73,13 +73,13 @@ sourceSets {
     main {
         java.srcDir(profileMetadataDirectory)
         proto {
-            srcDir("../contract/src/main/proto")
+            srcDir("../../../../contract/src/main/proto")
         }
     }
 }
 
 dependencies {
-    api(project(":core:clients:java"))
+    api(project(":core:clients:controller-core"))
     implementation("com.google.protobuf:protobuf-java:3.25.8")
     implementation("io.grpc:grpc-protobuf:1.81.0")
     implementation("io.grpc:grpc-stub:1.81.0")
@@ -191,7 +191,7 @@ tasks.check {
 publishing {
     publications {
         create<MavenPublication>("mavenJava") {
-            artifactId = "controller"
+            artifactId = "controller-spaces"
             from(components["java"])
         }
     }
