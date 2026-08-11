@@ -10,14 +10,14 @@ token**: a password, specific to that participant, that lets an unmodified
 Mumble client connect as them.
 
 ```java
-handle.whenMumbleJoinTokenAvailable()
+handle.whenConnectionCredentialAvailable()
         .thenAccept(token -> sendJoinLink(player, token.value()));
 ```
 
 Or read it directly, when the participant is already owned:
 
 ```java
-Optional<MumbleJoinToken> token = handle.mumbleJoinToken();
+Optional<ConnectionCredential> token = handle.connectionCredential();
 ```
 
 The token is available from the moment ownership is granted, normally a few
@@ -62,7 +62,7 @@ participant and speak as them.
   move participants, mute anyone or read Spaces. The damage is limited to
   impersonating that one participant.
 
-`MumbleJoinToken.toString()` is redacted deliberately, so an accidental
+`ConnectionCredential.toString()` is redacted deliberately, so an accidental
 `log.info("token: " + token)` prints nothing useful. Call `.value()` only where
 you actually send the credential.
 
@@ -77,7 +77,8 @@ stays visible, or players can request it again, listen for rotations:
 ```java
 handle.addListener(new ParticipantListener() {
     @Override
-    public void onMumbleJoinTokenChanged(ParticipantHandle participant, MumbleJoinToken token) {
+    public void onConnectionCredentialChanged(
+            ParticipantHandle participant, ConnectionCredential token) {
         updateStoredLink(participant.participantId(), token.value());
     }
 });

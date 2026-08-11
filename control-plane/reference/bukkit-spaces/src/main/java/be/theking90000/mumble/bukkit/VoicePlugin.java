@@ -1,12 +1,12 @@
 package be.theking90000.mumble.bukkit;
 
-import be.theking90000.mumble.controller.ControllerId;
-import be.theking90000.mumble.controller.ControllerSession;
-import be.theking90000.mumble.controller.ConnectionCredential;
-import be.theking90000.mumble.controller.ParticipantHandle;
-import be.theking90000.mumble.controller.ParticipantId;
-import be.theking90000.mumble.controller.ParticipantSpec;
-import be.theking90000.mumble.controller.SpaceKey;
+import be.theking90000.mumble.controller.core.ControllerId;
+import be.theking90000.mumble.controller.core.ConnectionCredential;
+import be.theking90000.mumble.controller.core.ParticipantId;
+import be.theking90000.mumble.controller.spaces.ControllerSession;
+import be.theking90000.mumble.controller.spaces.ParticipantHandle;
+import be.theking90000.mumble.controller.spaces.ParticipantSpec;
+import be.theking90000.mumble.controller.spaces.SpaceKey;
 import net.md_5.bungee.api.chat.ClickEvent;
 import net.md_5.bungee.api.chat.ComponentBuilder;
 import net.md_5.bungee.api.chat.HoverEvent;

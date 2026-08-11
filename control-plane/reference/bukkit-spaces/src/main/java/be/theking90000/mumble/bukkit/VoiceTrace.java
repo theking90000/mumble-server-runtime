@@ -1,18 +1,18 @@
 package be.theking90000.mumble.bukkit;
 
-import be.theking90000.mumble.controller.ControllerSession;
-import be.theking90000.mumble.controller.ControllerSessionListener;
-import be.theking90000.mumble.controller.ControllerSessionState;
-import be.theking90000.mumble.controller.ConnectionCredential;
-import be.theking90000.mumble.controller.ParticipantHandle;
-import be.theking90000.mumble.controller.ParticipantHandleState;
-import be.theking90000.mumble.controller.ParticipantListener;
-import be.theking90000.mumble.controller.ParticipantStatus;
-import be.theking90000.mumble.controller.SpaceIncarnation;
-import be.theking90000.mumble.controller.SpaceKey;
-import be.theking90000.mumble.controller.SpaceListener;
-import be.theking90000.mumble.controller.SpaceParticipant;
-import be.theking90000.mumble.controller.SpaceSnapshot;
+import be.theking90000.mumble.controller.core.ControllerSessionState;
+import be.theking90000.mumble.controller.core.ConnectionCredential;
+import be.theking90000.mumble.controller.core.ParticipantHandleState;
+import be.theking90000.mumble.controller.spaces.ControllerSession;
+import be.theking90000.mumble.controller.spaces.ControllerSessionListener;
+import be.theking90000.mumble.controller.spaces.ParticipantHandle;
+import be.theking90000.mumble.controller.spaces.ParticipantListener;
+import be.theking90000.mumble.controller.spaces.ParticipantStatus;
+import be.theking90000.mumble.controller.spaces.SpaceIncarnation;
+import be.theking90000.mumble.controller.spaces.SpaceKey;
+import be.theking90000.mumble.controller.spaces.SpaceListener;
+import be.theking90000.mumble.controller.spaces.SpaceParticipant;
+import be.theking90000.mumble.controller.spaces.SpaceSnapshot;
 
 /**
  * Logs every notification the SDK delivers.

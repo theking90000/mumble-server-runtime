@@ -57,16 +57,16 @@ accepts a revision covering them.
 
 ## Joining Mumble
 
-The ownership grant also supplies a `MumbleJoinToken`. It is available through:
+The ownership grant also supplies a `ConnectionCredential`. It is available through:
 
 ```java
-participant.whenMumbleJoinTokenAvailable()
+participant.whenConnectionCredentialAvailable()
     .thenAccept(token -> givePasswordToPlayer(token.value()));
 ```
 
-`mumbleJoinToken()` returns the current value synchronously. A valid resume
+`connectionCredential()` returns the current value synchronously. A valid resume
 keeps it; a reacquisition may rotate it and invokes
-`ParticipantListener.onMumbleJoinTokenChanged`. Revocation and local
+`ParticipantListener.onConnectionCredentialChanged`. Revocation and local
 unregistration remove it. Its `toString()` representation is always redacted.
 
 The join token and the internal ownership token are deliberately different:

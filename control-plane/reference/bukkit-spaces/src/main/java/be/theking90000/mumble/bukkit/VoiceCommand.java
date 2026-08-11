@@ -1,12 +1,12 @@
 package be.theking90000.mumble.bukkit;
 
-import be.theking90000.mumble.controller.ControllerException;
-import be.theking90000.mumble.controller.ConnectionCredential;
-import be.theking90000.mumble.controller.ParticipantHandle;
-import be.theking90000.mumble.controller.ParticipantStatus;
-import be.theking90000.mumble.controller.SpaceKey;
-import be.theking90000.mumble.controller.SpaceParticipant;
-import be.theking90000.mumble.controller.SpaceSnapshot;
+import be.theking90000.mumble.controller.core.ControllerException;
+import be.theking90000.mumble.controller.core.ConnectionCredential;
+import be.theking90000.mumble.controller.spaces.ParticipantHandle;
+import be.theking90000.mumble.controller.spaces.ParticipantStatus;
+import be.theking90000.mumble.controller.spaces.SpaceKey;
+import be.theking90000.mumble.controller.spaces.SpaceParticipant;
+import be.theking90000.mumble.controller.spaces.SpaceSnapshot;
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
 import org.bukkit.command.Command;

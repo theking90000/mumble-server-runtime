@@ -52,7 +52,7 @@ port behind a firewall or a private network.
   identifies the participant.
 - *the Mumble join token is invalid or revoked*: the token is stale. It was
   rotated by a new acquisition, or the participant was unregistered or revoked.
-  Read `handle.mumbleJoinToken()` again and send the current value.
+  Read `handle.connectionCredential()` again and send the current value.
 
 **A certificate warning.** Expected with `--dev-self-signed`, which generates a
 new certificate on every start. Accept it in development, and use a real

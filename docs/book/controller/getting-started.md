@@ -39,7 +39,7 @@ Maven:
 ```xml
 <dependency>
   <groupId>be.theking90000.mumble</groupId>
-  <artifactId>controller</artifactId>
+  <artifactId>controller-spaces</artifactId>
   <version>0.1.0</version>
 </dependency>
 ```
@@ -80,7 +80,12 @@ is for local development only. Anywhere else, pass a real certificate with
 ## 3. Your first session
 
 ```java
-import be.theking90000.mumble.controller.*;
+import be.theking90000.mumble.controller.core.ControllerId;
+import be.theking90000.mumble.controller.core.ParticipantId;
+import be.theking90000.mumble.controller.spaces.ControllerSession;
+import be.theking90000.mumble.controller.spaces.ParticipantHandle;
+import be.theking90000.mumble.controller.spaces.ParticipantSpec;
+import be.theking90000.mumble.controller.spaces.SpaceKey;
 import java.net.URI;
 
 public class VoiceDemo {
@@ -96,7 +101,7 @@ public class VoiceDemo {
                 ParticipantId.of("steve"),
                 ParticipantSpec.builder(SpaceKey.of("lobby"), "Steve").build());
 
-        String token = steve.whenMumbleJoinTokenAvailable().get().value();
+        String token = steve.whenConnectionCredentialAvailable().get().value();
         System.out.println("mumble://steve:" + token + "@127.0.0.1");
 
         Thread.sleep(600_000L);
@@ -118,7 +123,7 @@ A few points about that code:
 - `registerParticipant` declares that Steve exists, belongs in the `lobby`
   Space and is displayed as `Steve`. It returns immediately, and ownership is
   granted asynchronously.
-- `whenMumbleJoinTokenAvailable()` yields the password Steve's Mumble client
+- `whenConnectionCredentialAvailable()` yields the password Steve's Mumble client
   needs. See [Connecting a player to Mumble](joining.md).
 
 ## 4. Connect
