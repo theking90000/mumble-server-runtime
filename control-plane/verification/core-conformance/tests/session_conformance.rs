@@ -8,15 +8,19 @@ use mumble_controller_core_conformance::protocol::controller_service_client::Con
 use mumble_controller_core_conformance::protocol::server_frame::Payload as ServerPayload;
 use mumble_controller_core_conformance::protocol::{
     ClientFrame, CommandErrorCode, DesiredStateSnapshot, OpenSession, ParticipantRegistration,
-    ParticipantSpec, RegisterParticipant, ReleaseParticipant, RenewLease, ServerFrame,
+    ProfilePayload, ProfileRef, RegisterParticipant, ReleaseParticipant, RenewLease, ServerFrame,
     SetParticipantSpec,
 };
+use mumble_controller_core_conformance::spaces_protocol::{DesiredState, ParticipantSpec};
 use mumble_controller_server::{ControllerConfig, RunningControllerServer};
 use mumble_server_runtime_gateway::tls::Identity;
+use prost::Message;
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 
 const RESPONSE_DEADLINE: Duration = Duration::from_secs(5);
+const SPACES_DESCRIPTOR_DIGEST: &str =
+    include_str!("../../../implementations/spaces/contract/controller-spaces-v1.pb.sha256");
 
 struct ControllerStream {
     requests: mpsc::Sender<ClientFrame>,
@@ -93,7 +97,9 @@ fn desired_state(revision: u64) -> DesiredStateSnapshot {
     DesiredStateSnapshot {
         desired_state_revision: revision,
         participants: Vec::new(),
-        observed_space_keys: Vec::new(),
+        profile_state: Some(ProfilePayload {
+            protobuf: DesiredState::default().encode_to_vec(),
+        }),
     }
 }
 
@@ -110,6 +116,11 @@ fn open_frame(
     open.controller_instance_id = instance.to_vec();
     open.resume_token = resume_token;
     open.desired_state = Some(desired_state(1));
+    open.profile = Some(ProfileRef {
+        profile_id: "mumble.controller.spaces".to_owned(),
+        schema_version: 1,
+        descriptor_digest: SPACES_DESCRIPTOR_DIGEST.trim().to_owned(),
+    });
     ClientFrame {
         request_id: request_id(request),
         payload: Some(ClientPayload::OpenSession(open)),
@@ -157,7 +168,9 @@ fn registration(registration_id: &[u8], spec: ParticipantSpec) -> ParticipantReg
         registration_id: registration_id.to_vec(),
         ownership_token: Vec::new(),
         client_spec_revision: 1,
-        spec: Some(spec),
+        profile_spec: Some(ProfilePayload {
+            protobuf: spec.encode_to_vec(),
+        }),
     }
 }
 
@@ -276,7 +289,9 @@ async fn takeover_fences_stale_commands_and_request_replays_are_idempotent() {
                 participant_id: "participant".to_owned(),
                 ownership_token: second_grant.ownership_token.clone(),
                 client_spec_revision: 2,
-                spec: Some(participant("arena", "Second")),
+                profile_spec: Some(ProfilePayload {
+                    protobuf: participant("arena", "Second").encode_to_vec(),
+                }),
             })),
         })
         .await;
@@ -292,7 +307,9 @@ async fn takeover_fences_stale_commands_and_request_replays_are_idempotent() {
                 participant_id: "participant".to_owned(),
                 ownership_token: second_grant.ownership_token.clone(),
                 client_spec_revision: 1,
-                spec: Some(participant("lobby", "Second")),
+                profile_spec: Some(ProfilePayload {
+                    protobuf: participant("lobby", "Second").encode_to_vec(),
+                }),
             })),
         })
         .await;

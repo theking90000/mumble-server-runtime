@@ -2,5 +2,9 @@
 #![forbid(unsafe_code)]
 
 pub mod protocol {
-    tonic::include_proto!("mumble.controller.v1");
+    tonic::include_proto!("mumble.controller.core.v1");
+}
+
+pub mod spaces_protocol {
+    tonic::include_proto!("mumble.controller.spaces.v1");
 }
