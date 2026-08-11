@@ -1,12 +1,14 @@
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let core_include = if std::path::Path::new("../../../control/coordination/protocol").is_dir() {
-        std::path::PathBuf::from("../../../control/coordination/protocol/src/main/proto")
-    } else {
-        std::path::PathBuf::from("../../core/contract/src/main/proto")
-    };
+    let core_include = std::path::PathBuf::from("../../protocol/src/main/proto");
     let core_protocol = core_include.join("mumble/controller/core/v1/controller.proto");
     let spaces_include =
-        std::path::PathBuf::from("../../implementations/spaces/contract/src/main/proto");
+        if std::path::Path::new("../../../../implementations/spaces/protocol").is_dir() {
+            std::path::PathBuf::from("../../../../implementations/spaces/protocol/src/main/proto")
+        } else {
+            std::path::PathBuf::from(
+                "../../../../control-plane/implementations/spaces/contract/src/main/proto",
+            )
+        };
     let spaces_protocol = spaces_include.join("mumble/controller/spaces/v1/spaces.proto");
     let protoc = protoc_bin_vendored::protoc_bin_path()?;
 

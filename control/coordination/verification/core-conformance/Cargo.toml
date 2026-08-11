@@ -20,8 +20,8 @@ tonic = { version = "=0.14.6", features = ["transport"] }
 tonic-prost = "=0.14.6"
 
 [dev-dependencies]
-mumble-controller-server = { path = "../../server-rust" }
-mumble-server-runtime-gateway = { path = "../../../runtime/crates/gateway" }
+mumble-controller-server = { path = "../../../../control-plane/server-rust" }
+mumble-server-runtime-gateway = { path = "../../../../runtime/crates/gateway" }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time"] }
 tokio-stream = "0.1"
 

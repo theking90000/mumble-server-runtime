@@ -19,7 +19,7 @@ members = [
     # Verificateur indépendant : client Mumble simule et modele strict.
     "runtime/verification/testkit",
     # Verificateur du contrat de synchronisation Controller.
-    "control-plane/verification/core-conformance",
+    "control/coordination/verification/core-conformance",
     # Socle de synchronisation Controller, pur et indépendant du runtime.
     "control/coordination/rust",
     # Adaptation Mumble : authentification, connexions et opérations runtime.
