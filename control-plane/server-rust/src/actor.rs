@@ -1,6 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use base64::Engine;
@@ -10,7 +9,7 @@ use mumble_controller_core::{
     OwnershipRegistry, ReliableCommands, RenewOutcome, RevisionOutcome, SessionCredentials,
     SessionError, SessionId, SessionRegistry,
 };
-use mumble_controller_host::{HostError, MumbleHost};
+use mumble_controller_host::{HostError, MumbleHost, SnapshotPublisher, snapshot_channel};
 use mumble_server_runtime_gateway::RuntimeHandle;
 use mumble_server_runtime_shard::{ConnectionId, ReconcileReport, ShardHandle, ShardId};
 use tokio::sync::{mpsc, oneshot, watch};
@@ -137,7 +136,7 @@ struct Space {
     incarnation_id: Vec<u8>,
     space_revision: u64,
     published_generation: u64,
-    desired: watch::Sender<Arc<RenderState>>,
+    desired: SnapshotPublisher<RenderState>,
     render_history: BTreeMap<u64, BTreeMap<String, u64>>,
     close_deadline: Option<Instant>,
 }
@@ -1361,32 +1360,23 @@ impl ControllerActor {
             return Err("the materialized Space limit is reached".to_owned());
         }
         let incarnation_id = random_bytes(16).map_err(|error| error.to_string())?;
-        let rendered_application_revision = Arc::new(AtomicU64::new(0));
         let initial = Arc::new(RenderState {
             application_revision: 0,
             space_key: space_key.to_owned(),
             participants: Vec::new(),
         });
-        let (desired, receiver) = watch::channel(initial);
+        let (desired, receiver) = snapshot_channel(initial);
+        let publication_marker = desired.publication_marker();
         let actor_for_logic = self.sender.clone();
         let actor_for_report = self.sender.clone();
         let key_for_logic = space_key.to_owned();
         let key_for_report = space_key.to_owned();
-        let revision_for_logic = Arc::clone(&rendered_application_revision);
-        let revision_for_report = Arc::clone(&rendered_application_revision);
         let (report_sender, mut report_receiver) = watch::channel(None::<(u64, ReconcileReport)>);
         let handle = self.host.create_shard_with_reports(
-            move |_handle| {
-                ControllerSpaceLogic::new(
-                    key_for_logic,
-                    receiver,
-                    revision_for_logic,
-                    actor_for_logic,
-                )
-            },
+            move |_handle| ControllerSpaceLogic::new(key_for_logic, receiver, actor_for_logic),
             move |report| {
                 report_sender.send_replace(Some((
-                    revision_for_report.load(Ordering::SeqCst),
+                    publication_marker.rendered_revision(),
                     report.clone(),
                 )));
             },
@@ -1471,7 +1461,7 @@ impl ControllerActor {
             None
         };
         space.render_history.insert(application_revision, revisions);
-        space.desired.send_replace(Arc::new(RenderState {
+        space.desired.publish(Arc::new(RenderState {
             application_revision,
             space_key: space_key.to_owned(),
             participants,

@@ -1,12 +1,11 @@
 use std::collections::BTreeMap;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
 
+use mumble_controller_host::{SnapshotReader, VersionedSnapshot};
 use mumble_server_runtime_shard::{
     Audience, ConnectionId, DomainId, Narrow, Occupant, Reply, Scope, ScopeSet, ShardBuilder,
     ShardLogic, UserFlags, VoiceEvent,
 };
-use tokio::sync::{mpsc, watch};
+use tokio::sync::mpsc;
 
 use crate::actor::{ActorCommand, SpaceEvent};
 
@@ -29,10 +28,15 @@ pub(crate) struct RenderState {
     pub participants: Vec<RenderParticipant>,
 }
 
+impl VersionedSnapshot for RenderState {
+    fn revision(&self) -> u64 {
+        self.application_revision
+    }
+}
+
 pub(crate) struct ControllerSpaceLogic {
     space_key: String,
-    desired: watch::Receiver<Arc<RenderState>>,
-    rendered_application_revision: Arc<AtomicU64>,
+    desired: SnapshotReader<RenderState>,
     actor: mpsc::Sender<ActorCommand>,
     self_state: BTreeMap<ConnectionId, (bool, bool)>,
     undelivered_departures: Vec<ConnectionId>,
@@ -41,14 +45,12 @@ pub(crate) struct ControllerSpaceLogic {
 impl ControllerSpaceLogic {
     pub(crate) fn new(
         space_key: String,
-        desired: watch::Receiver<Arc<RenderState>>,
-        rendered_application_revision: Arc<AtomicU64>,
+        desired: SnapshotReader<RenderState>,
         actor: mpsc::Sender<ActorCommand>,
     ) -> Self {
         Self {
             space_key,
             desired,
-            rendered_application_revision,
             actor,
             self_state: BTreeMap::new(),
             undelivered_departures: Vec::new(),
@@ -64,7 +66,7 @@ impl ControllerSpaceLogic {
     fn entry(&mut self, connection: ConnectionId) -> &mut (bool, bool) {
         let published = self
             .desired
-            .borrow()
+            .current()
             .participants
             .iter()
             .find(|participant| participant.connection == Some(connection))
@@ -105,9 +107,7 @@ impl ControllerSpaceLogic {
 impl ShardLogic for ControllerSpaceLogic {
     fn render(&mut self, out: &mut ShardBuilder<'_>) {
         self.flush_departures();
-        let desired = Arc::clone(&self.desired.borrow_and_update());
-        self.rendered_application_revision
-            .store(desired.application_revision, Ordering::SeqCst);
+        let desired = self.desired.latest();
 
         let root = out.root(&desired.space_key);
         let mut audible = Vec::new();
@@ -198,6 +198,8 @@ impl ShardLogic for ControllerSpaceLogic {
 mod tests {
     #![allow(clippy::expect_used)]
 
+    use std::sync::Arc;
+
     use mumble_server_runtime_shard::{ChannelKey, Spoken};
 
     use super::*;
@@ -224,21 +226,16 @@ mod tests {
         actor_capacity: usize,
     ) -> (
         ControllerSpaceLogic,
-        watch::Sender<Arc<RenderState>>,
+        mumble_controller_host::SnapshotPublisher<RenderState>,
         mpsc::Receiver<ActorCommand>,
     ) {
-        let (desired, receiver) = watch::channel(Arc::new(RenderState {
+        let (desired, receiver) = mumble_controller_host::snapshot_channel(Arc::new(RenderState {
             application_revision: 1,
             space_key: "lobby".to_owned(),
             participants,
         }));
         let (actor, events) = mpsc::channel(actor_capacity);
-        let logic = ControllerSpaceLogic::new(
-            "lobby".to_owned(),
-            receiver,
-            Arc::new(AtomicU64::new(0)),
-            actor,
-        );
+        let logic = ControllerSpaceLogic::new("lobby".to_owned(), receiver, actor);
         (logic, desired, events)
     }
 
@@ -329,14 +326,9 @@ mod tests {
             space_key: "lobby".to_owned(),
             participants: Vec::new(),
         });
-        let (_desired, receiver) = watch::channel(initial);
+        let (_desired, receiver) = mumble_controller_host::snapshot_channel(initial);
         let (actor, _events) = mpsc::channel(1);
-        let mut logic = ControllerSpaceLogic::new(
-            "lobby".to_owned(),
-            receiver,
-            Arc::new(AtomicU64::new(0)),
-            actor,
-        );
+        let mut logic = ControllerSpaceLogic::new("lobby".to_owned(), receiver, actor);
         let mut reply = Reply::default();
         logic.observe(
             &VoiceEvent::Said {

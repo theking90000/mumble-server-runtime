@@ -4,6 +4,12 @@
 //! Mumble-specific binding between a logical participant, its authentication
 //! credential, and at most one live runtime connection.
 
+mod snapshot;
+
+pub use snapshot::{
+    PublicationMarker, SnapshotPublisher, SnapshotReader, VersionedSnapshot, snapshot_channel,
+};
+
 use std::collections::{BTreeMap, HashMap};
 
 use mumble_server_runtime_gateway::RuntimeHandle;
