@@ -9,13 +9,14 @@ use mumble_controller_core::{
     OwnershipRegistry, ReliableCommands, RenewOutcome, RevisionOutcome, SessionCredentials,
     SessionError, SessionId, SessionRegistry,
 };
-use mumble_controller_host::{HostError, MumbleHost, SnapshotPublisher, snapshot_channel};
+use mumble_controller_host::{HostError, MumbleHost, snapshot_channel};
 use mumble_controller_spaces::{
-    ControllerSpaceLogic, ParticipantSpec as SpaceParticipantSpec, RenderParticipant, RenderState,
-    SpaceEvent, SpaceEventKind, SpaceKey, SpaceReport, SpaceReporter, SpacesValidationError,
+    ControllerSpaceLogic, MaterializedSpace, ParticipantSpec as SpaceParticipantSpec,
+    RenderParticipant, RenderState, SpaceEvent, SpaceEventKind, SpaceKey, SpaceReport,
+    SpaceReporter, SpacesValidationError,
 };
 use mumble_server_runtime_gateway::RuntimeHandle;
-use mumble_server_runtime_shard::{ConnectionId, ReconcileReport, ShardHandle, ShardId};
+use mumble_server_runtime_shard::{ConnectionId, ReconcileReport, ShardId};
 use tokio::sync::{mpsc, oneshot, watch};
 use tokio::task::JoinHandle;
 use tokio::time::Instant;
@@ -134,16 +135,6 @@ struct Participant {
     application_error: String,
 }
 
-struct Space {
-    handle: ShardHandle,
-    incarnation_id: Vec<u8>,
-    space_revision: u64,
-    published_generation: u64,
-    desired: SnapshotPublisher<RenderState>,
-    render_history: BTreeMap<u64, BTreeMap<String, u64>>,
-    close_deadline: Option<Instant>,
-}
-
 struct ControllerActor {
     config: ControllerConfig,
     host: MumbleHost,
@@ -155,7 +146,7 @@ struct ControllerActor {
     sessions: HashMap<SessionId, ControllerSession>,
     streams: HashMap<u64, SessionId>,
     participants: BTreeMap<String, Participant>,
-    spaces: BTreeMap<String, Space>,
+    spaces: BTreeMap<String, MaterializedSpace>,
     next_application_revision: u64,
 }
 
@@ -1098,7 +1089,8 @@ impl ControllerActor {
             if let Some(connection) = self.host.connection(&participant.participant_id)
                 && let Some(space) = self.spaces.get(participant.spec.space_key().as_str())
             {
-                self.host.move_connection(connection, space.handle.shard());
+                self.host
+                    .move_connection(connection, space.shard_handle().shard());
             }
         } else {
             self.refresh_space(participant.spec.space_key().as_str());
@@ -1262,7 +1254,8 @@ impl ControllerActor {
             if let Some(connection) = connection
                 && let Some(space) = self.spaces.get(&new_space)
             {
-                self.host.move_connection(connection, space.handle.shard());
+                self.host
+                    .move_connection(connection, space.shard_handle().shard());
             }
         }
     }
@@ -1454,15 +1447,7 @@ impl ControllerActor {
         });
         self.spaces.insert(
             space_key.to_owned(),
-            Space {
-                handle,
-                incarnation_id,
-                space_revision: 0,
-                published_generation: 0,
-                desired,
-                render_history: BTreeMap::new(),
-                close_deadline: None,
-            },
+            MaterializedSpace::new(handle, incarnation_id, desired),
         );
         Ok(())
     }
@@ -1486,36 +1471,19 @@ impl ControllerActor {
                 })
             })
             .collect();
-        let revisions: BTreeMap<String, u64> = participants
-            .iter()
-            .map(|participant| {
-                (
-                    participant.participant_id.clone(),
-                    participant.accepted_revision,
-                )
-            })
-            .collect();
         let application_revision = self.next_application_revision;
         // Saturation is an explicit terminal watermark: it preserves ordering instead of wrapping.
         self.next_application_revision = self.next_application_revision.saturating_add(1);
         let Some(space) = self.spaces.get_mut(space_key) else {
             return;
         };
-        space.space_revision = space.space_revision.saturating_add(1);
-        space.close_deadline = if participants.is_empty() {
-            space
-                .close_deadline
-                .or(Some(Instant::now() + self.config.empty_space_grace))
-        } else {
-            None
-        };
-        space.render_history.insert(application_revision, revisions);
-        space.desired.publish(Arc::new(RenderState {
+        space.refresh(
             application_revision,
-            space_key: space_key.to_owned(),
+            space_key,
             participants,
-        }));
-        space.handle.wake();
+            Instant::now().into_std(),
+            self.config.empty_space_grace,
+        );
         self.broadcast_space_snapshot(space_key);
     }
 
@@ -1523,18 +1491,11 @@ impl ControllerActor {
         let Some(space) = self.spaces.get_mut(space_key) else {
             return;
         };
-        let Some(revisions) = space.render_history.get(&application_revision).cloned() else {
+        let Some(reconciliation) = space.reconcile(application_revision, &report) else {
             return;
         };
-        let refused = report.refused.as_ref().map(ToString::to_string);
-        if refused.is_none() {
-            space.published_generation = report.version;
-        }
-        space
-            .render_history
-            .retain(|revision, _| *revision > application_revision);
-        let participant_ids: Vec<String> = revisions.keys().cloned().collect();
-        for (participant_id, applied_revision) in revisions {
+        let participant_ids: Vec<String> = reconciliation.revisions.keys().cloned().collect();
+        for (participant_id, applied_revision) in reconciliation.revisions {
             if let Some(participant) = self.participants.get_mut(&participant_id) {
                 // Each Space reports through its own bridge task, so a report rendered
                 // before a move can reach the actor after the destination Space has
@@ -1543,13 +1504,13 @@ impl ControllerActor {
                 if participant.spec.space_key().as_str() != space_key {
                     continue;
                 }
-                match &refused {
+                match &reconciliation.refusal {
                     Some(error) => participant.application_error = error.clone(),
                     None => {
                         participant.applied_spec_revision =
                             participant.applied_spec_revision.max(applied_revision);
                         participant.applied_space_key = Some(space_key.to_owned());
-                        participant.published_generation = report.version;
+                        participant.published_generation = reconciliation.published_generation;
                         participant.application_error.clear();
                     }
                 }
@@ -1594,7 +1555,7 @@ impl ControllerActor {
         let result = self
             .spaces
             .get(current.spec.space_key().as_str())
-            .map(|space| space.handle.shard())
+            .map(|space| space.shard_handle().shard())
             .ok_or_else(|| "the participant Space is not materialized".to_owned());
         let _ignored = response.send(result);
     }
@@ -1652,7 +1613,8 @@ impl ControllerActor {
             .chain(
                 self.spaces
                     .values()
-                    .filter_map(|space| space.close_deadline),
+                    .filter_map(MaterializedSpace::close_deadline)
+                    .map(Instant::from_std),
             )
             .min()
     }
@@ -1666,7 +1628,11 @@ impl ControllerActor {
         let closed_spaces: Vec<String> = self
             .spaces
             .iter()
-            .filter(|(_, space)| space.close_deadline.is_some_and(|deadline| deadline <= now))
+            .filter(|(_, space)| {
+                space
+                    .close_deadline()
+                    .is_some_and(|deadline| deadline <= now.into_std())
+            })
             .map(|(space_key, _)| space_key.clone())
             .collect();
         for space_key in closed_spaces {
@@ -1681,7 +1647,7 @@ impl ControllerActor {
                 continue;
             };
             self.host
-                .destroy_shard(space.handle.shard(), "empty Space grace elapsed");
+                .destroy_shard(space.shard_handle().shard(), "empty Space grace elapsed");
             self.broadcast_space_closed(&space_key, &space);
         }
     }
@@ -1836,10 +1802,10 @@ impl ControllerActor {
             .collect();
         Some(SpaceSnapshot {
             space_key: space_key.to_owned(),
-            incarnation_id: space.incarnation_id.clone(),
-            space_revision: space.space_revision,
+            incarnation_id: space.incarnation_id().to_vec(),
+            space_revision: space.revision(),
             participants,
-            published_generation: space.published_generation,
+            published_generation: space.published_generation(),
         })
     }
 
@@ -1888,7 +1854,7 @@ impl ControllerActor {
         }
     }
 
-    fn broadcast_space_closed(&mut self, space_key: &str, space: &Space) {
+    fn broadcast_space_closed(&mut self, space_key: &str, space: &MaterializedSpace) {
         let sessions: Vec<SessionId> = self
             .sessions
             .iter()
@@ -1903,8 +1869,8 @@ impl ControllerActor {
                     payload: Some(crate::protocol::server_frame::Payload::SpaceClosed(
                         SpaceClosed {
                             space_key: space_key.to_owned(),
-                            incarnation_id: space.incarnation_id.clone(),
-                            final_space_revision: space.space_revision,
+                            incarnation_id: space.incarnation_id().to_vec(),
+                            final_space_revision: space.revision(),
                         },
                     )),
                 },
