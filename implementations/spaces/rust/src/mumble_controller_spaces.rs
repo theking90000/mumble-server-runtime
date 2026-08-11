@@ -65,6 +65,31 @@ pub struct ParticipantSpec {
     server_deaf: bool,
 }
 
+/// Spaces-owned mutable state for one logical participant.
+///
+/// Coordination owns the registration capability and accepted client revision;
+/// this record starts only after ownership has been accepted and tracks how the
+/// concrete Spaces model has applied and published that participant.
+#[derive(Clone)]
+pub struct ParticipantState {
+    /// Stable logical identity also used by Coordination ownership.
+    pub participant_id: String,
+    /// Latest accepted spec revision applied by a successful render.
+    pub applied_spec_revision: u64,
+    /// Space whose render most recently applied this participant.
+    pub applied_space_key: Option<String>,
+    /// Mumble publication generation that exposed the applied render.
+    pub published_generation: u64,
+    /// Latest validated Spaces specification.
+    pub spec: ParticipantSpec,
+    /// Self-mute observed from the participant's current Mumble connection.
+    pub self_mute: bool,
+    /// Self-deaf observed from the participant's current Mumble connection.
+    pub self_deaf: bool,
+    /// Last rendering/application failure, empty after a successful application.
+    pub application_error: String,
+}
+
 impl ParticipantSpec {
     /// Validate a complete participant payload before profile state changes.
     pub fn new(

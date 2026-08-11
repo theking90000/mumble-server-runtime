@@ -12,8 +12,8 @@ use mumble_controller_core::{
 use mumble_controller_host::{HostError, MumbleHost, snapshot_channel};
 use mumble_controller_spaces::{
     ControllerSpaceLogic, MaterializedSpace, ParticipantSpec as SpaceParticipantSpec,
-    RenderParticipant, RenderState, SpaceEvent, SpaceEventKind, SpaceKey, SpaceReport,
-    SpaceReporter, SpacesValidationError,
+    ParticipantState as Participant, RenderParticipant, RenderState, SpaceEvent, SpaceEventKind,
+    SpaceKey, SpaceReport, SpaceReporter, SpacesValidationError,
 };
 use mumble_server_runtime_gateway::RuntimeHandle;
 use mumble_server_runtime_shard::{ConnectionId, ReconcileReport, ShardId};
@@ -121,18 +121,6 @@ struct ControllerSession {
     responses: Option<ResponseSender>,
     observed_revision: u64,
     explicit_observations: BTreeSet<String>,
-}
-
-#[derive(Clone)]
-struct Participant {
-    participant_id: String,
-    applied_spec_revision: u64,
-    applied_space_key: Option<String>,
-    published_generation: u64,
-    spec: SpaceParticipantSpec,
-    self_mute: bool,
-    self_deaf: bool,
-    application_error: String,
 }
 
 struct ControllerActor {
