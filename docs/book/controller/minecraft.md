@@ -178,7 +178,7 @@ plugins {
 }
 
 dependencies {
-    implementation("be.theking90000.mumble:controller:0.1.0")
+    implementation("be.theking90000.mumble:controller-spaces:0.1.0")
 }
 
 tasks.shadowJar {

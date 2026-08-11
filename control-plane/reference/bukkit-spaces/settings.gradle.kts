@@ -31,7 +31,7 @@ rootProject.name = "voice-example-plugin"
 // the sources next door instead of a published artifact.
 includeBuild("../..") {
     dependencySubstitution {
-        substitute(module("be.theking90000.mumble:controller"))
-            .using(project(":sdk-java"))
+        substitute(module("be.theking90000.mumble:controller-spaces"))
+            .using(project(":implementations:spaces:clients:controller-spaces"))
     }
 }

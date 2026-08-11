@@ -21,7 +21,7 @@ The relocated, self-contained jar lands in
 `build/libs/voice-example-plugin-0.1.0-SNAPSHOT.jar`.
 
 This is a separate Gradle build, not a module of `mumble-controller`. The SDK
-dependency is substituted onto `:sdk-java` of the neighbouring build, so the
+dependency is substituted onto `:implementations:spaces:clients:controller-spaces` of the neighbouring build, so the
 example always compiles against the sources in this repository. Keeping it out
 of the SDK build also keeps `./gradlew check` there free of the Spigot
 repository, which is why CI does not build the example.

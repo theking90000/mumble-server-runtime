@@ -40,7 +40,7 @@ impl JavaController {
             ));
         }
         let mut child = command
-            .arg(":sdk-java:controllerInterop")
+            .arg(":implementations:spaces:clients:controller-spaces:controllerInterop")
             .arg(format!("-PinteropEndpoint={endpoint}"))
             .arg(format!("-PinteropTokenFile={}", token_file.display()))
             .stdin(Stdio::piped())

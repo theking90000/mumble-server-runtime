@@ -8,7 +8,8 @@ or business state to the runtime's core crates.
 Current modules:
 
 - `contract`: the canonical versioned Protobuf/gRPC contract;
-- `sdk-java`: the Java 8 compatible `ControllerSession` SDK;
+- `core/clients/java`: the Java 8 compatible Controller primitives;
+- `implementations/spaces/clients/java`: the Java 8 compatible Spaces client;
 - `server-rust`: the composed gRPC, gateway and dynamic-Space server;
 - `reference/bukkit-spaces`: a buildable Spigot 1.8 plugin using the SDK, kept as
   a separate Gradle build.
@@ -16,7 +17,8 @@ Current modules:
 The Java API uses the package `be.theking90000.mumble.controller` and is published as:
 
 ```text
-be.theking90000.mumble:controller
+be.theking90000.mumble:controller-core
+be.theking90000.mumble:controller-spaces
 ```
 
 The generated public API reference is published as
