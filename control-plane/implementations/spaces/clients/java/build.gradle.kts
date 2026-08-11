@@ -40,7 +40,7 @@ val generateControllerProfileMetadata = tasks.register("generateControllerProfil
             """
             package be.theking90000.mumble.controller.internal;
 
-            import be.theking90000.mumble.controller.internal.protocol.v1.ProfileRef;
+            import be.theking90000.mumble.controller.internal.core.v1.ProfileRef;
 
             public final class ProfileMetadata {
                 public static final String SPACES_PROFILE_ID = "mumble.controller.spaces";
@@ -73,7 +73,6 @@ sourceSets {
     main {
         java.srcDir(profileMetadataDirectory)
         proto {
-            srcDir("../../../../contract/src/main/proto")
             srcDir("../../contract/src/main/proto")
         }
     }

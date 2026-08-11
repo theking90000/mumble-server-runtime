@@ -1,31 +1,33 @@
 package be.theking90000.mumble.controller;
 
+import be.theking90000.mumble.controller.internal.ProfileMetadata;
+import be.theking90000.mumble.controller.internal.core.v1.ClientFrame;
+import be.theking90000.mumble.controller.internal.core.v1.CloseSession;
+import be.theking90000.mumble.controller.internal.core.v1.CommandErrorCode;
+import be.theking90000.mumble.controller.internal.core.v1.CommandRejected;
+import be.theking90000.mumble.controller.internal.core.v1.DesiredStateReconciled;
+import be.theking90000.mumble.controller.internal.core.v1.DesiredStateSnapshot;
+import be.theking90000.mumble.controller.internal.core.v1.OpenSession;
+import be.theking90000.mumble.controller.internal.core.v1.ParticipantOwnershipGranted;
+import be.theking90000.mumble.controller.internal.core.v1.ParticipantOwnershipRevoked;
+import be.theking90000.mumble.controller.internal.core.v1.ParticipantRegistration;
+import be.theking90000.mumble.controller.internal.core.v1.ParticipantSpecAccepted;
+import be.theking90000.mumble.controller.internal.core.v1.ParticipantStatusChanged;
+import be.theking90000.mumble.controller.internal.core.v1.RegisterParticipant;
+import be.theking90000.mumble.controller.internal.core.v1.ReleaseParticipant;
+import be.theking90000.mumble.controller.internal.core.v1.RenewLease;
+import be.theking90000.mumble.controller.internal.core.v1.ServerFrame;
+import be.theking90000.mumble.controller.internal.core.v1.SessionReady;
+import be.theking90000.mumble.controller.internal.core.v1.SetParticipantSpec;
+import be.theking90000.mumble.controller.internal.core.v1.SyncDesiredState;
+import be.theking90000.mumble.controller.internal.spaces.v1.Command;
+import be.theking90000.mumble.controller.internal.spaces.v1.Event;
+import be.theking90000.mumble.controller.internal.spaces.v1.FetchSpace;
+import be.theking90000.mumble.controller.internal.spaces.v1.FetchSpaceResult;
+import be.theking90000.mumble.controller.internal.spaces.v1.ObservedSpacesAccepted;
+import be.theking90000.mumble.controller.internal.spaces.v1.ReplaceObservedSpaces;
 import com.google.protobuf.ByteString;
 import com.google.protobuf.Duration;
-import be.theking90000.mumble.controller.internal.ProfileMetadata;
-import be.theking90000.mumble.controller.internal.protocol.v1.ClientFrame;
-import be.theking90000.mumble.controller.internal.protocol.v1.CloseSession;
-import be.theking90000.mumble.controller.internal.protocol.v1.CommandErrorCode;
-import be.theking90000.mumble.controller.internal.protocol.v1.CommandRejected;
-import be.theking90000.mumble.controller.internal.protocol.v1.DesiredStateReconciled;
-import be.theking90000.mumble.controller.internal.protocol.v1.DesiredStateSnapshot;
-import be.theking90000.mumble.controller.internal.protocol.v1.FetchSpace;
-import be.theking90000.mumble.controller.internal.protocol.v1.FetchSpaceResult;
-import be.theking90000.mumble.controller.internal.protocol.v1.OpenSession;
-import be.theking90000.mumble.controller.internal.protocol.v1.ObservedSpacesAccepted;
-import be.theking90000.mumble.controller.internal.protocol.v1.ParticipantOwnershipGranted;
-import be.theking90000.mumble.controller.internal.protocol.v1.ParticipantOwnershipRevoked;
-import be.theking90000.mumble.controller.internal.protocol.v1.ParticipantRegistration;
-import be.theking90000.mumble.controller.internal.protocol.v1.ParticipantSpecAccepted;
-import be.theking90000.mumble.controller.internal.protocol.v1.ParticipantStatusChanged;
-import be.theking90000.mumble.controller.internal.protocol.v1.RegisterParticipant;
-import be.theking90000.mumble.controller.internal.protocol.v1.ReleaseParticipant;
-import be.theking90000.mumble.controller.internal.protocol.v1.RenewLease;
-import be.theking90000.mumble.controller.internal.protocol.v1.ReplaceObservedSpaces;
-import be.theking90000.mumble.controller.internal.protocol.v1.ServerFrame;
-import be.theking90000.mumble.controller.internal.protocol.v1.SessionReady;
-import be.theking90000.mumble.controller.internal.protocol.v1.SetParticipantSpec;
-import be.theking90000.mumble.controller.internal.protocol.v1.SyncDesiredState;
 import java.net.URI;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
@@ -355,12 +357,13 @@ public final class ControllerSession {
             });
             pendingFetches.put(requestId, future);
             FetchSpace command = FetchSpace.newBuilder()
-                    .setSessionToken(sessionToken)
                     .setSpaceKey(spaceKey.value())
                     .build();
             sendFrame(ClientFrame.newBuilder()
                     .setRequestId(requestId)
-                    .setFetchSpace(command)
+                    .setProfileCommand(SpacesWire.command(
+                            sessionToken,
+                            Command.newBuilder().setFetchSpace(command).build()))
                     .build());
             return future;
         }
@@ -616,19 +619,13 @@ public final class ControllerSession {
                 case PARTICIPANT_STATUS_CHANGED:
                     acceptStatus(frame.getParticipantStatusChanged());
                     break;
-                case OBSERVED_SPACES_ACCEPTED:
-                    reliableRequests.complete(frame.getRequestId());
-                    acceptObservedSpaces(frame.getObservedSpacesAccepted());
-                    break;
-                case SPACE_SNAPSHOT:
-                    acceptSpaceSnapshot(frame.getSpaceSnapshot());
-                    break;
-                case SPACE_CLOSED:
-                    acceptSpaceClosed(frame.getSpaceClosed());
-                    break;
-                case FETCH_SPACE_RESULT:
-                    reliableRequests.complete(frame.getRequestId());
-                    acceptFetch(frame.getRequestId(), frame.getFetchSpaceResult());
+                case PROFILE_EVENT:
+                    try {
+                        acceptProfileEvent(
+                                frame.getRequestId(), SpacesWire.event(frame.getProfileEvent()));
+                    } catch (ControllerException failure) {
+                        failPermanently(failure);
+                    }
                     break;
                 case RESYNC_REQUIRED:
                     beginResynchronization();
@@ -824,20 +821,50 @@ public final class ControllerSession {
         if (handle == null || !handle.isDesired()) {
             return;
         }
-        be.theking90000.mumble.controller.internal.protocol.v1.ParticipantStatus wire =
+        be.theking90000.mumble.controller.internal.core.v1.ParticipantStatus coreStatus =
                 changed.getStatus();
-        SpaceKey appliedSpace = wire.getAppliedSpaceKey().isEmpty()
+        be.theking90000.mumble.controller.internal.spaces.v1.ParticipantStatus spacesStatus;
+        try {
+            spacesStatus = SpacesWire.status(coreStatus);
+        } catch (ControllerException failure) {
+            failPermanently(failure);
+            return;
+        }
+        SpaceKey appliedSpace = spacesStatus.getAppliedSpaceKey().isEmpty()
                 ? null
-                : SpaceKey.of(wire.getAppliedSpaceKey());
+                : SpaceKey.of(spacesStatus.getAppliedSpaceKey());
         handle.updateStatus(new ParticipantStatus(
-                wire.getMumbleConnected(),
+                coreStatus.getMumbleConnected(),
                 appliedSpace,
-                wire.getSelfMute(),
-                wire.getSelfDeaf(),
-                wire.getAcceptedSpecRevision(),
-                wire.getAppliedSpecRevision(),
-                wire.getPublishedGeneration(),
-                wire.getApplicationError()));
+                spacesStatus.getSelfMute(),
+                spacesStatus.getSelfDeaf(),
+                coreStatus.getAcceptedSpecRevision(),
+                coreStatus.getAppliedSpecRevision(),
+                coreStatus.getPublishedGeneration(),
+                coreStatus.getApplicationError()));
+    }
+
+    private void acceptProfileEvent(ByteString requestId, Event event) {
+        switch (event.getEventCase()) {
+            case OBSERVED_SPACES_ACCEPTED:
+                reliableRequests.complete(requestId);
+                acceptObservedSpaces(event.getObservedSpacesAccepted());
+                break;
+            case SPACE_SNAPSHOT:
+                acceptSpaceSnapshot(event.getSpaceSnapshot());
+                break;
+            case SPACE_CLOSED:
+                acceptSpaceClosed(event.getSpaceClosed());
+                break;
+            case FETCH_SPACE_RESULT:
+                reliableRequests.complete(requestId);
+                acceptFetch(requestId, event.getFetchSpaceResult());
+                break;
+            case EVENT_NOT_SET:
+            default:
+                failPermanently(new ControllerException("Spaces Event has no supported event"));
+                break;
+        }
     }
 
     private void acceptObservedSpaces(ObservedSpacesAccepted accepted) {
@@ -849,7 +876,7 @@ public final class ControllerSession {
     }
 
     private void acceptSpaceSnapshot(
-            be.theking90000.mumble.controller.internal.protocol.v1.SpaceSnapshot wire) {
+            be.theking90000.mumble.controller.internal.spaces.v1.SpaceSnapshot wire) {
         SpaceSnapshot snapshot = fromProtocolSpace(wire);
         SpaceSnapshot current = spaces.get(snapshot.spaceKey());
         if (current != null
@@ -869,7 +896,7 @@ public final class ControllerSession {
     }
 
     private void acceptSpaceClosed(
-            be.theking90000.mumble.controller.internal.protocol.v1.SpaceClosed wire) {
+            be.theking90000.mumble.controller.internal.spaces.v1.SpaceClosed wire) {
         final SpaceKey spaceKey = SpaceKey.of(wire.getSpaceKey());
         final SpaceIncarnation incarnation = new SpaceIncarnation(wire.getIncarnationId().toByteArray());
         SpaceSnapshot current = spaces.get(spaceKey);
@@ -1012,7 +1039,7 @@ public final class ControllerSession {
                 .setParticipantId(handle.participantId().value())
                 .setOwnershipToken(handle.ownershipToken())
                 .setClientSpecRevision(clientRevision)
-                .setSpec(toProtocolSpec(handle.desiredSpec()))
+                .setProfileSpec(SpacesWire.participantSpec(handle.desiredSpec()))
                 .build();
         sendFrame(ClientFrame.newBuilder()
                 .setRequestId(requestId)
@@ -1052,14 +1079,15 @@ public final class ControllerSession {
             }
         });
         ReplaceObservedSpaces.Builder replace = ReplaceObservedSpaces.newBuilder()
-                .setSessionToken(sessionToken)
                 .setObservedSpacesRevision(observedSpacesRevision);
         for (SpaceKey spaceKey : explicitlyObservedSpaces) {
             replace.addSpaceKeys(spaceKey.value());
         }
         sendFrame(ClientFrame.newBuilder()
                 .setRequestId(requestId)
-                .setReplaceObservedSpaces(replace.build())
+                .setProfileCommand(SpacesWire.command(
+                        sessionToken,
+                        Command.newBuilder().setReplaceObservedSpaces(replace.build()).build()))
                 .build());
     }
 
@@ -1077,7 +1105,8 @@ public final class ControllerSession {
 
     private DesiredStateSnapshot buildDesiredStateSnapshot() {
         DesiredStateSnapshot.Builder snapshot = DesiredStateSnapshot.newBuilder()
-                .setDesiredStateRevision(desiredStateRevision);
+                .setDesiredStateRevision(desiredStateRevision)
+                .setProfileState(SpacesWire.desiredState(explicitlyObservedSpaces));
         List<ParticipantHandle> ordered = new ArrayList<ParticipantHandle>(participants.values());
         Collections.sort(ordered, new Comparator<ParticipantHandle>() {
             @Override
@@ -1090,9 +1119,6 @@ public final class ControllerSession {
                 snapshot.addParticipants(toProtocolRegistration(handle));
             }
         }
-        for (SpaceKey spaceKey : explicitlyObservedSpaces) {
-            snapshot.addObservedSpaceKeys(spaceKey.value());
-        }
         return snapshot.build();
     }
 
@@ -1102,25 +1128,14 @@ public final class ControllerSession {
                 .setRegistrationId(handle.registrationId())
                 .setOwnershipToken(handle.ownershipToken())
                 .setClientSpecRevision(handle.clientSpecRevision())
-                .setSpec(toProtocolSpec(handle.desiredSpec()))
-                .build();
-    }
-
-    private static be.theking90000.mumble.controller.internal.protocol.v1.ParticipantSpec
-            toProtocolSpec(ParticipantSpec spec) {
-        return be.theking90000.mumble.controller.internal.protocol.v1.ParticipantSpec
-                .newBuilder()
-                .setSpaceKey(spec.spaceKey().value())
-                .setDisplayName(spec.displayName())
-                .setServerMute(spec.serverMute())
-                .setServerDeaf(spec.serverDeaf())
+                .setProfileSpec(SpacesWire.participantSpec(handle.desiredSpec()))
                 .build();
     }
 
     private static SpaceSnapshot fromProtocolSpace(
-            be.theking90000.mumble.controller.internal.protocol.v1.SpaceSnapshot wire) {
+            be.theking90000.mumble.controller.internal.spaces.v1.SpaceSnapshot wire) {
         List<SpaceParticipant> participants = new ArrayList<SpaceParticipant>();
-        for (be.theking90000.mumble.controller.internal.protocol.v1.SpaceParticipant
+        for (be.theking90000.mumble.controller.internal.spaces.v1.SpaceParticipant
                 participant : wire.getParticipantsList()) {
             participants.add(new SpaceParticipant(
                     ParticipantId.of(participant.getParticipantId()),

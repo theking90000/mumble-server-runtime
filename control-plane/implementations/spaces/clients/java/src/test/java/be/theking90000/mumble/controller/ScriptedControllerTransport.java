@@ -1,7 +1,7 @@
 package be.theking90000.mumble.controller;
 
-import be.theking90000.mumble.controller.internal.protocol.v1.ClientFrame;
-import be.theking90000.mumble.controller.internal.protocol.v1.ServerFrame;
+import be.theking90000.mumble.controller.internal.core.v1.ClientFrame;
+import be.theking90000.mumble.controller.internal.core.v1.ServerFrame;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;

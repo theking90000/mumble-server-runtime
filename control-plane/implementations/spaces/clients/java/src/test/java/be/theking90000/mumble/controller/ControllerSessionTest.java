@@ -3,18 +3,20 @@ package be.theking90000.mumble.controller;
 import com.google.protobuf.ByteString;
 import com.google.protobuf.Duration;
 import be.theking90000.mumble.controller.internal.ProfileMetadata;
-import be.theking90000.mumble.controller.internal.protocol.v1.ClientFrame;
-import be.theking90000.mumble.controller.internal.protocol.v1.CommandErrorCode;
-import be.theking90000.mumble.controller.internal.protocol.v1.CommandRejected;
-import be.theking90000.mumble.controller.internal.protocol.v1.DesiredStateReconciled;
-import be.theking90000.mumble.controller.internal.protocol.v1.FetchSpaceResult;
-import be.theking90000.mumble.controller.internal.protocol.v1.ObservedSpacesAccepted;
-import be.theking90000.mumble.controller.internal.protocol.v1.OwnershipRevocationReason;
-import be.theking90000.mumble.controller.internal.protocol.v1.ParticipantOwnershipGranted;
-import be.theking90000.mumble.controller.internal.protocol.v1.ParticipantOwnershipRevoked;
-import be.theking90000.mumble.controller.internal.protocol.v1.ServerFrame;
-import be.theking90000.mumble.controller.internal.protocol.v1.SessionClosing;
-import be.theking90000.mumble.controller.internal.protocol.v1.SessionReady;
+import be.theking90000.mumble.controller.internal.core.v1.ClientFrame;
+import be.theking90000.mumble.controller.internal.core.v1.CommandErrorCode;
+import be.theking90000.mumble.controller.internal.core.v1.CommandRejected;
+import be.theking90000.mumble.controller.internal.core.v1.DesiredStateReconciled;
+import be.theking90000.mumble.controller.internal.core.v1.OwnershipRevocationReason;
+import be.theking90000.mumble.controller.internal.core.v1.ParticipantOwnershipGranted;
+import be.theking90000.mumble.controller.internal.core.v1.ParticipantOwnershipRevoked;
+import be.theking90000.mumble.controller.internal.core.v1.ProfileEvent;
+import be.theking90000.mumble.controller.internal.core.v1.ServerFrame;
+import be.theking90000.mumble.controller.internal.core.v1.SessionClosing;
+import be.theking90000.mumble.controller.internal.core.v1.SessionReady;
+import be.theking90000.mumble.controller.internal.spaces.v1.Event;
+import be.theking90000.mumble.controller.internal.spaces.v1.FetchSpaceResult;
+import be.theking90000.mumble.controller.internal.spaces.v1.ObservedSpacesAccepted;
 import java.net.URI;
 import java.util.Arrays;
 import java.util.Random;
@@ -52,7 +54,9 @@ final class ControllerSessionTest {
         assertTrue(open.getOpenSession().hasProfile());
         assertTrue(ProfileMetadata.isSpaces(open.getOpenSession().getProfile()));
         assertEquals(1, open.getOpenSession().getDesiredState().getParticipantsCount());
-        assertEquals(Arrays.asList("staff"), open.getOpenSession().getDesiredState().getObservedSpaceKeysList());
+        assertEquals(Arrays.asList("staff"), SpacesWire.desiredState(
+                open.getOpenSession().getDesiredState().getProfileState())
+                .getObservedSpaceKeysList());
         assertFalse(started.isDone());
 
         fixture.emitReady(open.getRequestId());
@@ -60,11 +64,10 @@ final class ControllerSessionTest {
         assertFalse(started.isDone());
 
         fixture.grant(participant, 1L);
-        fixture.transport().emit(ServerFrame.newBuilder()
+        fixture.transport().emit(profileEvent(Event.newBuilder()
                 .setObservedSpacesAccepted(ObservedSpacesAccepted.newBuilder()
-                        .setObservedSpacesRevision(1L)
-                        .build())
-                .build());
+                        .setObservedSpacesRevision(1L))
+                .build()));
         fixture.reconcile(open.getOpenSession().getDesiredState().getDesiredStateRevision());
 
         assertEquals(ControllerSessionState.ACTIVE, fixture.session.state());
@@ -100,8 +103,10 @@ final class ControllerSessionTest {
         assertEquals(RESUME_TOKEN, reconnect.getOpenSession().getResumeToken());
         assertEquals(OWNERSHIP_TOKEN,
                 reconnect.getOpenSession().getDesiredState().getParticipants(0).getOwnershipToken());
-        assertEquals("Three",
-                reconnect.getOpenSession().getDesiredState().getParticipants(0).getSpec().getDisplayName());
+        assertEquals("Three", SpacesWire.participantSpec(reconnect.getOpenSession()
+                .getDesiredState()
+                .getParticipants(0)
+                .getProfileSpec()).getDisplayName());
         assertEquals(3L,
                 reconnect.getOpenSession().getDesiredState().getParticipants(0).getClientSpecRevision());
 
@@ -174,16 +179,18 @@ final class ControllerSessionTest {
 
         fixture.session.observeSpace(SpaceKey.of("alpha"));
         ClientFrame alpha = fixture.transport().lastSent();
-        assertEquals(Arrays.asList("alpha"), alpha.getReplaceObservedSpaces().getSpaceKeysList());
+        assertEquals(Arrays.asList("alpha"), SpacesWire.decodedCommand(alpha.getProfileCommand())
+                .getReplaceObservedSpaces().getSpaceKeysList());
 
         fixture.session.observeSpace(SpaceKey.of("beta"));
         ClientFrame alphaBeta = fixture.transport().lastSent();
-        assertEquals(Arrays.asList("alpha", "beta"),
-                alphaBeta.getReplaceObservedSpaces().getSpaceKeysList());
+        assertEquals(Arrays.asList("alpha", "beta"), SpacesWire.decodedCommand(
+                alphaBeta.getProfileCommand()).getReplaceObservedSpaces().getSpaceKeysList());
 
         fixture.session.unobserveSpace(SpaceKey.of("alpha"));
         ClientFrame beta = fixture.transport().lastSent();
-        assertEquals(Arrays.asList("beta"), beta.getReplaceObservedSpaces().getSpaceKeysList());
+        assertEquals(Arrays.asList("beta"), SpacesWire.decodedCommand(beta.getProfileCommand())
+                .getReplaceObservedSpaces().getSpaceKeysList());
     }
 
     @Test
@@ -193,26 +200,27 @@ final class ControllerSessionTest {
 
         CompletableFuture<SpaceSnapshot> fetched = fixture.session.fetchSpace(SpaceKey.of("game"));
         ClientFrame request = fixture.transport().lastSent();
-        be.theking90000.mumble.controller.internal.protocol.v1.SpaceSnapshot first =
+        be.theking90000.mumble.controller.internal.spaces.v1.SpaceSnapshot first =
                 wireSpace("game", "incarnation-a", 2L, "Player");
-        fixture.transport().emit(ServerFrame.newBuilder()
-                .setRequestId(request.getRequestId())
-                .setFetchSpaceResult(FetchSpaceResult.newBuilder().setSnapshot(first).build())
-                .build());
+        fixture.transport().emit(profileEvent(
+                request.getRequestId(),
+                Event.newBuilder()
+                        .setFetchSpaceResult(FetchSpaceResult.newBuilder().setSnapshot(first))
+                        .build()));
 
         assertEquals(2L, fetched.join().spaceRevision());
         assertTrue(fixture.session.spaces().isEmpty());
 
-        fixture.transport().emit(ServerFrame.newBuilder().setSpaceSnapshot(first).build());
-        fixture.transport().emit(ServerFrame.newBuilder()
+        fixture.transport().emit(profileEvent(Event.newBuilder().setSpaceSnapshot(first).build()));
+        fixture.transport().emit(profileEvent(Event.newBuilder()
                 .setSpaceSnapshot(wireSpace("game", "incarnation-a", 1L, "Stale"))
-                .build());
+                .build()));
         assertEquals("Player", fixture.session.spaces().get(SpaceKey.of("game"))
                 .participants().get(0).displayName());
 
-        fixture.transport().emit(ServerFrame.newBuilder()
+        fixture.transport().emit(profileEvent(Event.newBuilder()
                 .setSpaceSnapshot(wireSpace("game", "incarnation-b", 1L, "New"))
-                .build());
+                .build()));
         assertEquals("New", fixture.session.spaces().get(SpaceKey.of("game"))
                 .participants().get(0).displayName());
     }
@@ -248,8 +256,9 @@ final class ControllerSessionTest {
 
         ClientFrame sync = fixture.transport().lastSent();
         assertEquals(ClientFrame.PayloadCase.SYNC_DESIRED_STATE, sync.getPayloadCase());
-        assertEquals(Arrays.asList("late"),
-                sync.getSyncDesiredState().getDesiredState().getObservedSpaceKeysList());
+        assertEquals(Arrays.asList("late"), SpacesWire.desiredState(sync.getSyncDesiredState()
+                .getDesiredState()
+                .getProfileState()).getObservedSpaceKeysList());
         assertEquals(ControllerSessionState.RECONCILING, fixture.session.state());
     }
 
@@ -326,8 +335,9 @@ final class ControllerSessionTest {
 
         fixture.session.start();
         ClientFrame open = fixture.transport().lastSent();
-        assertEquals(Arrays.asList("staff"),
-                open.getOpenSession().getDesiredState().getObservedSpaceKeysList());
+        assertEquals(Arrays.asList("staff"), SpacesWire.desiredState(open.getOpenSession()
+                .getDesiredState()
+                .getProfileState()).getObservedSpaceKeysList());
 
         fixture.emitReady(open.getRequestId());
         fixture.reconcile(open.getOpenSession().getDesiredState().getDesiredStateRevision());
@@ -347,8 +357,9 @@ final class ControllerSessionTest {
 
         fixture.scheduler.runNext();
         ClientFrame reopen = fixture.transport().lastSent();
-        assertEquals(Arrays.asList("staff"),
-                reopen.getOpenSession().getDesiredState().getObservedSpaceKeysList());
+        assertEquals(Arrays.asList("staff"), SpacesWire.desiredState(reopen.getOpenSession()
+                .getDesiredState()
+                .getProfileState()).getObservedSpaceKeysList());
         fixture.emitReady(reopen.getRequestId());
         fixture.reconcile(reopen.getOpenSession().getDesiredState().getDesiredStateRevision());
 
@@ -373,14 +384,26 @@ final class ControllerSessionTest {
     void disconnectDropsTheSpaceCacheItCanNoLongerVerify() {
         Fixture fixture = new Fixture();
         fixture.startAndActivate(null);
-        fixture.transport().emit(ServerFrame.newBuilder()
+        fixture.transport().emit(profileEvent(Event.newBuilder()
                 .setSpaceSnapshot(wireSpace("game", "incarnation-a", 2L, "Player"))
-                .build());
+                .build()));
         assertFalse(fixture.session.spaces().isEmpty());
 
         fixture.transport().disconnect(true);
 
         assertTrue(fixture.session.spaces().isEmpty());
+    }
+
+    @Test
+    void aMissingSpacesEventPayloadFailsTheSessionPermanently() {
+        Fixture fixture = new Fixture();
+        fixture.startAndActivate(null);
+
+        fixture.transport().emit(ServerFrame.newBuilder()
+                .setProfileEvent(ProfileEvent.getDefaultInstance())
+                .build());
+
+        assertEquals(ControllerSessionState.FAILED, fixture.session.state());
     }
 
     @Test
@@ -463,14 +486,25 @@ final class ControllerSessionTest {
         return ParticipantSpec.builder(SpaceKey.of(space), name).build();
     }
 
-    private static be.theking90000.mumble.controller.internal.protocol.v1.SpaceSnapshot
+    private static ServerFrame profileEvent(Event event) {
+        return profileEvent(ByteString.EMPTY, event);
+    }
+
+    private static ServerFrame profileEvent(ByteString requestId, Event event) {
+        return ServerFrame.newBuilder()
+                .setRequestId(requestId)
+                .setProfileEvent(SpacesWire.profileEvent(event))
+                .build();
+    }
+
+    private static be.theking90000.mumble.controller.internal.spaces.v1.SpaceSnapshot
             wireSpace(String key, String incarnation, long revision, String participantName) {
-        return be.theking90000.mumble.controller.internal.protocol.v1.SpaceSnapshot
+        return be.theking90000.mumble.controller.internal.spaces.v1.SpaceSnapshot
                 .newBuilder()
                 .setSpaceKey(key)
                 .setIncarnationId(ByteString.copyFromUtf8(incarnation))
                 .setSpaceRevision(revision)
-                .addParticipants(be.theking90000.mumble.controller.internal.protocol.v1
+                .addParticipants(be.theking90000.mumble.controller.internal.spaces.v1
                         .SpaceParticipant.newBuilder()
                         .setParticipantId("player-1")
                         .setDisplayName(participantName)
