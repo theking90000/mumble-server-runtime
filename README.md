@@ -2,38 +2,64 @@
 
 **A programmable, declarative Mumble server runtime.**
 
-Mumble Server Runtime aims to be for Mumble what
-[Minestom](https://minestom.net/) is for Minecraft servers: a from-scratch,
-programmable server implementation that speaks the Mumble protocol to unmodified
-clients while replacing the traditional server model with one driven entirely
-by application state.
+Mumble Server Runtime is to Mumble what [Minestom](https://minestom.net/) is to
+Minecraft servers: a from-scratch, programmable server implementation that
+speaks the Mumble protocol to unmodified clients, with the traditional server
+model replaced by one driven entirely by application state.
 
-No plugin, custom client or protocol extension is required. Instead of a channel
-tree you configure, channels, visibility and audibility are computed live from
-your application's state.
+No plugin, custom client or protocol extension is required. Instead of a
+configured channel tree, channels, visibility and audibility are computed live
+from application state.
 
-> **Preliminary.** The runtime works and ships with a runnable demo. The
-> published API is still work-in-progress, and there is no ready-made plugin for
-> any game. See [Status](#status) for what is real and what is not.
+> **Preliminary.** The runtime works and ships with a runnable demo. Nothing is
+> published to a package registry yet, and the API is still work in progress.
+> See [Status](#status) for what is real and what is not.
 
 > **AI-assisted development.** Most of Mumble Server Runtime's implementation was delegated
 > to AI coding agents. See the [AI development notice](#ai-assisted-development)
 > at the end of this README for details about the process, safeguards and
 > limitations.
 
-## The idea
+## Two ways in
+
+The repository holds two layers. Either one is a usable entry point.
+
+|  | `runtime/` | `control-plane/` |
+| --- | --- | --- |
+| How an application connects | Links the crates and implements `ShardLogic` | Talks gRPC to a separate server process |
+| What it writes | A render function, in Rust | Desired state, in any language with a gRPC stack |
+| Voice structure | Arbitrary: channel trees, scopes, overlays, audio domains | Whatever the profile in use defines |
+
+The control plane is built on the runtime rather than beside it. Rendering,
+reconciliation and the Mumble wire protocol come from `runtime/`, and only the
+declarative gRPC surface is added on top.
+
+Its protocol names no voice concept. Sessions, ownership fencing, leases,
+reliable replay and reconciliation are generic, and the domain vocabulary
+travels as opaque profile payloads pinned during the handshake. A profile
+supplies the meaning: Spaces, the reference profile shipped with the project,
+renders each named Space as one root channel and one audio domain. Both a Rust
+core and a Java core are supplied for building on the contract, along with the
+Rust and Java implementations of Spaces and a Spigot plugin demonstrating them.
+
+An application needing arbitrary voice topologies, written in Rust, targets the
+runtime directly. An application needing a per-world or per-team voice split
+from another language targets the control plane.
+
+## The model
 
 A conventional Mumble server has one channel tree shared by everyone, defined in
 configuration and edited by hand, by admins or by scripts. Voice structure ends
-up being maintained alongside your game state, and drifting from it.
+up maintained alongside game state, and drifting from it.
 
-Mumble Server Runtime inverts that. You write a render function. It describes what the voice
-session should look like _right now_, given your state. Mumble Server Runtime works out the
-difference from what each connected client currently holds, and sends only that.
+Mumble Server Runtime inverts that. An application supplies a render function,
+describing the intended voice session for the current application state. The
+difference from what each connected client already holds is computed on every
+render, and only that difference is sent.
 
-Move a player to a game, end a round, promote someone to spectator: change your
-state, and the voice session follows on the next render. There is no second model
-to keep in sync, because there is no second model.
+Moving a player to a game, ending a round, promoting someone to spectator: the
+application changes its state, and the voice session follows on the next render.
+There is no second model to keep in sync, because there is no second model.
 
 ### Example
 
@@ -68,8 +94,8 @@ impl ShardLogic for Match {
         }
     }
 
-    /// A client asked for something. Nothing has moved: change your state, and
-    /// the next render carries it.
+    /// A client asked for something. Nothing has moved yet: the application
+    /// state changes here, and the next render carries it.
     fn observe(&mut self, event: &VoiceEvent, out: &mut Reply) { /* ... */ }
 }
 ```
@@ -78,54 +104,55 @@ The runnable version of this, with spectators, a vanished admin and a migration
 between two shards, is the
 [arena demo](runtime/reference/arena).
 
-## The BungeeCord of voice
+## Handover between shards
 
-Players connect once. After that, your application moves them.
+Players connect once. The application moves them afterwards.
 
-When a player leaves the hub for a match, their voice session is handed from one
-shard to another. This is not a disconnect followed by a reconnect. The source
-hands over the view the client still holds, the destination plans a single
-transition onto it, and the client keeps one continuous connection, its session,
-and every local setting it has attached to it. The world changes around it.
+When a player leaves the hub for a match, the voice session is handed from one
+shard to another. This is not a disconnect followed by a reconnect. The view the
+client still holds is handed over by the source, a single transition onto it is
+planned by the destination, and the client keeps one continuous connection, its
+session, and every local setting attached to it. The world changes around it.
 
-If you run a Minecraft network, this is roughly what BungeeCord and Velocity give
-you for game servers, applied to voice instead.
+For a Minecraft network, this is roughly what BungeeCord and Velocity provide
+for game servers, applied to voice instead.
 
 One caveat, stated plainly because it is the kind of thing a README should not
-blur: shards are units of rendering inside a single Mumble Server Runtime runtime, not separate
-machines. Moving a player between shards is implemented and covered by tests.
-Spreading shards across hosts behind voice proxies is designed and not built.
+blur: shards are units of rendering inside a single runtime process, not
+separate machines. Moving a player between shards is implemented and covered by
+tests. Spreading shards across hosts behind voice proxies is designed and not
+built.
 
 ## Views differ per connection
 
-Two clients on the same server can be sent entirely different channel trees, at
-the same instant, and each one is an ordinary Mumble session as far as the client
-is concerned.
+Two clients on the same server can be sent entirely different channel trees at
+the same instant, and each one is an ordinary Mumble session from the client's
+point of view.
 
 A red player sees red. A blue player sees blue. A spectator sees both. Staff see
-a structure nobody else knows exists. None of this is permissions filtering a
-shared tree after the fact: the trees are genuinely different.
+a structure nobody else knows exists. None of this is permission filtering
+applied to a shared tree after the fact: the trees are genuinely different.
 
 ## Visibility and audibility are separate
 
 Being visible does not imply being audible, and audio is directional.
 
-That is what lets you express things a single shared tree cannot: two teams
-hidden from each other while sharing a pre-match lobby, spectators who hear both
-teams and are heard by neither, an admin who is invisible until they address a
-group, proximity voice derived from distance rather than from channel membership.
+That separation expresses what a single shared tree cannot: two teams hidden
+from each other while sharing a pre-match lobby, spectators who hear both teams
+and are heard by neither, an admin invisible until they address a group,
+proximity voice derived from distance rather than from channel membership.
 
-## Try it
+## Running the demo
 
 ```sh
 cargo run -p mumble-server-runtime-arena -- 127.0.0.1:64738
 ```
 
-Then point a Mumble client at `127.0.0.1`, port `64738`. Use the IP address, not
+Point a Mumble client at `127.0.0.1`, port `64738`. Use the IP address, not
 `localhost`, which resolves to IPv6 first and finds nothing listening.
 
-The demo is a lobby and an arena running as two shards, and each of the runtime's
-three visibility mechanisms is used for exactly one thing:
+The demo runs a lobby and an arena as two shards. Each of the three visibility
+mechanisms is used for exactly one thing:
 
 - teams as scopes, so a red player cannot see that blue exists,
 - a vanished admin as a private overlay,
@@ -135,7 +162,7 @@ Double-click **> Enter the Arena** to migrate between the two shards without
 losing the connection. Connect a third client with `overwatch` in the password
 field to join as invisible staff.
 
-To load-test it, raise the admission ceiling and point the stress tool at it:
+For load testing, raise the admission ceiling and point the stress tool at it:
 
 ```sh
 cargo run -p mumble-server-runtime-arena -- 127.0.0.1:64738 500
@@ -147,49 +174,71 @@ cargo run --release -p mumble-server-runtime-stress -- --clients 200 --duration 
 **Works today**
 
 - Unmodified Mumble clients connect and are sent divergent channel trees.
-- Audio over UDP, falling back to the TCP tunnel on its own when UDP is blocked.
+- Audio over UDP, with automatic fallback to the TCP tunnel when UDP is blocked.
 - Migration between shards without dropping the connection.
-- Text, context menu actions, self-mute and self-deafen routed through your
+- Text, context menu actions, self-mute and self-deafen routed through the
   application.
+- A declarative gRPC control plane, extensible through profiles, exercised end
+  to end against a real Mumble client in CI.
 
 **How that is checked**
 
 - Tests that open real TLS and UDP sockets, not mocks.
 - An independent simulated client that applies the protocol and refuses any
   violation of its model.
+- An interoperability scenario running the Java client against the Rust server
+  against a strict Mumble client.
 - Official Mumble clients, used throughout development.
 
 **Not there yet**
 
+- Nothing is published to a package registry. The Rust crates build from this
+  workspace, and the Java clients install through `publishToMavenLocal` on
+  version `0.1.0-SNAPSHOT`.
 - API documentation is generated and published, but its coverage is uneven.
-- The book documents the model, how to build on it, and what a Mumble client
-  gets. The development chapter is not written yet.
-- No plugin or bridge for any game, Minecraft included. Today you write Rust
-  against the runtime directly.
-- No distributed topology: every shard lives in one runtime.
+- The development chapter of the book is not written.
+- The Spigot plugin under `control-plane/reference/bukkit-spaces/` demonstrates
+  the shading recipe and the Java 8 target. It is a reference example, not a
+  deployable product.
+- No distributed topology: every shard lives in one runtime process.
 - Opus only, forwarded without ever being decoded, so no server-side mixing.
 
-## How it fits together
+## Repository layout
 
-Two crates carry the runtime:
+### `runtime/`
 
-- `mumble-server-runtime-shard` renders and reconciles the shared view, composes the private
-  views and publishes an audio routing table. It performs no IO at all.
-- `mumble-server-runtime-gateway` handles TLS, TCP, UDP, the handshake, connections and
-  migration between shards.
+The Mumble server runtime, in Rust.
 
-`mumble-server-runtime-protocol` and `mumble-server-runtime-crypto` are the pure foundations: framing,
-protobuf, UDP envelopes, OCB2. `runtime/reference/arena` is the demo above.
-`mumble-server-runtime-testkit` is the independent judge, a simulated Mumble client that
-applies the protocol and refuses any violation of its strict model.
+- `crates/shard`: rendering and reconciliation of the shared view,
+  per-connection composition, audio routing table. No IO at all.
+- `crates/gateway`: TLS, TCP, UDP, handshake, connections, migration between
+  shards.
+- `crates/protocol`, `crates/crypto`: the pure foundations. Framing, protobuf,
+  UDP envelopes, OCB2.
+- `reference/arena`: the worked demo above.
+- `verification/`: the independent simulated client, fixtures, fuzzing and
+  protocol tools.
 
-`control-plane` contains the language-neutral gRPC contract, the Java
-8 `ControllerSession` SDK and the composed Rust server. Controller sessions own
-participants, while dynamic Spaces are materialized as runtime shards without
-exposing shard identifiers to Java.
+Detailed in [`runtime/README.md`](runtime/README.md).
 
-The current architecture reference is the [`docs/book/`](docs/book) source. The
-working rules live in [`AGENT.md`](AGENT.md). The earlier exploratory pipeline
+### `control-plane/`
+
+The declarative Controller, layered on the runtime.
+
+- `core/`: the generic contract and its two cores. Sessions, ownership fencing,
+  reliable replay and reconciliation, with no voice vocabulary. Implemented in
+  Rust for the server side and in Java for the client side.
+- `host/`: Mumble adaptation. Credentials, connection bindings, shard
+  operations.
+- `implementations/spaces/`: the reference profile, in Rust and in Java. One
+  root channel and one audio domain per named Space.
+- `server-rust/`: the composed server process.
+- `reference/bukkit-spaces/`: a Spigot plugin demonstrating the Spaces client.
+- `verification/`: a black-box verifier for the public gRPC stream.
+
+Detailed in [`control-plane/README.md`](control-plane/README.md).
+
+Working rules live in [`AGENT.md`](AGENT.md). The earlier exploratory pipeline
 remains readable at the `legacy-p7-final` tag.
 
 ## Documentation
@@ -202,14 +251,18 @@ remains readable at the `legacy-p7-final` tag.
   to write one.
   [Mumble compatibility](https://theking90000.github.io/mumble-server-runtime/mumble/)
   states what an unmodified client gets, and how that claim is checked.
+- **[Controller integration](https://theking90000.github.io/mumble-server-runtime/controller/getting-started.html)**:
+  the control plane from an application author's point of view. Adding the Java
+  dependency, running the server, declaring Spaces and participants, connecting
+  a player.
 - **[API documentation](https://theking90000.github.io/mumble-server-runtime/api/)**:
   generated from the doc comments, every public item of every crate.
-- **[Mumble Controller JavaDoc](https://theking90000.github.io/mumble-server-runtime/controller/)**:
-  the Java 8 SDK data model, lifecycle and complete public API.
+- **[Java client JavaDoc](https://theking90000.github.io/mumble-server-runtime/controller/)**:
+  the data model, lifecycle and complete public API of the Spaces client.
 - **[`runtime/reference/arena/`](runtime/reference/arena)**:
   the worked example, about 1200 lines. Every fragment in the book comes from it.
 
-The first two are published from `main` by the `Pages` workflow. To build them
+The published pages are built from `main` by the `Pages` workflow. To build them
 locally:
 
 ```sh
@@ -227,9 +280,9 @@ cargo fmt --all --check
 RUSTFLAGS="-D warnings" cargo clippy --workspace --all-targets --all-features
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --all-features
 RUSTFLAGS="-D warnings" cargo test --workspace --all-features
-cargo run --release -p bench-shard   # cost of one shard turn
-(cd control-plane && ./gradlew check) # controller contract + Java 8 SDK
-ci/controller-interop.sh       # real Java SDK -> Rust server -> Mumble path
+cargo run --release -p bench-shard      # cost of one shard turn
+(cd control-plane && ./gradlew check)   # gRPC contract and Java clients
+ci/controller-interop.sh                # Java client -> Rust server -> Mumble
 ```
 
 The live tests open loopback sockets. The toolchain is pinned in
