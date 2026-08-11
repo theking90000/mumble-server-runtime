@@ -1,13 +1,17 @@
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let core_protocol =
-        "../../core/contract/src/main/proto/mumble/controller/core/v1/controller.proto";
-    let spaces_protocol = "../../implementations/spaces/contract/src/main/proto/mumble/controller/spaces/v1/spaces.proto";
-    let core_include = "../../core/contract/src/main/proto";
-    let spaces_include = "../../implementations/spaces/contract/src/main/proto";
+    let core_include = if std::path::Path::new("../../../control/coordination/protocol").is_dir() {
+        std::path::PathBuf::from("../../../control/coordination/protocol/src/main/proto")
+    } else {
+        std::path::PathBuf::from("../../core/contract/src/main/proto")
+    };
+    let core_protocol = core_include.join("mumble/controller/core/v1/controller.proto");
+    let spaces_include =
+        std::path::PathBuf::from("../../implementations/spaces/contract/src/main/proto");
+    let spaces_protocol = spaces_include.join("mumble/controller/spaces/v1/spaces.proto");
     let protoc = protoc_bin_vendored::protoc_bin_path()?;
 
-    println!("cargo:rerun-if-changed={core_protocol}");
-    println!("cargo:rerun-if-changed={spaces_protocol}");
+    println!("cargo:rerun-if-changed={}", core_protocol.display());
+    println!("cargo:rerun-if-changed={}", spaces_protocol.display());
     let mut prost = prost_build::Config::new();
     prost.protoc_executable(protoc);
     tonic_prost_build::configure()
