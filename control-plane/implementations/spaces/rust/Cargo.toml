@@ -14,8 +14,14 @@ name = "mumble_controller_spaces"
 path = "src/mumble_controller_spaces.rs"
 
 [dependencies]
+mumble-controller-core = { path = "../../../core/rust" }
 mumble-controller-host = { path = "../../../host/rust" }
+prost = "=0.14.4"
 thiserror = "2"
+
+[build-dependencies]
+prost-build = "=0.14.4"
+protoc-bin-vendored = "=3.2.0"
 
 [lints]
 workspace = true

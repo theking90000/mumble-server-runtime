@@ -4,11 +4,38 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use mumble_controller_core::{ProfileError, ProfileRef};
 use mumble_controller_host::runtime::{
     Audience, ConnectionId, DomainId, Narrow, Occupant, ReconcileReport, Reply, Scope, ScopeSet,
     ShardBuilder, ShardHandle, ShardLogic, UserFlags, VoiceEvent,
 };
 use mumble_controller_host::{SnapshotPublisher, SnapshotReader, VersionedSnapshot};
+
+mod wire;
+
+pub mod protocol {
+    include!(concat!(env!("OUT_DIR"), "/mumble.controller.spaces.v1.rs"));
+}
+
+pub use wire::{
+    MAX_PROFILE_PAYLOAD_BYTES, PayloadDecodeError, decode_command, decode_desired_state,
+    decode_participant_spec, encode_event, encode_participant_status,
+};
+
+/// Stable identifier negotiated for the built-in Spaces profile.
+pub const PROFILE_ID: &str = "mumble.controller.spaces";
+/// Schema version accepted by the built-in Spaces codec.
+pub const SCHEMA_VERSION: u32 = 1;
+const DESCRIPTOR_DIGEST: &str = include_str!("../../contract/controller-spaces-v1.pb.sha256");
+
+/// Return the exact profile identity compiled into the built-in Spaces implementation.
+pub fn profile_ref() -> Result<ProfileRef, ProfileError> {
+    ProfileRef::new(
+        PROFILE_ID.to_owned(),
+        SCHEMA_VERSION,
+        DESCRIPTOR_DIGEST.trim().to_owned(),
+    )
+}
 
 /// Stable business identity of one named Space.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]

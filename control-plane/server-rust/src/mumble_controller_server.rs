@@ -16,9 +16,5 @@ pub mod core_protocol {
     tonic::include_proto!("mumble.controller.core.v1");
 }
 
-pub mod spaces_protocol {
-    tonic::include_proto!("mumble.controller.spaces.v1");
-}
-
 pub use config::ControllerConfig;
 pub use server::{RunningControllerServer, ServerStartError};
