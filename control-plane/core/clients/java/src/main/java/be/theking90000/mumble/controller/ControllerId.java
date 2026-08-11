@@ -6,7 +6,7 @@ import java.util.Objects;
  * Stable, declarative identity of a controller deployment.
  *
  * <p>Several live controller instances may use the same identity. The protocol assigns each
- * {@link ControllerSession} a separate instance identifier internally. This value is not an
+ * controller session a separate instance identifier internally. This value is not an
  * authentication credential.</p>
  */
 public final class ControllerId {

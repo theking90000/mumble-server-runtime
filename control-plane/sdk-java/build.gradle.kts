@@ -79,6 +79,7 @@ sourceSets {
 }
 
 dependencies {
+    api(project(":core:clients:java"))
     implementation("com.google.protobuf:protobuf-java:3.25.8")
     implementation("io.grpc:grpc-protobuf:1.81.0")
     implementation("io.grpc:grpc-stub:1.81.0")

@@ -18,4 +18,5 @@ dependencyResolutionManagement {
 }
 
 rootProject.name = "mumble-controller"
+include("core:clients:java")
 include("sdk-java")
