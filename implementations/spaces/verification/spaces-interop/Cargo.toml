@@ -1,0 +1,25 @@
+[package]
+name = "mumble-controller-spaces-interop"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Independent Java-Rust-Mumble interop verifier for Spaces"
+publish = false
+
+[lib]
+name = "mumble_controller_spaces_interop"
+path = "src/mumble_controller_spaces_interop.rs"
+
+[dev-dependencies]
+mumble-controller-server.workspace = true
+mumble-server-runtime-gateway.workspace = true
+mumble-server-runtime-protocol.workspace = true
+mumble-server-runtime-testkit.workspace = true
+tempfile = "3"
+tokio = { version = "1", features = ["io-util", "macros", "process", "rt-multi-thread", "sync", "test-util", "time"] }
+
+[lints]
+workspace = true

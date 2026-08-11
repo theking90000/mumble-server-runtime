@@ -30,7 +30,7 @@ impl JavaController {
         let repository_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .ancestors()
             .nth(4)
-            .expect("Spaces host is four levels below the repository root");
+            .expect("Spaces interop verifier is four levels below the repository root");
         let mut command = Command::new(repository_root.join("gradlew"));
         command.current_dir(repository_root).arg("--no-daemon");
         if let (Ok(java_home), Ok(java8_home)) =
