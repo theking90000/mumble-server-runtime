@@ -2,8 +2,8 @@
 #
 # verifier-boundary.sh — enforce la séparation implémenteur / vérificateur (R2).
 #
-# Les zones vérificateur, dans l'ancienne ou la nouvelle arborescence, ne peuvent
-# pas être modifiées dans le même diff que les sources d'une implémentation.
+# Les zones vérificateur ne peuvent pas être modifiées dans le même diff que les
+# sources d'une implémentation.
 # Toute modification d'un test de conformité passe par une revue humaine.
 #
 # Usage :
@@ -34,9 +34,9 @@ touches_impl=0
 while IFS= read -r f; do
   [ -n "$f" ] || continue
   case "$f" in
-    conformance/*|runtime/verification/testkit/*|runtime/verification/fixtures/*|control-plane/verification/*|control/coordination/verification/*|implementations/spaces/verification/*)
+    conformance/*|runtime/verification/testkit/*|runtime/verification/fixtures/*|control/coordination/verification/*|implementations/spaces/verification/*)
       touches_verifier=1 ;;
-    runtime/crates/*/src/*|control-plane/server-rust/src/*|control-plane/server/rust/src/*|control-plane/sdk-java/*|control-plane/core/contract/*|control-plane/core/rust/src/*|control-plane/core/clients/*|control-plane/host/rust/src/*|control-plane/implementations/*/contract/*|control-plane/implementations/*/rust/src/*|control-plane/implementations/*/clients/*|control/coordination/protocol/*|control/coordination/rust/src/*|control/coordination/sdk/*|control/runtime-adapter/rust/src/*|implementations/spaces/protocol/*|implementations/spaces/rust/src/*|implementations/spaces/sdk/*|implementations/spaces/host/rust/src/*|implementations/spaces/bukkit/*)
+    runtime/crates/*/src/*|control/coordination/protocol/*|control/coordination/rust/src/*|control/coordination/sdk/*|control/runtime-adapter/rust/src/*|implementations/spaces/protocol/*|implementations/spaces/rust/src/*|implementations/spaces/sdk/*|implementations/spaces/host/rust/src/*|implementations/spaces/bukkit/*)
       touches_impl=1 ;;
   esac
 done <<< "$CHANGED"
