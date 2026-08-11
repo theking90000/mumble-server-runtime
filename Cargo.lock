@@ -687,6 +687,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1d87ecb2933e8aeadb3e3a02b828fed80a7528047e68b4f424523a0981a3a084"
 
 [[package]]
+name = "mumble-controller-core"
+version = "0.1.0"
+dependencies = [
+ "thiserror 2.0.19",
+]
+
+[[package]]
 name = "mumble-controller-core-conformance"
 version = "0.1.0"
 dependencies = [
@@ -711,6 +718,7 @@ dependencies = [
  "base64",
  "clap",
  "getrandom 0.4.3",
+ "mumble-controller-core",
  "mumble-server-runtime-gateway",
  "mumble-server-runtime-protocol",
  "mumble-server-runtime-shard",
