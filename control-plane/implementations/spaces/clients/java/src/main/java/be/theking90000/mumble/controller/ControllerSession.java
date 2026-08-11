@@ -48,6 +48,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ForkJoinPool;
+import java.util.function.Supplier;
 
 /**
  * Thread-safe owner of a controller's desired participant state and read-only space cache.
@@ -85,8 +86,13 @@ public final class ControllerSession {
             new TreeMap<Long, PendingObservation>();
     private final Map<ByteString, CompletableFuture<SpaceSnapshot>> pendingFetches =
             new HashMap<ByteString, CompletableFuture<SpaceSnapshot>>();
-    private final Map<ByteString, RejectionHandler> rejectionHandlers =
-            new HashMap<ByteString, RejectionHandler>();
+    private final ReliableRequestTracker reliableRequests =
+            new ReliableRequestTracker(new Supplier<ByteString>() {
+                @Override
+                public ByteString get() {
+                    return randomIdentifier();
+                }
+            });
     private final CompletableFuture<Void> startFuture = new CompletableFuture<Void>();
     private final CompletableFuture<Void> stopFuture = new CompletableFuture<Void>();
 
@@ -345,14 +351,14 @@ public final class ControllerSession {
         synchronized (monitor) {
             ensureActive();
             final CompletableFuture<SpaceSnapshot> future = new CompletableFuture<SpaceSnapshot>();
-            ByteString requestId = nextRequestId();
-            pendingFetches.put(requestId, future);
-            rejectionHandlers.put(requestId, new RejectionHandler() {
+            ByteString requestId = reliableRequests.track(
+                    new ReliableRequestTracker.RejectionHandler() {
                 @Override
                 public void reject(CommandRejectedException failure) {
                     future.completeExceptionally(failure);
                 }
             });
+            pendingFetches.put(requestId, future);
             FetchSpace command = FetchSpace.newBuilder()
                     .setSessionToken(sessionToken)
                     .setSpaceKey(spaceKey.value())
@@ -391,8 +397,8 @@ public final class ControllerSession {
                 closeLocally();
                 return stopFuture;
             }
-            ByteString requestId = nextRequestId();
-            rejectionHandlers.put(requestId, new RejectionHandler() {
+            ByteString requestId = reliableRequests.track(
+                    new ReliableRequestTracker.RejectionHandler() {
                 @Override
                 public void reject(CommandRejectedException failure) {
                     closeLocally();
@@ -560,8 +566,8 @@ public final class ControllerSession {
             reconciliationReceived = false;
             sessionToken = ByteString.EMPTY;
             changeState(ControllerSessionState.RECONCILING);
-            final ByteString requestId = nextRequestId();
-            rejectionHandlers.put(requestId, new RejectionHandler() {
+            final ByteString requestId = reliableRequests.track(
+                    new ReliableRequestTracker.RejectionHandler() {
                 @Override
                 public void reject(CommandRejectedException failure) {
                     failPermanently(failure);
@@ -591,30 +597,30 @@ public final class ControllerSession {
             }
             switch (frame.getPayloadCase()) {
                 case SESSION_READY:
-                    rejectionHandlers.remove(frame.getRequestId());
+                    reliableRequests.complete(frame.getRequestId());
                     acceptSession(frame.getSessionReady());
                     break;
                 case DESIRED_STATE_RECONCILED:
-                    rejectionHandlers.remove(frame.getRequestId());
+                    reliableRequests.complete(frame.getRequestId());
                     acceptReconciliation(frame.getDesiredStateReconciled());
                     break;
                 case PARTICIPANT_OWNERSHIP_GRANTED:
-                    rejectionHandlers.remove(frame.getRequestId());
+                    reliableRequests.complete(frame.getRequestId());
                     acceptOwnership(frame.getParticipantOwnershipGranted());
                     break;
                 case PARTICIPANT_OWNERSHIP_REVOKED:
-                    rejectionHandlers.remove(frame.getRequestId());
+                    reliableRequests.complete(frame.getRequestId());
                     acceptRevocation(frame.getParticipantOwnershipRevoked());
                     break;
                 case PARTICIPANT_SPEC_ACCEPTED:
-                    rejectionHandlers.remove(frame.getRequestId());
+                    reliableRequests.complete(frame.getRequestId());
                     acceptSpec(frame.getParticipantSpecAccepted());
                     break;
                 case PARTICIPANT_STATUS_CHANGED:
                     acceptStatus(frame.getParticipantStatusChanged());
                     break;
                 case OBSERVED_SPACES_ACCEPTED:
-                    rejectionHandlers.remove(frame.getRequestId());
+                    reliableRequests.complete(frame.getRequestId());
                     acceptObservedSpaces(frame.getObservedSpacesAccepted());
                     break;
                 case SPACE_SNAPSHOT:
@@ -624,7 +630,7 @@ public final class ControllerSession {
                     acceptSpaceClosed(frame.getSpaceClosed());
                     break;
                 case FETCH_SPACE_RESULT:
-                    rejectionHandlers.remove(frame.getRequestId());
+                    reliableRequests.complete(frame.getRequestId());
                     acceptFetch(frame.getRequestId(), frame.getFetchSpaceResult());
                     break;
                 case RESYNC_REQUIRED:
@@ -634,7 +640,7 @@ public final class ControllerSession {
                     acceptRejection(frame.getRequestId(), frame.getCommandRejected());
                     break;
                 case SESSION_CLOSING:
-                    rejectionHandlers.remove(frame.getRequestId());
+                    reliableRequests.complete(frame.getRequestId());
                     closeLocally();
                     break;
                 case PAYLOAD_NOT_SET:
@@ -906,7 +912,7 @@ public final class ControllerSession {
     }
 
     private void acceptRejection(ByteString requestId, CommandRejected rejected) {
-        RejectionHandler handler = rejectionHandlers.remove(requestId);
+        ReliableRequestTracker.RejectionHandler handler = reliableRequests.take(requestId);
         CommandRejectedException failure = new CommandRejectedException(
                 rejected.getCode().name(),
                 rejected.getMessage());
@@ -928,11 +934,9 @@ public final class ControllerSession {
      * one of each is ever outstanding, so each new request retires its own predecessor.</p>
      */
     private ByteString trackSessionScopedRequest(ByteString previousRequestId, final String context) {
-        if (!previousRequestId.isEmpty()) {
-            rejectionHandlers.remove(previousRequestId);
-        }
-        ByteString requestId = nextRequestId();
-        rejectionHandlers.put(requestId, new RejectionHandler() {
+        return reliableRequests.replace(
+                previousRequestId,
+                new ReliableRequestTracker.RejectionHandler() {
             @Override
             public void reject(CommandRejectedException failure) {
                 if (CommandErrorCode.SESSION_EXPIRED_ERROR.name().equals(failure.code())) {
@@ -943,12 +947,11 @@ public final class ControllerSession {
                 }
                 failPermanently(new ControllerException(context, failure));
             }
-        });
-        return requestId;
+                });
     }
 
     private void clearRejectionHandlers() {
-        rejectionHandlers.clear();
+        reliableRequests.clear();
         leaseRequestId = ByteString.EMPTY;
         syncRequestId = ByteString.EMPTY;
     }
@@ -973,8 +976,8 @@ public final class ControllerSession {
     }
 
     private void sendRegister(final ParticipantHandle handle) {
-        ByteString requestId = nextRequestId();
-        rejectionHandlers.put(requestId, new RejectionHandler() {
+        ByteString requestId = reliableRequests.track(
+                new ReliableRequestTracker.RejectionHandler() {
             @Override
             public void reject(CommandRejectedException failure) {
                 handle.revoke(failure.getMessage());
@@ -993,8 +996,8 @@ public final class ControllerSession {
     }
 
     private void sendSpec(final ParticipantHandle handle, final long clientRevision) {
-        ByteString requestId = nextRequestId();
-        rejectionHandlers.put(requestId, new RejectionHandler() {
+        ByteString requestId = reliableRequests.track(
+                new ReliableRequestTracker.RejectionHandler() {
             @Override
             public void reject(CommandRejectedException failure) {
                 if ("OWNERSHIP_LOST".equals(failure.code())) {
@@ -1020,8 +1023,8 @@ public final class ControllerSession {
     }
 
     private void sendRelease(final ParticipantHandle handle) {
-        ByteString requestId = nextRequestId();
-        rejectionHandlers.put(requestId, new RejectionHandler() {
+        ByteString requestId = reliableRequests.track(
+                new ReliableRequestTracker.RejectionHandler() {
             @Override
             public void reject(CommandRejectedException failure) {
                 CompletableFuture<Void> unregister = handle.unregisterFuture();
@@ -1043,8 +1046,8 @@ public final class ControllerSession {
     }
 
     private void sendObservedSpaces(final CompletableFuture<Void> future) {
-        ByteString requestId = nextRequestId();
-        rejectionHandlers.put(requestId, new RejectionHandler() {
+        ByteString requestId = reliableRequests.track(
+                new ReliableRequestTracker.RejectionHandler() {
             @Override
             public void reject(CommandRejectedException failure) {
                 future.completeExceptionally(failure);
@@ -1350,17 +1353,9 @@ public final class ControllerSession {
         return ByteString.copyFrom(buffer.array());
     }
 
-    private static ByteString nextRequestId() {
-        return randomIdentifier();
-    }
-
     private static long durationMillis(Duration duration) {
         long secondsMillis = Math.multiplyExact(duration.getSeconds(), 1_000L);
         return Math.addExact(secondsMillis, duration.getNanos() / 1_000_000L);
-    }
-
-    private interface RejectionHandler {
-        void reject(CommandRejectedException failure);
     }
 
     /** Futures awaiting one explicit observation revision, and the snapshot revision that carries it. */
