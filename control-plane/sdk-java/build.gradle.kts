@@ -21,8 +21,57 @@ java {
     withJavadocJar()
 }
 
+val controllerDescriptor = layout.buildDirectory.file("descriptors/controller-v1.pb")
+val expectedControllerDescriptorDigest = rootProject.file("contract/controller-v1.pb.sha256")
+val profileMetadataDirectory = layout.buildDirectory.dir("generated/sources/profileMetadata/java")
+val generateControllerProfileMetadata = tasks.register("generateControllerProfileMetadata") {
+    inputs.file(expectedControllerDescriptorDigest)
+    outputs.dir(profileMetadataDirectory)
+    doLast {
+        val digest = expectedControllerDescriptorDigest.readText().trim()
+        require(digest.matches(Regex("[0-9a-f]{64}"))) {
+            "Controller descriptor digest must be 64 lowercase hexadecimal characters"
+        }
+        val output = profileMetadataDirectory.get().file(
+            "be/theking90000/mumble/controller/internal/ProfileMetadata.java"
+        ).asFile
+        output.parentFile.mkdirs()
+        output.writeText(
+            """
+            package be.theking90000.mumble.controller.internal;
+
+            import be.theking90000.mumble.controller.internal.protocol.v1.ProfileRef;
+
+            public final class ProfileMetadata {
+                public static final String SPACES_PROFILE_ID = "mumble.controller.spaces";
+                public static final int SPACES_SCHEMA_VERSION = 1;
+                public static final String SPACES_DESCRIPTOR_DIGEST = "$digest";
+
+                private ProfileMetadata() {
+                }
+
+                public static ProfileRef spacesProfile() {
+                    return ProfileRef.newBuilder()
+                            .setProfileId(SPACES_PROFILE_ID)
+                            .setSchemaVersion(SPACES_SCHEMA_VERSION)
+                            .setDescriptorDigest(SPACES_DESCRIPTOR_DIGEST)
+                            .build();
+                }
+
+                public static boolean isSpaces(ProfileRef profile) {
+                    return SPACES_PROFILE_ID.equals(profile.getProfileId())
+                            && profile.getSchemaVersion() == SPACES_SCHEMA_VERSION
+                            && SPACES_DESCRIPTOR_DIGEST.equals(profile.getDescriptorDigest());
+                }
+            }
+            """.trimIndent() + "\n"
+        )
+    }
+}
+
 sourceSets {
     main {
+        java.srcDir(profileMetadataDirectory)
         proto {
             srcDir("../contract/src/main/proto")
         }
@@ -72,9 +121,14 @@ protobuf {
 }
 
 tasks.withType<JavaCompile>().configureEach {
+    dependsOn(generateControllerProfileMetadata)
     options.release.set(8)
     options.encoding = "UTF-8"
     options.compilerArgs.addAll(listOf("-Xlint:all", "-Werror"))
+}
+
+tasks.named("sourcesJar") {
+    dependsOn(generateControllerProfileMetadata)
 }
 
 tasks.withType<Javadoc>().configureEach {
@@ -112,16 +166,14 @@ tasks.register<JavaExec>("controllerInterop") {
 
 val verifyControllerDescriptor = tasks.register("verifyControllerDescriptor") {
     dependsOn(tasks.named("generateProto"))
-    val descriptor = layout.buildDirectory.file("descriptors/controller-v1.pb")
-    val expectedDigest = rootProject.file("contract/controller-v1.pb.sha256")
-    inputs.file(descriptor)
-    inputs.file(expectedDigest)
+    inputs.file(controllerDescriptor)
+    inputs.file(expectedControllerDescriptorDigest)
     doLast {
-        val bytes = descriptor.get().asFile.readBytes()
+        val bytes = controllerDescriptor.get().asFile.readBytes()
         val actual = MessageDigest.getInstance("SHA-256")
             .digest(bytes)
             .joinToString("") { byte: Byte -> "%02x".format(byte.toInt() and 0xff) }
-        val expected = expectedDigest.readText().trim()
+        val expected = expectedControllerDescriptorDigest.readText().trim()
         if (actual != expected) {
             throw GradleException(
                 "controller-v1 descriptor changed: expected $expected, got $actual; " +

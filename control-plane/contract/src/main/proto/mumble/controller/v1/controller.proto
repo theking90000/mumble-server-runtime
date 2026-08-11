@@ -51,6 +51,13 @@ message OpenSession {
   bytes controller_instance_id = 2;
   bytes resume_token = 3;
   DesiredStateSnapshot desired_state = 4;
+  ProfileRef profile = 5;
+}
+
+message ProfileRef {
+  string profile_id = 1;
+  uint32 schema_version = 2;
+  string descriptor_digest = 3;
 }
 
 message RenewLease {
@@ -124,6 +131,7 @@ message SessionReady {
   bytes resume_token = 2;
   bytes control_epoch = 3;
   google.protobuf.Duration lease_duration = 4;
+  ProfileRef profile = 5;
 }
 
 message DesiredStateReconciled {

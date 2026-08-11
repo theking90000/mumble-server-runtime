@@ -2,6 +2,7 @@ package be.theking90000.mumble.controller;
 
 import com.google.protobuf.ByteString;
 import com.google.protobuf.Duration;
+import be.theking90000.mumble.controller.internal.ProfileMetadata;
 import be.theking90000.mumble.controller.internal.protocol.v1.ClientFrame;
 import be.theking90000.mumble.controller.internal.protocol.v1.CommandErrorCode;
 import be.theking90000.mumble.controller.internal.protocol.v1.CommandRejected;
@@ -48,6 +49,8 @@ final class ControllerSessionTest {
 
         assertEquals(ClientFrame.PayloadCase.OPEN_SESSION, open.getPayloadCase());
         assertEquals("lobby-11", open.getOpenSession().getControllerId());
+        assertTrue(open.getOpenSession().hasProfile());
+        assertTrue(ProfileMetadata.isSpaces(open.getOpenSession().getProfile()));
         assertEquals(1, open.getOpenSession().getDesiredState().getParticipantsCount());
         assertEquals(Arrays.asList("staff"), open.getOpenSession().getDesiredState().getObservedSpaceKeysList());
         assertFalse(started.isDone());
@@ -513,6 +516,7 @@ final class ControllerSessionTest {
                             .setResumeToken(RESUME_TOKEN)
                             .setControlEpoch(CONTROL_EPOCH)
                             .setLeaseDuration(Duration.newBuilder().setSeconds(30L).build())
+                            .setProfile(ProfileMetadata.spacesProfile())
                             .build())
                     .build());
         }
