@@ -5,11 +5,13 @@ use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 mod ownership;
+mod reliable;
 
 pub use ownership::{
     ClaimMode, ClaimOutcome, ClaimRequest, OwnershipError, OwnershipRegistry, OwnershipState,
     RevisionOutcome,
 };
+pub use reliable::{ReliableCommands, ReliableError};
 
 pub type SessionId = u64;
 
