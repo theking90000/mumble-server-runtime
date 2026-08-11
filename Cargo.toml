@@ -24,6 +24,8 @@ members = [
     "control-plane/core/rust",
     # Adaptation Mumble : authentification, connexions et opérations runtime.
     "control-plane/host/rust",
+    # Profil métier fourni : un shard et un domaine audio par Space nommée.
+    "control-plane/implementations/spaces/rust",
     # Application Controller : gRPC declaratif compose au-dessus du runtime.
     "control-plane/server-rust",
 ]

@@ -10,6 +10,14 @@ pub use snapshot::{
     PublicationMarker, SnapshotPublisher, SnapshotReader, VersionedSnapshot, snapshot_channel,
 };
 
+/// Runtime rendering vocabulary exposed to compiled Controller profiles.
+pub mod runtime {
+    pub use mumble_server_runtime_shard::{
+        Audience, ChannelKey, ConnectionId, DomainId, Narrow, Occupant, Reply, Scope, ScopeSet,
+        ShardBuilder, ShardLogic, Spoken, UserFlags, VoiceEvent,
+    };
+}
+
 use std::collections::{BTreeMap, HashMap};
 
 use mumble_server_runtime_gateway::RuntimeHandle;
