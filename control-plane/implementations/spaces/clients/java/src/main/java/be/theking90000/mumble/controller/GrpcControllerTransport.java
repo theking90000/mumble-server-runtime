@@ -1,6 +1,6 @@
 package be.theking90000.mumble.controller;
 
-import be.theking90000.mumble.controller.internal.protocol.v1.ClientFrame;
+import be.theking90000.mumble.controller.internal.core.v1.ClientFrame;
 import java.net.URI;
 import java.util.concurrent.CompletableFuture;
 
@@ -23,7 +23,7 @@ final class GrpcControllerTransport implements ControllerTransport {
             @Override
             public void onFrame(
                     be.theking90000.mumble.controller.internal.core.v1.ServerFrame frame) {
-                listener.onFrame(WireAdapter.fromCore(frame));
+                listener.onFrame(frame);
             }
 
             @Override
@@ -35,7 +35,7 @@ final class GrpcControllerTransport implements ControllerTransport {
 
     @Override
     public CompletableFuture<Void> send(ClientFrame frame) {
-        return core.send(WireAdapter.toCore(frame));
+        return core.send(frame);
     }
 
     @Override
