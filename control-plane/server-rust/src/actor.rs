@@ -11,8 +11,8 @@ use mumble_controller_core::{
 };
 use mumble_controller_host::{HostError, MumbleHost, SnapshotPublisher, snapshot_channel};
 use mumble_controller_spaces::{
-    ControllerSpaceLogic, RenderParticipant, RenderState, SpaceEvent, SpaceEventKind, SpaceReport,
-    SpaceReporter,
+    ControllerSpaceLogic, ParticipantSpec as SpaceParticipantSpec, RenderParticipant, RenderState,
+    SpaceEvent, SpaceEventKind, SpaceKey, SpaceReport, SpaceReporter, SpacesValidationError,
 };
 use mumble_server_runtime_gateway::RuntimeHandle;
 use mumble_server_runtime_shard::{ConnectionId, ReconcileReport, ShardHandle, ShardId};
@@ -29,9 +29,9 @@ use crate::protocol::{
     ClientFrame, CommandErrorCode, CommandRejected, DesiredStateReconciled, DesiredStateSnapshot,
     FetchSpaceResult, ObservedSpacesAccepted, OwnershipRevocationReason,
     ParticipantOwnershipGranted, ParticipantOwnershipRevoked, ParticipantRegistration,
-    ParticipantSpec, ParticipantSpecAccepted, ParticipantStatus, ParticipantStatusChanged,
-    ResyncRequired, ServerFrame, SessionClosing, SessionReady, SpaceAbsent, SpaceClosed,
-    SpaceParticipant, SpaceSnapshot,
+    ParticipantSpec as ProtocolParticipantSpec, ParticipantSpecAccepted, ParticipantStatus,
+    ParticipantStatusChanged, ResyncRequired, ServerFrame, SessionClosing, SessionReady,
+    SpaceAbsent, SpaceClosed, SpaceParticipant, SpaceSnapshot,
 };
 
 pub(crate) type ResponseSender = mpsc::Sender<Result<ServerFrame, Status>>;
@@ -128,7 +128,7 @@ struct Participant {
     applied_spec_revision: u64,
     applied_space_key: Option<String>,
     published_generation: u64,
-    spec: ParticipantSpec,
+    spec: SpaceParticipantSpec,
     self_mute: bool,
     self_deaf: bool,
     application_error: String,
@@ -522,15 +522,18 @@ impl ControllerActor {
                     );
                     return;
                 };
-                if let Err(message) = validate_spec(&spec) {
-                    self.reject_session(
-                        session_id,
-                        request_id,
-                        CommandErrorCode::InvalidArgument,
-                        &message,
-                    );
-                    return;
-                }
+                let spec = match decode_space_spec(spec) {
+                    Ok(spec) => spec,
+                    Err(error) => {
+                        self.reject_session(
+                            session_id,
+                            request_id,
+                            CommandErrorCode::InvalidArgument,
+                            &error.to_string(),
+                        );
+                        return;
+                    }
+                };
                 self.advance_desired_revision(session_id);
                 self.set_spec(
                     session_id,
@@ -695,7 +698,9 @@ impl ControllerActor {
         let Some(spec) = &registration.spec else {
             return Err("participant spec is missing".to_owned());
         };
-        validate_spec(spec)
+        decode_space_spec(spec.clone())
+            .map(|_spec| ())
+            .map_err(|error| error.to_string())
     }
 
     fn reconcile_snapshot(
@@ -808,6 +813,27 @@ impl ControllerActor {
         mode: ClaimMode,
     ) {
         let participant_id = registration.participant_id.clone();
+        let spec = match registration.spec.clone().map(decode_space_spec) {
+            Some(Ok(spec)) => spec,
+            Some(Err(error)) => {
+                self.reject_session(
+                    session_id,
+                    request_id,
+                    CommandErrorCode::InvalidArgument,
+                    &error.to_string(),
+                );
+                return;
+            }
+            None => {
+                self.reject_session(
+                    session_id,
+                    request_id,
+                    CommandErrorCode::InvalidArgument,
+                    "participant spec is missing",
+                );
+                return;
+            }
+        };
         if !self.participants.contains_key(&participant_id) {
             self.reject_session(
                 session_id,
@@ -849,7 +875,7 @@ impl ControllerActor {
                 return;
             }
         };
-        if revision_advanced && let Some(spec) = registration.spec {
+        if revision_advanced {
             self.apply_spec(&participant_id, spec);
         }
         if let Some(participant) = self.participants.get(&participant_id).cloned() {
@@ -864,6 +890,27 @@ impl ControllerActor {
         request_id: Vec<u8>,
         mode: ClaimMode,
     ) {
+        let spec = match registration.spec.clone().map(decode_space_spec) {
+            Some(Ok(spec)) => spec,
+            Some(Err(error)) => {
+                self.reject_session(
+                    session_id,
+                    request_id,
+                    CommandErrorCode::InvalidArgument,
+                    &error.to_string(),
+                );
+                return;
+            }
+            None => {
+                self.reject_session(
+                    session_id,
+                    request_id,
+                    CommandErrorCode::InvalidArgument,
+                    "participant spec is missing",
+                );
+                return;
+            }
+        };
         let existing = self.ownership.get(&registration.participant_id).cloned();
         if existing.is_some() != self.participants.contains_key(&registration.participant_id)
             || existing.is_some() != self.host.contains(&registration.participant_id)
@@ -899,16 +946,7 @@ impl ControllerActor {
             );
             return;
         }
-        let Some(spec) = registration.spec else {
-            self.reject_session(
-                session_id,
-                request_id,
-                CommandErrorCode::InvalidArgument,
-                "participant spec is missing",
-            );
-            return;
-        };
-        if let Err(error) = self.ensure_space(&spec.space_key) {
+        if let Err(error) = self.ensure_space(spec.space_key().as_str()) {
             self.reject_session(
                 session_id,
                 request_id,
@@ -1051,19 +1089,19 @@ impl ControllerActor {
         let old_space = self
             .participants
             .insert(participant.participant_id.clone(), participant.clone())
-            .map(|previous| previous.spec.space_key);
+            .map(|previous| previous.spec.space_key().as_str().to_owned());
         if let Some(old_space) = old_space
-            && old_space != participant.spec.space_key
+            && old_space != participant.spec.space_key().as_str()
         {
             self.refresh_space(&old_space);
-            self.refresh_space(&participant.spec.space_key);
+            self.refresh_space(participant.spec.space_key().as_str());
             if let Some(connection) = self.host.connection(&participant.participant_id)
-                && let Some(space) = self.spaces.get(&participant.spec.space_key)
+                && let Some(space) = self.spaces.get(participant.spec.space_key().as_str())
             {
                 self.host.move_connection(connection, space.handle.shard());
             }
         } else {
-            self.refresh_space(&participant.spec.space_key);
+            self.refresh_space(participant.spec.space_key().as_str());
         }
         self.send_grant(session_id, &participant, request_id);
         self.send_status(&participant.participant_id);
@@ -1075,7 +1113,7 @@ impl ControllerActor {
         participant_id: String,
         ownership_token: Vec<u8>,
         client_revision: u64,
-        spec: ParticipantSpec,
+        spec: SpaceParticipantSpec,
         request_id: Vec<u8>,
     ) {
         let Some(current) = self.participants.get(&participant_id).cloned() else {
@@ -1125,7 +1163,7 @@ impl ControllerActor {
             );
             return;
         }
-        if let Err(error) = self.ensure_space(&spec.space_key) {
+        if let Err(error) = self.ensure_space(spec.space_key().as_str()) {
             self.reject_session(
                 session_id,
                 request_id,
@@ -1208,12 +1246,12 @@ impl ControllerActor {
         );
     }
 
-    fn apply_spec(&mut self, participant_id: &str, spec: ParticipantSpec) {
+    fn apply_spec(&mut self, participant_id: &str, spec: SpaceParticipantSpec) {
         let Some(current) = self.participants.get(participant_id).cloned() else {
             return;
         };
-        let old_space = current.spec.space_key;
-        let new_space = spec.space_key.clone();
+        let old_space = current.spec.space_key().as_str().to_owned();
+        let new_space = spec.space_key().as_str().to_owned();
         let connection = self.host.connection(participant_id);
         if let Some(participant) = self.participants.get_mut(participant_id) {
             participant.spec = spec;
@@ -1287,7 +1325,7 @@ impl ControllerActor {
             return;
         };
         self.host.revoke(participant_id);
-        self.refresh_space(&current.spec.space_key);
+        self.refresh_space(current.spec.space_key().as_str());
         self.send_revocation(
             session_id,
             participant_id,
@@ -1433,15 +1471,15 @@ impl ControllerActor {
         let participants: Vec<RenderParticipant> = self
             .participants
             .values()
-            .filter(|participant| participant.spec.space_key == space_key)
+            .filter(|participant| participant.spec.space_key().as_str() == space_key)
             .filter_map(|participant| {
                 let ownership = self.ownership.get(&participant.participant_id)?;
                 Some(RenderParticipant {
                     participant_id: participant.participant_id.clone(),
                     connection: self.host.connection(&participant.participant_id),
-                    display_name: participant.spec.display_name.clone(),
-                    server_mute: participant.spec.server_mute,
-                    server_deaf: participant.spec.server_deaf,
+                    display_name: participant.spec.display_name().to_owned(),
+                    server_mute: participant.spec.server_mute(),
+                    server_deaf: participant.spec.server_deaf(),
                     self_mute: participant.self_mute,
                     self_deaf: participant.self_deaf,
                     accepted_revision: ownership.client_revision,
@@ -1502,7 +1540,7 @@ impl ControllerActor {
                 // before a move can reach the actor after the destination Space has
                 // already reported. Applying it would publish a Space the participant
                 // has left, and nothing would correct it until the next render there.
-                if participant.spec.space_key != space_key {
+                if participant.spec.space_key().as_str() != space_key {
                     continue;
                 }
                 match &refused {
@@ -1551,11 +1589,11 @@ impl ControllerActor {
                 response.send(Err("the Mumble join token is invalid or revoked".to_owned()));
             return;
         };
-        self.refresh_space(&current.spec.space_key);
+        self.refresh_space(current.spec.space_key().as_str());
         self.send_status(&participant_id);
         let result = self
             .spaces
-            .get(&current.spec.space_key)
+            .get(current.spec.space_key().as_str())
             .map(|space| space.handle.shard())
             .ok_or_else(|| "the participant Space is not materialized".to_owned());
         let _ignored = response.send(result);
@@ -1569,7 +1607,7 @@ impl ControllerActor {
         };
         let mut refresh = false;
         if let Some(participant) = self.participants.get_mut(&participant_id) {
-            if participant.spec.space_key != space_key {
+            if participant.spec.space_key().as_str() != space_key {
                 return;
             }
             match event.kind {
@@ -1635,7 +1673,7 @@ impl ControllerActor {
             if self
                 .participants
                 .values()
-                .any(|participant| participant.spec.space_key == space_key)
+                .any(|participant| participant.spec.space_key().as_str() == space_key)
             {
                 continue;
             }
@@ -1787,12 +1825,12 @@ impl ControllerActor {
         let participants = self
             .participants
             .values()
-            .filter(|participant| participant.spec.space_key == space_key)
+            .filter(|participant| participant.spec.space_key().as_str() == space_key)
             .map(|participant| SpaceParticipant {
                 participant_id: participant.participant_id.clone(),
-                display_name: participant.spec.display_name.clone(),
-                server_mute: participant.spec.server_mute,
-                server_deaf: participant.spec.server_deaf,
+                display_name: participant.spec.display_name().to_owned(),
+                server_mute: participant.spec.server_mute(),
+                server_deaf: participant.spec.server_deaf(),
                 mumble_connected: self.host.connection(&participant.participant_id).is_some(),
             })
             .collect();
@@ -1882,7 +1920,7 @@ impl ControllerActor {
                 self.ownership
                     .get(&participant.participant_id)
                     .is_some_and(|ownership| ownership.owner == session_id)
-                    && participant.spec.space_key == space_key
+                    && participant.spec.space_key().as_str() == space_key
             })
     }
 
@@ -1980,18 +2018,20 @@ fn rejection(request_id: Vec<u8>, code: CommandErrorCode, message: &str) -> Serv
 }
 
 fn validate_space_key(key: &str) -> Result<(), String> {
-    if key.is_empty() || key.len() > 128 {
-        return Err("space_key must contain between 1 and 128 bytes".to_owned());
-    }
-    Ok(())
+    SpaceKey::new(key.to_owned())
+        .map(|_key| ())
+        .map_err(|error| error.to_string())
 }
 
-fn validate_spec(spec: &ParticipantSpec) -> Result<(), String> {
-    validate_space_key(&spec.space_key)?;
-    if spec.display_name.is_empty() || spec.display_name.chars().count() > 64 {
-        return Err("display_name must contain between 1 and 64 characters".to_owned());
-    }
-    Ok(())
+fn decode_space_spec(
+    spec: ProtocolParticipantSpec,
+) -> Result<SpaceParticipantSpec, SpacesValidationError> {
+    SpaceParticipantSpec::new(
+        spec.space_key,
+        spec.display_name,
+        spec.server_mute,
+        spec.server_deaf,
+    )
 }
 
 fn duration_to_proto(duration: Duration) -> prost_types::Duration {
@@ -2166,8 +2206,8 @@ mod tests {
         }
     }
 
-    fn spec(space: &str, name: &str) -> ParticipantSpec {
-        ParticipantSpec {
+    fn spec(space: &str, name: &str) -> ProtocolParticipantSpec {
+        ProtocolParticipantSpec {
             space_key: space.to_owned(),
             display_name: name.to_owned(),
             server_mute: false,
@@ -2180,7 +2220,7 @@ mod tests {
         registration_id: u8,
         ownership_token: Vec<u8>,
         revision: u64,
-        participant_spec: ParticipantSpec,
+        participant_spec: ProtocolParticipantSpec,
     ) -> ParticipantRegistration {
         ParticipantRegistration {
             participant_id: participant_id.to_owned(),
@@ -2672,7 +2712,7 @@ mod tests {
             applied_spec_revision: 0,
             applied_space_key: None,
             published_generation: 0,
-            spec: spec(space_key, "Alice"),
+            spec: decode_space_spec(spec(space_key, "Alice")).expect("valid Spaces test spec"),
             self_mute: false,
             self_deaf: false,
             application_error: String::new(),
@@ -2711,7 +2751,8 @@ mod tests {
         actor.refresh_space("lobby");
         let lobby_revision = actor.next_application_revision - 1;
         if let Some(participant) = actor.participants.get_mut("alice") {
-            participant.spec.space_key = "arena".to_owned();
+            participant.spec =
+                decode_space_spec(spec("arena", "Alice")).expect("valid Spaces test spec");
         }
         actor.refresh_space("arena");
         let arena_revision = actor.next_application_revision - 1;

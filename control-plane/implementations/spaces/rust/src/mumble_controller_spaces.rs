@@ -8,6 +8,83 @@ use mumble_controller_host::runtime::{
 };
 use mumble_controller_host::{SnapshotReader, VersionedSnapshot};
 
+/// Stable business identity of one named Space.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct SpaceKey(String);
+
+impl SpaceKey {
+    /// Validate a Space key before it enters profile state.
+    pub fn new(value: String) -> Result<Self, SpacesValidationError> {
+        if value.is_empty() || value.len() > 128 {
+            return Err(SpacesValidationError::InvalidSpaceKey);
+        }
+        Ok(Self(value))
+    }
+
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+/// Spaces-owned desired state for one logical participant.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParticipantSpec {
+    space_key: SpaceKey,
+    display_name: String,
+    server_mute: bool,
+    server_deaf: bool,
+}
+
+impl ParticipantSpec {
+    /// Validate a complete participant payload before profile state changes.
+    pub fn new(
+        space_key: String,
+        display_name: String,
+        server_mute: bool,
+        server_deaf: bool,
+    ) -> Result<Self, SpacesValidationError> {
+        let space_key = SpaceKey::new(space_key)?;
+        if display_name.is_empty() || display_name.chars().count() > 64 {
+            return Err(SpacesValidationError::InvalidDisplayName);
+        }
+        Ok(Self {
+            space_key,
+            display_name,
+            server_mute,
+            server_deaf,
+        })
+    }
+
+    #[must_use]
+    pub fn space_key(&self) -> &SpaceKey {
+        &self.space_key
+    }
+
+    #[must_use]
+    pub fn display_name(&self) -> &str {
+        &self.display_name
+    }
+
+    #[must_use]
+    pub fn server_mute(&self) -> bool {
+        self.server_mute
+    }
+
+    #[must_use]
+    pub fn server_deaf(&self) -> bool {
+        self.server_deaf
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum SpacesValidationError {
+    #[error("space_key must contain between 1 and 128 bytes")]
+    InvalidSpaceKey,
+    #[error("display_name must contain between 1 and 64 characters")]
+    InvalidDisplayName,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SpaceEvent {
     pub connection: ConnectionId,
@@ -233,6 +310,19 @@ mod tests {
     use mumble_controller_host::runtime::{ChannelKey, Spoken};
 
     use super::*;
+
+    #[test]
+    fn participant_specs_are_validated_by_the_spaces_profile() {
+        assert_eq!(
+            ParticipantSpec::new(String::new(), "Alice".to_owned(), false, false),
+            Err(SpacesValidationError::InvalidSpaceKey)
+        );
+        assert_eq!(
+            ParticipantSpec::new("lobby".to_owned(), String::new(), false, false),
+            Err(SpacesValidationError::InvalidDisplayName)
+        );
+        assert!(ParticipantSpec::new("lobby".to_owned(), "Alice".to_owned(), true, false).is_ok());
+    }
 
     #[derive(Clone)]
     struct TestReporter {
