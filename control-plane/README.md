@@ -1,14 +1,15 @@
 # Mumble Controller
 
-This directory contains the language-neutral controller contract, the Java SDK
+This directory contains the language-neutral controller contracts, the Java SDK
 that maintains a controller's desired participant state, and the composed Rust
 server. It is an application integration and does not add Controller network IO
 or business state to the runtime's core crates.
 
 Current modules:
 
-- `contract`: the canonical versioned Protobuf/gRPC contract;
+- `core/contract`: the canonical versioned lifecycle Protobuf/gRPC contract;
 - `core/clients/java`: the Java 8 compatible Controller primitives;
+- `implementations/spaces/contract`: the versioned Spaces profile payloads;
 - `implementations/spaces/clients/java`: the Java 8 compatible Spaces client;
 - `server-rust`: the composed gRPC, gateway and dynamic-Space server;
 - `reference/bukkit-spaces`: a buildable Spigot 1.8 plugin using the SDK, kept as

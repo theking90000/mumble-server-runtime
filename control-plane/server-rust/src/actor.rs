@@ -22,11 +22,9 @@ use tokio::task::JoinHandle;
 use tokio::time::Instant;
 use tonic::Status;
 
-use crate::config::ControllerConfig;
-use crate::profile;
-use crate::protocol::client_frame::Payload as ClientPayload;
-use crate::protocol::fetch_space_result::Result as FetchResult;
-use crate::protocol::{
+use crate::actor_messages::client_frame::Payload as ClientPayload;
+use crate::actor_messages::fetch_space_result::Result as FetchResult;
+use crate::actor_messages::{
     ClientFrame, CommandErrorCode, CommandRejected, DesiredStateReconciled, DesiredStateSnapshot,
     FetchSpaceResult, ObservedSpacesAccepted, OwnershipRevocationReason,
     ParticipantOwnershipGranted, ParticipantOwnershipRevoked, ParticipantRegistration,
@@ -34,6 +32,8 @@ use crate::protocol::{
     ParticipantStatusChanged, ResyncRequired, ServerFrame, SessionClosing, SessionReady,
     SpaceAbsent, SpaceClosed, SpaceParticipant, SpaceSnapshot,
 };
+use crate::config::ControllerConfig;
+use crate::profile;
 
 pub(crate) type ResponseSender = mpsc::Sender<Result<ServerFrame, Status>>;
 
@@ -348,7 +348,7 @@ impl ControllerActor {
             session_id,
             ServerFrame {
                 request_id: request_id.clone(),
-                payload: Some(crate::protocol::server_frame::Payload::SessionReady(
+                payload: Some(crate::actor_messages::server_frame::Payload::SessionReady(
                     protocol_ready,
                 )),
             },
@@ -441,12 +441,14 @@ impl ControllerActor {
                         session_id,
                         ServerFrame {
                             request_id,
-                            payload: Some(crate::protocol::server_frame::Payload::ResyncRequired(
-                                ResyncRequired {
-                                    reason: "the server replica no longer matches this session"
-                                        .to_owned(),
-                                },
-                            )),
+                            payload: Some(
+                                crate::actor_messages::server_frame::Payload::ResyncRequired(
+                                    ResyncRequired {
+                                        reason: "the server replica no longer matches this session"
+                                            .to_owned(),
+                                    },
+                                ),
+                            ),
                         },
                     );
                 }
@@ -602,11 +604,13 @@ impl ControllerActor {
                     session_id,
                     ServerFrame {
                         request_id,
-                        payload: Some(crate::protocol::server_frame::Payload::FetchSpaceResult(
-                            FetchSpaceResult {
-                                result: Some(result),
-                            },
-                        )),
+                        payload: Some(
+                            crate::actor_messages::server_frame::Payload::FetchSpaceResult(
+                                FetchSpaceResult {
+                                    result: Some(result),
+                                },
+                            ),
+                        ),
                     },
                 );
             }
@@ -624,11 +628,13 @@ impl ControllerActor {
                     session_id,
                     ServerFrame {
                         request_id,
-                        payload: Some(crate::protocol::server_frame::Payload::SessionClosing(
-                            SessionClosing {
-                                reason: "session closed by controller".to_owned(),
-                            },
-                        )),
+                        payload: Some(
+                            crate::actor_messages::server_frame::Payload::SessionClosing(
+                                SessionClosing {
+                                    reason: "session closed by controller".to_owned(),
+                                },
+                            ),
+                        ),
                     },
                 );
                 self.remove_session(session_id, OwnershipRevocationReason::ParticipantReleased);
@@ -750,7 +756,7 @@ impl ControllerActor {
             ServerFrame {
                 request_id,
                 payload: Some(
-                    crate::protocol::server_frame::Payload::DesiredStateReconciled(
+                    crate::actor_messages::server_frame::Payload::DesiredStateReconciled(
                         DesiredStateReconciled {
                             desired_state_revision: snapshot.desired_state_revision,
                         },
@@ -1233,7 +1239,7 @@ impl ControllerActor {
             ServerFrame {
                 request_id,
                 payload: Some(
-                    crate::protocol::server_frame::Payload::ParticipantSpecAccepted(
+                    crate::actor_messages::server_frame::Payload::ParticipantSpecAccepted(
                         ParticipantSpecAccepted {
                             participant_id,
                             client_spec_revision: ownership.client_revision,
@@ -1384,7 +1390,7 @@ impl ControllerActor {
             ServerFrame {
                 request_id,
                 payload: Some(
-                    crate::protocol::server_frame::Payload::ObservedSpacesAccepted(
+                    crate::actor_messages::server_frame::Payload::ObservedSpacesAccepted(
                         ObservedSpacesAccepted {
                             observed_spaces_revision: revision,
                         },
@@ -1718,7 +1724,7 @@ impl ControllerActor {
             ServerFrame {
                 request_id,
                 payload: Some(
-                    crate::protocol::server_frame::Payload::ParticipantOwnershipGranted(
+                    crate::actor_messages::server_frame::Payload::ParticipantOwnershipGranted(
                         ParticipantOwnershipGranted {
                             participant_id: participant.participant_id.clone(),
                             registration_id: ownership.registration_id,
@@ -1727,7 +1733,7 @@ impl ControllerActor {
                             accepted_spec_revision: ownership.client_revision,
                             applied_spec_revision: participant.applied_spec_revision,
                             published_generation: participant.published_generation,
-                            mumble_join_token: join_token,
+                            connection_credential: join_token,
                         },
                     ),
                 ),
@@ -1748,7 +1754,7 @@ impl ControllerActor {
             ServerFrame {
                 request_id,
                 payload: Some(
-                    crate::protocol::server_frame::Payload::ParticipantOwnershipRevoked(
+                    crate::actor_messages::server_frame::Payload::ParticipantOwnershipRevoked(
                         ParticipantOwnershipRevoked {
                             participant_id: participant_id.to_owned(),
                             registration_id,
@@ -1767,17 +1773,17 @@ impl ControllerActor {
         let Some(ownership) = self.ownership.get(participant_id).cloned() else {
             return;
         };
-        let mumble_connected = self.host.connection(&participant.participant_id).is_some();
+        let connected = self.host.connection(&participant.participant_id).is_some();
         self.send_session(
             ownership.owner,
             ServerFrame {
                 request_id: Vec::new(),
                 payload: Some(
-                    crate::protocol::server_frame::Payload::ParticipantStatusChanged(
+                    crate::actor_messages::server_frame::Payload::ParticipantStatusChanged(
                         ParticipantStatusChanged {
                             participant_id: participant.participant_id,
                             status: Some(ParticipantStatus {
-                                mumble_connected,
+                                connected,
                                 applied_space_key: participant
                                     .applied_space_key
                                     .unwrap_or_default(),
@@ -1806,7 +1812,7 @@ impl ControllerActor {
                 display_name: participant.spec.display_name().to_owned(),
                 server_mute: participant.spec.server_mute(),
                 server_deaf: participant.spec.server_deaf(),
-                mumble_connected: self.host.connection(&participant.participant_id).is_some(),
+                connected: self.host.connection(&participant.participant_id).is_some(),
             })
             .collect();
         Some(SpaceSnapshot {
@@ -1831,7 +1837,7 @@ impl ControllerActor {
                     session_id,
                     ServerFrame {
                         request_id: Vec::new(),
-                        payload: Some(crate::protocol::server_frame::Payload::SpaceSnapshot(
+                        payload: Some(crate::actor_messages::server_frame::Payload::SpaceSnapshot(
                             snapshot,
                         )),
                     },
@@ -1855,7 +1861,7 @@ impl ControllerActor {
                 session_id,
                 ServerFrame {
                     request_id: Vec::new(),
-                    payload: Some(crate::protocol::server_frame::Payload::SpaceSnapshot(
+                    payload: Some(crate::actor_messages::server_frame::Payload::SpaceSnapshot(
                         snapshot.clone(),
                     )),
                 },
@@ -1875,7 +1881,7 @@ impl ControllerActor {
                 session_id,
                 ServerFrame {
                     request_id: Vec::new(),
-                    payload: Some(crate::protocol::server_frame::Payload::SpaceClosed(
+                    payload: Some(crate::actor_messages::server_frame::Payload::SpaceClosed(
                         SpaceClosed {
                             space_key: space_key.to_owned(),
                             incarnation_id: space.incarnation_id().to_vec(),
@@ -1983,12 +1989,12 @@ impl ControllerActor {
 fn rejection(request_id: Vec<u8>, code: CommandErrorCode, message: &str) -> ServerFrame {
     ServerFrame {
         request_id,
-        payload: Some(crate::protocol::server_frame::Payload::CommandRejected(
-            CommandRejected {
+        payload: Some(
+            crate::actor_messages::server_frame::Payload::CommandRejected(CommandRejected {
                 code: code.into(),
                 message: message.to_owned(),
-            },
-        )),
+            }),
+        ),
     }
 }
 
@@ -2040,9 +2046,9 @@ mod tests {
     use tokio::sync::mpsc;
 
     use super::*;
-    use crate::protocol::client_frame::Payload as ClientPayload;
-    use crate::protocol::server_frame::Payload as ServerPayload;
-    use crate::protocol::{
+    use crate::actor_messages::client_frame::Payload as ClientPayload;
+    use crate::actor_messages::server_frame::Payload as ServerPayload;
+    use crate::actor_messages::{
         CloseSession, FetchSpace, OpenSession, RegisterParticipant, ReleaseParticipant, RenewLease,
         ReplaceObservedSpaces, SetParticipantSpec,
     };
@@ -2247,8 +2253,11 @@ mod tests {
         let mut harness = Harness::new(ControllerConfig::default());
         let (mut session, grant) = open_owned(&mut harness).await;
         assert_eq!(grant.ownership_token.len(), 32);
-        assert_eq!(grant.mumble_join_token.len(), 43);
-        assert_ne!(grant.ownership_token, grant.mumble_join_token.as_bytes());
+        assert_eq!(grant.connection_credential.len(), 43);
+        assert_ne!(
+            grant.ownership_token,
+            grant.connection_credential.as_bytes()
+        );
 
         let barrier = session
             .until(|payload| matches!(payload, ServerPayload::DesiredStateReconciled(_)))
@@ -2296,7 +2305,7 @@ mod tests {
             unreachable!()
         };
         assert_eq!(restored.ownership_token, grant.ownership_token);
-        assert_eq!(restored.mumble_join_token, grant.mumble_join_token);
+        assert_eq!(restored.connection_credential, grant.connection_credential);
     }
 
     #[tokio::test(start_paused = true)]
@@ -2341,7 +2350,7 @@ mod tests {
             .sender()
             .send(ActorCommand::Route {
                 connection: ConnectionId(98),
-                credential: Some(grant.mumble_join_token),
+                credential: Some(grant.connection_credential),
                 response,
             })
             .await
@@ -2410,7 +2419,10 @@ mod tests {
             unreachable!()
         };
         assert_ne!(new_grant.ownership_token, old_grant.ownership_token);
-        assert_ne!(new_grant.mumble_join_token, old_grant.mumble_join_token);
+        assert_ne!(
+            new_grant.connection_credential,
+            old_grant.connection_credential
+        );
         assert_eq!(new_grant.accepted_spec_revision, 1);
         assert_eq!(new_grant.applied_spec_revision, 0);
 
@@ -2453,7 +2465,7 @@ mod tests {
             .sender()
             .send(ActorCommand::Route {
                 connection: ConnectionId(99),
-                credential: Some(new_grant.mumble_join_token),
+                credential: Some(new_grant.connection_credential),
                 response,
             })
             .await
@@ -2533,7 +2545,7 @@ mod tests {
             .sender()
             .send(ActorCommand::Route {
                 connection: ConnectionId(100),
-                credential: Some(grant.mumble_join_token),
+                credential: Some(grant.connection_credential),
                 response,
             })
             .await

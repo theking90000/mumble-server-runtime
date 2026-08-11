@@ -102,5 +102,6 @@ material, and none of it is required to build a working integration.
 
 This integration is pre-1.0 and still changing. The Java artifact is not yet
 published to a public repository, and details may change between versions. The
-protocol contract is versioned (`mumble.controller.v1`) and its compiled
-descriptor digest is pinned in CI, so wire compatibility cannot break silently.
+Core and Spaces have independently versioned contracts
+(`mumble.controller.core.v1` and `mumble.controller.spaces.v1`). Their compiled
+descriptor digests are pinned in CI, so wire compatibility cannot break silently.
