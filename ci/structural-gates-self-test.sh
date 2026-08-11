@@ -102,6 +102,12 @@ assert_controller_gate_rejects core-runtime control-plane/core/rust/src/controll
   'use mumble_server_runtime_gateway::RuntimeHandle;'
 assert_controller_gate_rejects core-spaces control-plane/core/rust/src/controller.rs \
   'struct SpaceSnapshot;'
+assert_controller_gate_rejects core-java-spaces \
+  control-plane/core/clients/java/src/main/java/example/ControllerSession.java \
+  'import example.spaces.SpaceKey;'
+assert_controller_gate_rejects core-contract-spaces \
+  control-plane/core/contract/src/main/proto/example/core.proto \
+  'message FetchSpace {}'
 assert_controller_gate_rejects host-spaces control-plane/host/rust/src/host.rs \
   'use mumble_controller_spaces::SpaceKey;'
 assert_dependency_rejects core-runtime \
@@ -113,5 +119,11 @@ assert_dependency_rejects host-spaces \
 assert_boundary_rejects controller \
   control-plane/core/rust/src/controller.rs \
   control-plane/verification/core-conformance/tests/session.rs
+assert_boundary_rejects controller-java \
+  control-plane/core/clients/java/src/main/java/example/ControllerSession.java \
+  control-plane/verification/core-conformance/tests/session.rs
+assert_boundary_rejects controller-contract \
+  control-plane/implementations/spaces/contract/src/main/proto/spaces.proto \
+  control-plane/verification/spaces-interop/scenario.rs
 
 echo "✓ structural-gates-self-test.sh: runtime and Controller boundaries are enforced."

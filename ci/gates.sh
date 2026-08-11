@@ -32,6 +32,17 @@ crate_src_files() {
   done
 }
 
+# Source and schema files that form a Controller layer's public surface.
+controller_layer_files() {
+  local layer
+  for layer in "$@"; do
+    [ -d "$layer" ] || continue
+    find "$layer" -type f \
+      \( -name '*.rs' -o -name '*.java' -o -name '*.proto' -o -name '*.kt' \) \
+      2>/dev/null || true
+  done
+}
+
 report() {
   echo "  ✗ $1"
   violations=$((violations + 1))
@@ -88,8 +99,8 @@ for pure_spec in "${pure_crates[@]}"; do
 done
 
 # --- Controller Core : pure synchronization state, without transport or business policy ---
-mapfile -t controller_core_files < <(crate_src_files \
-  control-plane/core/rust)
+mapfile -t controller_core_files < <(controller_layer_files \
+  control-plane/core)
 forbid "controller-core/no-runtime" \
        '(mumble[_-]server[_-]runtime|RuntimeHandle|ShardHandle|ShardId|ConnectionId)' "${controller_core_files[@]}"
 forbid "controller-core/no-transport" \
@@ -98,8 +109,8 @@ forbid "controller-core/no-spaces" \
        '(SpaceKey|SpaceSnapshot|SpaceParticipant|FetchSpace|ObservedSpaces|mumble[_-]controller[_-]spaces)' "${controller_core_files[@]}"
 
 # --- Controller Host : runtime bridge without a concrete profile policy ---
-mapfile -t controller_host_files < <(crate_src_files \
-  control-plane/host/rust)
+mapfile -t controller_host_files < <(controller_layer_files \
+  control-plane/host)
 forbid "controller-host/no-spaces" \
        '(SpaceKey|SpaceSnapshot|SpaceParticipant|FetchSpace|ObservedSpaces|mumble[_-]controller[_-]spaces)' "${controller_host_files[@]}"
 
