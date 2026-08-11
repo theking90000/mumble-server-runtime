@@ -320,6 +320,51 @@ impl SpacesState {
     pub fn latest_application_revision(&self) -> u64 {
         self.next_application_revision.saturating_sub(1)
     }
+
+    /// Apply one runtime reconciliation to the Space that produced it.
+    ///
+    /// Reports rendered before a participant moved are deliberately ignored:
+    /// otherwise an out-of-order bridge task could publish the Space that the
+    /// participant has already left.
+    pub fn reconcile(
+        &mut self,
+        space_key: &str,
+        application_revision: u64,
+        report: &ReconcileReport,
+    ) -> Option<Vec<String>> {
+        let reconciliation = self
+            .materialized
+            .get_mut(space_key)?
+            .reconcile(application_revision, report)?;
+        Some(self.apply_reconciliation(space_key, reconciliation))
+    }
+
+    fn apply_reconciliation(
+        &mut self,
+        space_key: &str,
+        reconciliation: SpaceReconciliation,
+    ) -> Vec<String> {
+        let participant_ids = reconciliation.revisions.keys().cloned().collect();
+        for (participant_id, applied_revision) in reconciliation.revisions {
+            let Some(participant) = self.participants.get_mut(&participant_id) else {
+                continue;
+            };
+            if participant.spec.space_key().as_str() != space_key {
+                continue;
+            }
+            match &reconciliation.refusal {
+                Some(error) => participant.application_error = error.clone(),
+                None => {
+                    participant.applied_spec_revision =
+                        participant.applied_spec_revision.max(applied_revision);
+                    participant.applied_space_key = Some(space_key.to_owned());
+                    participant.published_generation = reconciliation.published_generation;
+                    participant.application_error.clear();
+                }
+            }
+        }
+        participant_ids
+    }
 }
 
 impl Default for SpacesState {
@@ -597,6 +642,40 @@ mod tests {
         assert_eq!(state.take_application_revision(), 1);
         assert_eq!(state.take_application_revision(), 2);
         assert_eq!(state.latest_application_revision(), 2);
+    }
+
+    #[test]
+    fn a_reconciliation_cannot_reapply_a_space_the_participant_left() {
+        let mut state = SpacesState::new();
+        state.participants.insert(
+            "alice".to_owned(),
+            ParticipantState {
+                participant_id: "alice".to_owned(),
+                applied_spec_revision: 7,
+                applied_space_key: Some("arena".to_owned()),
+                published_generation: 9,
+                spec: ParticipantSpec::new("arena".to_owned(), "Alice".to_owned(), false, false)
+                    .expect("valid participant"),
+                self_mute: false,
+                self_deaf: false,
+                application_error: String::new(),
+            },
+        );
+
+        let touched = state.apply_reconciliation(
+            "lobby",
+            SpaceReconciliation {
+                revisions: BTreeMap::from([("alice".to_owned(), 3)]),
+                refusal: None,
+                published_generation: 4,
+            },
+        );
+
+        assert_eq!(touched, vec!["alice"]);
+        let alice = &state.participants["alice"];
+        assert_eq!(alice.applied_space_key.as_deref(), Some("arena"));
+        assert_eq!(alice.applied_spec_revision, 7);
+        assert_eq!(alice.published_generation, 9);
     }
 
     #[derive(Clone)]
