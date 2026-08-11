@@ -263,7 +263,7 @@ public final class CoreSession {
     }
 
     /**
-     * Sends one reliable profile command on the active stream.
+     * Sends one reliable profile command on a ready stream.
      *
      * <p>The future completes with the first profile event carrying the same request identifier,
      * or exceptionally if the command is rejected or its stream closes.</p>
@@ -272,9 +272,35 @@ public final class CoreSession {
      * @return correlated profile response future
      */
     public CompletableFuture<ProfilePayload> sendProfileCommand(ProfilePayload command) {
+        return sendProfileCommandInternal(command, null);
+    }
+
+    /**
+     * Sends a reliable profile command and records the complete state it produces for replay.
+     *
+     * <p>The resulting state is included in every later reconnect snapshot without forcing a
+     * redundant desired-state synchronization on the current stream. The correlated profile event
+     * remains the acceptance barrier for the command.</p>
+     *
+     * @param command complete encoded profile command
+     * @param resultingState complete encoded state after the command is accepted
+     * @return correlated profile response future
+     */
+    public CompletableFuture<ProfilePayload> sendProfileCommand(
+            ProfilePayload command, ProfilePayload resultingState) {
+        Objects.requireNonNull(resultingState, "resultingState");
+        return sendProfileCommandInternal(command, resultingState);
+    }
+
+    private CompletableFuture<ProfilePayload> sendProfileCommandInternal(
+            ProfilePayload command, ProfilePayload resultingState) {
         Objects.requireNonNull(command, "command");
         synchronized (monitor) {
-            ensureActive();
+            ensureProfileCommandAvailable();
+            if (resultingState != null) {
+                profileState = resultingState;
+                desiredStateRevision++;
+            }
             final CompletableFuture<ProfilePayload> future =
                     new CompletableFuture<ProfilePayload>();
             ByteString requestId = reliableRequests.track(
@@ -369,6 +395,22 @@ public final class CoreSession {
      */
     public void removeProfileEventListener(ProfileEventListener listener) {
         profileEventListeners.remove(listener);
+    }
+
+    /**
+     * Fails this session after the negotiated profile rejects a decoded payload.
+     *
+     * <p>Typed profile facades call this fail-closed boundary when an envelope is structurally
+     * valid Core protocol but its negotiated profile payload is missing, malformed, or unexpected.
+     * No reconnection is attempted for a deterministic schema violation.</p>
+     *
+     * @param failure profile decoding or semantic protocol failure
+     */
+    public void reportProfileProtocolFailure(ControllerException failure) {
+        Objects.requireNonNull(failure, "failure");
+        synchronized (monitor) {
+            failPermanently(failure);
+        }
     }
 
     Object monitor() {
@@ -1081,10 +1123,13 @@ public final class CoreSession {
         }
     }
 
-    private void ensureActive() {
-        if (lifecycle.state() != ControllerSessionState.ACTIVE) {
+    private void ensureProfileCommandAvailable() {
+        if ((lifecycle.state() != ControllerSessionState.ACTIVE
+                        && lifecycle.state() != ControllerSessionState.RECONCILING)
+                || !sessionReady
+                || sessionToken.isEmpty()) {
             throw new ControllerException(
-                    "controller session is not active: " + lifecycle.state());
+                    "controller profile commands are not available: " + lifecycle.state());
         }
     }
 
