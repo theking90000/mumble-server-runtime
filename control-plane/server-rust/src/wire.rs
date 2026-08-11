@@ -169,7 +169,6 @@ pub(crate) fn to_core_frame(frame: legacy::ServerFrame) -> Result<core::ServerFr
                     accepted_spec_revision: message.accepted_spec_revision,
                     applied_spec_revision: message.applied_spec_revision,
                     published_generation: message.published_generation,
-                    mumble_join_token: message.mumble_join_token.clone(),
                     connection_credential: message.mumble_join_token,
                 },
             )
@@ -233,34 +232,12 @@ pub(crate) fn to_core_frame(frame: legacy::ServerFrame) -> Result<core::ServerFr
     })
 }
 
-fn profile_event(mut event: spaces::event::Event) -> core::server_frame::Payload {
-    mirror_connection_state(&mut event);
+fn profile_event(event: spaces::event::Event) -> core::server_frame::Payload {
     core::server_frame::Payload::ProfileEvent(core::ProfileEvent {
         payload: Some(core::ProfilePayload {
             protobuf: encode_event(event),
         }),
     })
-}
-
-fn mirror_connection_state(event: &mut spaces::event::Event) {
-    use spaces::event::Event;
-
-    match event {
-        Event::SpaceSnapshot(snapshot) => mirror_snapshot_connection_state(snapshot),
-        Event::FetchSpaceResult(result) => {
-            if let Some(spaces::fetch_space_result::Result::Snapshot(snapshot)) = &mut result.result
-            {
-                mirror_snapshot_connection_state(snapshot);
-            }
-        }
-        Event::ObservedSpacesAccepted(_) | Event::SpaceClosed(_) => {}
-    }
-}
-
-fn mirror_snapshot_connection_state(snapshot: &mut spaces::SpaceSnapshot) {
-    for participant in &mut snapshot.participants {
-        participant.connected = participant.mumble_connected;
-    }
 }
 
 fn to_core_status(status: legacy::ParticipantStatus) -> core::ParticipantStatus {
@@ -270,7 +247,7 @@ fn to_core_status(status: legacy::ParticipantStatus) -> core::ParticipantStatus 
         self_deaf: status.self_deaf,
     };
     core::ParticipantStatus {
-        mumble_connected: status.mumble_connected,
+        connected: status.mumble_connected,
         accepted_spec_revision: status.accepted_spec_revision,
         applied_spec_revision: status.applied_spec_revision,
         published_generation: status.published_generation,
@@ -278,7 +255,6 @@ fn to_core_status(status: legacy::ParticipantStatus) -> core::ParticipantStatus 
         profile_status: Some(core::ProfilePayload {
             protobuf: encode_participant_status(profile_status),
         }),
-        connected: status.mumble_connected,
     }
 }
 
@@ -382,20 +358,5 @@ mod tests {
             panic!("oversized payload must fail");
         };
         assert_eq!(error.code(), tonic::Code::ResourceExhausted);
-    }
-
-    #[test]
-    fn mirrors_connection_state_into_the_neutral_spaces_field() {
-        let mut snapshot = spaces::SpaceSnapshot {
-            participants: vec![spaces::SpaceParticipant {
-                mumble_connected: true,
-                ..Default::default()
-            }],
-            ..Default::default()
-        };
-
-        mirror_snapshot_connection_state(&mut snapshot);
-
-        assert!(snapshot.participants[0].connected);
     }
 }

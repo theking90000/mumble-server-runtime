@@ -133,8 +133,7 @@ message ParticipantOwnershipGranted {
   uint64 accepted_spec_revision = 5;
   uint64 applied_spec_revision = 6;
   uint64 published_generation = 7;
-  string mumble_join_token = 8;
-  string connection_credential = 9;
+  string connection_credential = 8;
 }
 
 enum OwnershipRevocationReason {
@@ -160,13 +159,12 @@ message ParticipantSpecAccepted {
 }
 
 message ParticipantStatus {
-  bool mumble_connected = 1;
+  bool connected = 1;
   uint64 accepted_spec_revision = 2;
   uint64 applied_spec_revision = 3;
   uint64 published_generation = 4;
   string application_error = 5;
   ProfilePayload profile_status = 6;
-  bool connected = 7;
 }
 
 message ParticipantStatusChanged {

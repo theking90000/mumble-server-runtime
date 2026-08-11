@@ -57,8 +57,7 @@ message SpaceParticipant {
   string display_name = 2;
   bool server_mute = 3;
   bool server_deaf = 4;
-  bool mumble_connected = 5;
-  bool connected = 6;
+  bool connected = 5;
 }
 
 message SpaceSnapshot {
