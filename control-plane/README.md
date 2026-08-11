@@ -14,7 +14,8 @@ Current modules:
 - `reference/bukkit-spaces`: a buildable Spigot 1.8 plugin using the SDK, kept as
   a separate Gradle build.
 
-The Java API uses the package `be.theking90000.mumble.controller` and is published as:
+The Java API is split between `be.theking90000.mumble.controller.core` and
+`be.theking90000.mumble.controller.spaces`, and is published as:
 
 ```text
 be.theking90000.mumble:controller-core

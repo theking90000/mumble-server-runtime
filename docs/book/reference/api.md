@@ -19,7 +19,8 @@ documentation resolves.
 The Java 8 controller SDK has a separate generated
 [`JavaDoc entry point`](../controller/index.html). It documents the declarative
 participant model, ownership lifecycle, read-only spaces and asynchronous
-completion semantics exposed by `be.theking90000.mumble.controller`.
+completion semantics exposed by `be.theking90000.mumble.controller.core` and
+`be.theking90000.mumble.controller.spaces`.
 
 To build the same documentation locally:
 

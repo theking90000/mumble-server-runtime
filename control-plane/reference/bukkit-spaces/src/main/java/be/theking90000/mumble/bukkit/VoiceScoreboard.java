@@ -1,12 +1,12 @@
 package be.theking90000.mumble.bukkit;
 
-import be.theking90000.mumble.controller.ControllerSessionState;
-import be.theking90000.mumble.controller.ParticipantHandle;
-import be.theking90000.mumble.controller.ParticipantHandleState;
-import be.theking90000.mumble.controller.ParticipantSpec;
-import be.theking90000.mumble.controller.ParticipantStatus;
-import be.theking90000.mumble.controller.SpaceKey;
-import be.theking90000.mumble.controller.SpaceSnapshot;
+import be.theking90000.mumble.controller.core.ControllerSessionState;
+import be.theking90000.mumble.controller.core.ParticipantHandleState;
+import be.theking90000.mumble.controller.spaces.ParticipantHandle;
+import be.theking90000.mumble.controller.spaces.ParticipantSpec;
+import be.theking90000.mumble.controller.spaces.ParticipantStatus;
+import be.theking90000.mumble.controller.spaces.SpaceKey;
+import be.theking90000.mumble.controller.spaces.SpaceSnapshot;
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
 import org.bukkit.entity.Player;

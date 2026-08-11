@@ -33,14 +33,12 @@ val generateControllerProfileMetadata = tasks.register("generateControllerProfil
             "Controller descriptor digest must be 64 lowercase hexadecimal characters"
         }
         val output = profileMetadataDirectory.get().file(
-            "be/theking90000/mumble/controller/internal/ProfileMetadata.java"
+            "be/theking90000/mumble/controller/spaces/internal/ProfileMetadata.java"
         ).asFile
         output.parentFile.mkdirs()
         output.writeText(
             """
-            package be.theking90000.mumble.controller.internal;
-
-            import be.theking90000.mumble.controller.internal.core.v1.ProfileRef;
+            package be.theking90000.mumble.controller.spaces.internal;
 
             public final class ProfileMetadata {
                 public static final String SPACES_PROFILE_ID = "mumble.controller.spaces";
@@ -50,19 +48,6 @@ val generateControllerProfileMetadata = tasks.register("generateControllerProfil
                 private ProfileMetadata() {
                 }
 
-                public static ProfileRef spacesProfile() {
-                    return ProfileRef.newBuilder()
-                            .setProfileId(SPACES_PROFILE_ID)
-                            .setSchemaVersion(SPACES_SCHEMA_VERSION)
-                            .setDescriptorDigest(SPACES_DESCRIPTOR_DIGEST)
-                            .build();
-                }
-
-                public static boolean isSpaces(ProfileRef profile) {
-                    return SPACES_PROFILE_ID.equals(profile.getProfileId())
-                            && profile.getSchemaVersion() == SPACES_SCHEMA_VERSION
-                            && SPACES_DESCRIPTOR_DIGEST.equals(profile.getDescriptorDigest());
-                }
             }
             """.trimIndent() + "\n"
         )
@@ -136,7 +121,7 @@ tasks.named("sourcesJar") {
 
 tasks.withType<Javadoc>().configureEach {
     options.encoding = "UTF-8"
-    exclude("be/theking90000/mumble/controller/internal/**")
+    exclude("be/theking90000/mumble/controller/**/internal/**")
     val docletOptions = options as StandardJavadocDocletOptions
     docletOptions.addBooleanOption("Xdoclint:all", true)
     docletOptions.addBooleanOption("Werror", true)
@@ -152,7 +137,7 @@ tasks.test {
 tasks.register<JavaExec>("controllerInterop") {
     dependsOn(tasks.testClasses)
     classpath = sourceSets.test.get().runtimeClasspath
-    mainClass.set("be.theking90000.mumble.controller.ControllerInteropMain")
+    mainClass.set("be.theking90000.mumble.controller.spaces.ControllerInteropMain")
     javaLauncher.set(javaToolchains.launcherFor {
         languageVersion.set(JavaLanguageVersion.of(8))
     })

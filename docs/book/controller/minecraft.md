@@ -20,7 +20,13 @@ Discord bot or a web backend uses the same API.
 ```java
 package com.example.voice;
 
-import be.theking90000.mumble.controller.*;
+import be.theking90000.mumble.controller.core.ControllerId;
+import be.theking90000.mumble.controller.core.ConnectionCredential;
+import be.theking90000.mumble.controller.core.ParticipantId;
+import be.theking90000.mumble.controller.spaces.ControllerSession;
+import be.theking90000.mumble.controller.spaces.ParticipantHandle;
+import be.theking90000.mumble.controller.spaces.ParticipantSpec;
+import be.theking90000.mumble.controller.spaces.SpaceKey;
 import net.md_5.bungee.api.chat.ClickEvent;
 import net.md_5.bungee.api.chat.TextComponent;
 import org.bukkit.Bukkit;
@@ -89,7 +95,7 @@ public final class VoicePlugin extends JavaPlugin implements Listener {
                 specFor(player));
         handles.put(player.getUniqueId(), handle);
 
-        handle.whenMumbleJoinTokenAvailable().thenAccept(token -> {
+        handle.whenConnectionCredentialAvailable().thenAccept(token -> {
             String url = "mumble://" + player.getName() + ":" + token.value() + "@" + publicHost;
             // Back to the server thread before touching the player.
             Bukkit.getScheduler().runTask(this, () -> {
@@ -205,7 +211,7 @@ players who muted *themselves*, read `selfMute()` from `ParticipantStatus` in
 `onStatusChanged`.
 
 **A `/voice` command.** Re-send the join link by reading
-`handle.mumbleJoinToken()`, or list a Space with `session.fetchSpace(...)`.
+`handle.connectionCredential()`, or list a Space with `session.fetchSpace(...)`.
 
 **Cross-server voice.** Two Minecraft servers pointing at the same controller
 server and using the same key convention put their players in the same Space.
