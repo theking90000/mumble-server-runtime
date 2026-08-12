@@ -24,7 +24,7 @@ clap = { version = "4", features = ["derive"] }
 getrandom = "0.4"
 mumble-controller-core = { path = "../../control/coordination/rust" }
 mumble-controller-host = { path = "../../control/runtime-adapter/rust" }
-mumble-controller-spaces = { path = "../implementations/spaces/rust" }
+mumble-controller-spaces = { path = "../../implementations/spaces/rust" }
 mumble-server-runtime-gateway = { path = "../../runtime/crates/gateway" }
 mumble-server-runtime-shard = { path = "../../runtime/crates/shard" }
 prost = "=0.14.4"

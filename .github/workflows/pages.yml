@@ -51,6 +51,7 @@ jobs:
             control-plane/**/*.gradle.kts
             control-plane/gradle/wrapper/gradle-wrapper.properties
             control/**/*.gradle.kts
+            implementations/**/*.gradle.kts
 
       - name: mdbook build
         run: mdbook build
@@ -62,7 +63,7 @@ jobs:
 
       - name: Controller JavaDoc
         working-directory: control-plane
-        run: ./gradlew --no-daemon -Dorg.gradle.java.installations.paths="$JAVA_HOME,$JAVA8_HOME" :implementations:spaces:clients:controller-spaces:javadoc
+        run: ./gradlew --no-daemon -Dorg.gradle.java.installations.paths="$JAVA_HOME,$JAVA8_HOME" :implementations:spaces:sdk:controller-spaces:javadoc
 
       - name: Assembler le site
         run: |
@@ -72,7 +73,7 @@ jobs:
           mkdir -p site/api
           cp -r target/doc/. site/api/
           mkdir -p site/controller
-          cp -r control-plane/implementations/spaces/clients/java/build/docs/javadoc/. site/controller/
+          cp -r implementations/spaces/sdk/java/build/docs/javadoc/. site/controller/
           # `cargo doc` sur un workspace multi-crates ne produit pas d'index
           # racine : sans redirection, /api/ renvoie un 404.
           if [ ! -f site/api/index.html ]; then

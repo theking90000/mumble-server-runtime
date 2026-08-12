@@ -73,9 +73,9 @@ published -> the Mumble generation produced by that render
 
 ## Repository layout
 
-The generic integration now lives under `control/`. Spaces remains temporarily
-under `control-plane/implementations/spaces` while it migrates to the sibling
-implementation tree:
+The generic integration lives under `control/`. The Spaces protocol, Rust
+model, and Java SDK live in the sibling implementation tree; only the runnable
+host and Bukkit example still have transitional paths:
 
 ```text
 control/                    reusable coordination and runtime adaptation

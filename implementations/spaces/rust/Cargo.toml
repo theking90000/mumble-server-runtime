@@ -14,8 +14,8 @@ name = "mumble_controller_spaces"
 path = "src/mumble_controller_spaces.rs"
 
 [dependencies]
-mumble-controller-core = { path = "../../../../control/coordination/rust" }
-mumble-controller-host = { path = "../../../../control/runtime-adapter/rust" }
+mumble-controller-core = { path = "../../../control/coordination/rust" }
+mumble-controller-host = { path = "../../../control/runtime-adapter/rust" }
 prost = "=0.14.4"
 thiserror = "2"
 

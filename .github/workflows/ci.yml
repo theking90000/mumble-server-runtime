@@ -80,6 +80,7 @@ jobs:
           cache-dependency-path: |
             control-plane/**/*.gradle.kts
             control/**/*.gradle.kts
+            implementations/**/*.gradle.kts
       - name: SDK build and checks on a Java 8 test runtime
         run: ./gradlew --no-daemon -Dorg.gradle.java.installations.paths="$JAVA_HOME,$JAVA8_HOME" build
 
@@ -104,6 +105,7 @@ jobs:
           cache-dependency-path: |
             control-plane/**/*.gradle.kts
             control/**/*.gradle.kts
+            implementations/**/*.gradle.kts
       - name: Real ControllerSession to Mumble path
         run: ci/controller-interop.sh
 

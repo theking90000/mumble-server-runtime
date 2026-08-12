@@ -26,7 +26,7 @@ pub use wire::{
 pub const PROFILE_ID: &str = "mumble.controller.spaces";
 /// Schema version accepted by the built-in Spaces codec.
 pub const SCHEMA_VERSION: u32 = 1;
-const DESCRIPTOR_DIGEST: &str = include_str!("../../contract/controller-spaces-v1.pb.sha256");
+const DESCRIPTOR_DIGEST: &str = include_str!("../../protocol/controller-spaces-v1.pb.sha256");
 
 /// Return the exact profile identity compiled into the built-in Spaces implementation.
 pub fn profile_ref() -> Result<ProfileRef, ProfileError> {

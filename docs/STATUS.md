@@ -29,9 +29,10 @@ Le benchmark actif est `ci/bench-shard.sh`.
 
 ## Control et implémentation Spaces
 
-Le socle générique est désormais sous `control/`, tandis que la verticale
-Spaces reste temporairement sous `control-plane/`. Les deux responsabilités
-sont séparées dans les contrats et les SDK :
+Le socle générique est désormais sous `control/`. Le protocole, le modèle Rust
+et le SDK Java Spaces sont sous `implementations/spaces/`; seuls le host
+exécutable et la référence Bukkit gardent encore un chemin `control-plane/`.
+Les deux responsabilités sont séparées dans les contrats et les SDK :
 
 - Coordination possède sessions, reprise, leases, fencing, révisions,
   déduplication, backpressure et commandes fiables ;

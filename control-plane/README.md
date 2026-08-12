@@ -1,8 +1,8 @@
 # Remote control integration
 
-This directory is the current, transitional home of both the generic remote
-control framework and the provided Spaces implementation. It does not add
-Controller network IO or business state to the runtime's core crates.
+This directory is the transitional home of the runnable Spaces host, the Gradle
+composition build, and the Bukkit example. It does not add Controller network
+IO or business state to the runtime's core crates.
 
 The target repository layout separates two sibling concerns:
 
@@ -21,9 +21,9 @@ Current paths during the mechanical migration:
 - `../control/coordination/rust`: runtime-independent coordination state;
 - `../control/coordination/sdk/java`: the Java 8 compatible Coordination SDK;
 - `../control/runtime-adapter/rust`: the generic adapter to Mumble Server Runtime;
-- `implementations/spaces/contract`: the versioned Spaces payloads;
-- `implementations/spaces/rust`: the host-side Spaces model and rendering;
-- `implementations/spaces/clients/java`: the typed Spaces SDK facade;
+- `../implementations/spaces/protocol`: the versioned Spaces payloads;
+- `../implementations/spaces/rust`: the host-side Spaces model and rendering;
+- `../implementations/spaces/sdk/java`: the typed Spaces SDK facade;
 - `server-rust`: the runnable Spaces host, still at its transitional path;
 - `reference/bukkit-spaces`: a buildable Spigot 1.8 plugin using the SDK, kept as
   a separate Gradle build.
