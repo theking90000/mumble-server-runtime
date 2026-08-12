@@ -8,7 +8,6 @@ runtime shard and audio domain without exposing runtime identifiers.
 - `rust/` validates, stores, renders, and observes Spaces state;
 - `sdk/java/` provides the typed Java 8 facade over Coordination;
 - `host/rust/` composes Coordination, the Runtime Adapter, Spaces, and the
-  runtime into the runnable `mumble-controller-server` process.
-
-The Bukkit example still lives temporarily under `control-plane/`; a later
-mechanical PR moves it into this vertical.
+  runtime into the runnable `mumble-controller-server` process;
+- `bukkit/` is the buildable Java 8 consumer example, kept as a separate Gradle
+  build so the SDK does not inherit a Minecraft dependency.
