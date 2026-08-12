@@ -21,9 +21,9 @@ members = [
     # Verificateur du contrat de synchronisation Controller.
     "control-plane/verification/core-conformance",
     # Socle de synchronisation Controller, pur et indépendant du runtime.
-    "control-plane/core/rust",
+    "control/coordination/rust",
     # Adaptation Mumble : authentification, connexions et opérations runtime.
-    "control-plane/host/rust",
+    "control/runtime-adapter/rust",
     # Profil métier fourni : un shard et un domaine audio par Space nommée.
     "control-plane/implementations/spaces/rust",
     # Application Controller : gRPC declaratif compose au-dessus du runtime.

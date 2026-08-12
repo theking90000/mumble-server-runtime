@@ -22,12 +22,12 @@ java {
 }
 
 val coreDescriptor = layout.buildDirectory.file("descriptors/controller-core-v1.pb")
-val expectedCoreDescriptorDigest = project.file("../../contract/controller-core-v1.pb.sha256")
+val expectedCoreDescriptorDigest = project.file("../../protocol/controller-core-v1.pb.sha256")
 
 sourceSets {
     main {
         proto {
-            srcDir("../../contract/src/main/proto")
+            srcDir("../../protocol/src/main/proto")
         }
     }
 }
