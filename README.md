@@ -1,5 +1,35 @@
 # Mumble Server Runtime
 
+Ce dépôt rassemble plusieurs travaux visant à utiliser Mumble dans des contextes différents de ceux pour lesquels il a été initialement conçu. L’approche retenue consiste principalement à réimplémenter entièrement un serveur Mumble tout en restant compatible avec le protocole réseau des clients existants. Cette implémentation utilise cependant des structures de données et des représentations internes différentes, afin de permettre une personnalisation beaucoup plus poussée du comportement du serveur.
+
+> [!NOTE]
+> La quasi-intégralité du code source a été réalisée à l’aide d’outils d’intelligence artificielle (voir [l'avertissement IA](#ai-assisted-development)).
+
+Ce projet n’a pas vocation à fournir une couche de contrôle par-dessus l’actuel serveur officiel de Mumble, [Murmur](https://www.mumble.info/), ni à constituer une réimplémentation plus « performante » dans un autre langage.
+
+L’idée générale est similaire à celle de [Minestom](https://minestom.net/), [Bukkit](https://dev.bukkit.org/) ou [SpigotMC](https://www.spigotmc.org/), bien que l’implémentation soit davantage comparable à celle de Minestom : être entièrement compatible avec un client Mumble non modifié tout en fournissant une interface de programmation ergonomique permettant de personnaliser le comportement du serveur.
+
+## Contenu du dépôt
+
+Le dépôt contient plusieurs composants logiciels :
+
+1. [Runtime](./runtime/) : Ensemble de crates Rust permettant de construire un serveur Mumble personnalisé. Elles fournissent les composants de base, notamment le réseau, la cryptographie, le protocole et le routage, ainsi qu’un système de rendu et de réconciliation permettant de développer directement en Rust des applications haut niveau basées sur Mumble.
+
+2. [Control](./control/) : Adaptateur générique et « opinionated » permettant de faire le lien entre une application métier et le contrôle réseau d’un serveur via gRPC, depuis plusieurs hôtes distincts (appelés « controllers »). Il fournit un crate Rust générique, un contrat gRPC ainsi qu’une implémentation de référence du client en Java.
+
+3. [Implementations](./implementations/) : Ensemble d’implémentations de référence du serveur Mumble, distribuées sous forme de serveurs tout-en-un accompagnés de leurs clients respectifs. Il contient notamment l’implémentation basique « Spaces », ainsi qu’un SDK Java associé et un plugin Bukkit de démonstration.
+
+<!--
+---
+Brouilon:
+Dans la liste des choses rendues possibles par l'implémentation custom:
+- Identifier des utilisateurs par rapport à un mdp différents ou username différent (voir même sur l'addresse IP de connexion).
+- Afficher/Cacher des informations différentes aux joueurs
+
+Cette bibliothèque vise à repenser la façon dont Mumble est utilisée actuellement sur les serveurs de jeu (principalement Minecraft). Elle contient plusieurs "innovations" conceptuelles permettant de répondre à des besoins ciblés : 
+
+Premièrement, permettre une meilleur utilisation d'un serveur Mumble
+
 **A programmable, declarative Mumble server runtime.**
 
 Mumble Server Runtime aims to be for Mumble what
@@ -247,6 +277,8 @@ ci/controller-interop.sh       # real Java SDK -> Rust server -> Mumble path
 
 The live tests open loopback sockets. The toolchain is pinned in
 `rust-toolchain.toml` (Rust 1.93, edition 2024).
+
+-->
 
 ## License
 
