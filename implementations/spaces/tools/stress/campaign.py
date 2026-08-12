@@ -20,8 +20,11 @@ from typing import Any, Iterable
 
 
 SCHEMA_VERSION = 1
-DRIVER_OPERATION_WINDOW = 512
-MAX_CONTROLLERS = 64
+WORKER_CLIENT_LIMIT = 512
+DEFAULT_MAX_PARTICIPANTS_PER_CONTROLLER = 100
+MAX_PARTICIPANTS_PER_CONTROLLER = 200
+DEFAULT_CONTROLLERS_PER_DRIVER_PROCESS = 8
+MAX_CONTROLLERS = 128
 LARGE_LOAD_THRESHOLD = 4_096
 ALLOWED_CARDINALITIES = {8, 32, 64, 128, 256}
 AUDIO_LEVELS = ("none", "one_per_space", "five_percent")
@@ -85,8 +88,10 @@ def next_power_of_two(value: int) -> int:
     return 1 if value <= 1 else 1 << (value - 1).bit_length()
 
 
-def controller_count(participants: int, requested: str | int) -> int:
-    minimum = math.ceil(participants / DRIVER_OPERATION_WINDOW)
+def controller_count(
+    participants: int, requested: str | int, max_participants_per_controller: int
+) -> int:
+    minimum = math.ceil(participants / max_participants_per_controller)
     if requested == "auto":
         controllers = next_power_of_two(minimum) if minimum <= 8 else minimum
     else:
@@ -95,9 +100,9 @@ def controller_count(participants: int, requested: str | int) -> int:
         raise ValueError(
             f"{participants} participants require more than {MAX_CONTROLLERS} Controllers"
         )
-    if math.ceil(participants / controllers) > DRIVER_OPERATION_WINDOW:
+    if math.ceil(participants / controllers) > max_participants_per_controller:
         raise ValueError(
-            f"{participants} participants exceed the Java operation window with "
+            f"{participants} participants exceed the per-Controller target with "
             f"{controllers} Controller(s); use at least {minimum}"
         )
     return controllers
@@ -118,6 +123,8 @@ def plan_points(
     max_participants: int,
     seeds: Iterable[int],
     controllers: str | int,
+    max_participants_per_controller: int,
+    controllers_per_driver_process: int,
 ) -> list[dict[str, Any]]:
     matrix_points = matrix.get("points")
     if not isinstance(matrix_points, list):
@@ -156,10 +163,18 @@ def plan_points(
         ),
     ):
         for seed in sorted(set(seeds)):
+            logical_controllers = controller_count(
+                base["participants"], controllers, max_participants_per_controller
+            )
             point = {
                 **base,
                 "seed": seed,
-                "controllers": controller_count(base["participants"], controllers),
+                "controllers": logical_controllers,
+                "driver_processes": math.ceil(
+                    logical_controllers / controllers_per_driver_process
+                ),
+                "controllers_per_driver_process": controllers_per_driver_process,
+                "max_participants_per_controller": max_participants_per_controller,
                 "status": "pending",
                 "attempts": 0,
             }
@@ -211,6 +226,14 @@ def command_for_point(
         str(driver),
         "--controllers",
         str(point["controllers"]),
+        "--max-participants-per-controller",
+        str(point.get(
+            "max_participants_per_controller", DEFAULT_MAX_PARTICIPANTS_PER_CONTROLLER
+        )),
+        "--controllers-per-driver-process",
+        str(point.get(
+            "controllers_per_driver_process", DEFAULT_CONTROLLERS_PER_DRIVER_PROCESS
+        )),
         "--participants",
         str(point["participants"]),
         "--participants-per-space",
@@ -245,9 +268,15 @@ def required_open_files(points: list[dict[str, Any]]) -> int:
     for point in points:
         participants = int(point["participants"])
         controllers = int(point["controllers"])
-        workers = math.ceil(participants / DRIVER_OPERATION_WINDOW)
-        coordinator = participants + 1_024 + 4 * (controllers + workers)
-        worker = 2 * min(participants, DRIVER_OPERATION_WINDOW) + 256
+        driver_processes = int(
+            point.get(
+                "driver_processes",
+                math.ceil(controllers / DEFAULT_CONTROLLERS_PER_DRIVER_PROCESS),
+            )
+        )
+        workers = math.ceil(participants / WORKER_CLIENT_LIMIT)
+        coordinator = participants + 1_024 + 4 * (driver_processes + workers)
+        worker = 2 * min(participants, WORKER_CLIENT_LIMIT) + 256
         maximum = max(maximum, coordinator, worker)
     return maximum
 
@@ -431,10 +460,11 @@ def generate_reports(campaign: Path, run_root: Path, run_directory: Path | None 
 
 
 def print_plan(points: list[dict[str, Any]]) -> None:
-    print("id                                           ctrl  participants  K    spaces  audio")
+    print("id                                           ctrl  jvm  participants  K    spaces  audio")
     for point in points:
         print(
-            f"{point['id']:<44} {point['controllers']:>4}  {point['participants']:>12}  "
+            f"{point['id']:<44} {point['controllers']:>4}  {point['driver_processes']:>3}  "
+            f"{point['participants']:>12}  "
             f"{point['participants_per_space']:>3}  {point['spaces']:>6}  {point['audio']}"
         )
     print(f"\n{len(points)} benchmark run(s), estimated RLIMIT_NOFILE: {required_open_files(points)}")
@@ -447,6 +477,8 @@ def campaign_configuration(arguments: argparse.Namespace) -> dict[str, Any]:
         "max_participants": arguments.max_participants,
         "seeds": arguments.seeds,
         "controllers": arguments.controllers,
+        "max_participants_per_controller": arguments.max_participants_per_controller,
+        "controllers_per_driver_process": arguments.controllers_per_driver_process,
         "duration": arguments.duration,
         "ramp": arguments.ramp,
         "cooldown_seconds": arguments.cooldown,
@@ -606,6 +638,16 @@ def add_plan_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--max-participants", type=int, default=LARGE_LOAD_THRESHOLD)
     parser.add_argument("--seeds", type=parse_csv_integers, default=[42])
     parser.add_argument("--controllers", type=parse_controllers, default="auto")
+    parser.add_argument(
+        "--max-participants-per-controller",
+        type=int,
+        default=DEFAULT_MAX_PARTICIPANTS_PER_CONTROLLER,
+    )
+    parser.add_argument(
+        "--controllers-per-driver-process",
+        type=int,
+        default=DEFAULT_CONTROLLERS_PER_DRIVER_PROCESS,
+    )
     parser.add_argument("--binary", type=Path, default=DEFAULT_BINARY)
     parser.add_argument("--matrix-file", type=Path)
 
@@ -650,6 +692,15 @@ def main(argv: list[str] | None = None) -> int:
 
         if arguments.max_participants < 1:
             raise ValueError("--max-participants must be positive")
+        if not 1 <= arguments.max_participants_per_controller <= MAX_PARTICIPANTS_PER_CONTROLLER:
+            raise ValueError(
+                "--max-participants-per-controller must be between 1 and "
+                f"{MAX_PARTICIPANTS_PER_CONTROLLER}"
+            )
+        if not 1 <= arguments.controllers_per_driver_process <= MAX_CONTROLLERS:
+            raise ValueError(
+                f"--controllers-per-driver-process must be between 1 and {MAX_CONTROLLERS}"
+            )
         campaign = None
         if arguments.command == "run" and not arguments.dry_run:
             if arguments.max_participants > LARGE_LOAD_THRESHOLD and not arguments.ack_large_load:
@@ -669,6 +720,8 @@ def main(argv: list[str] | None = None) -> int:
             arguments.max_participants,
             arguments.seeds,
             arguments.controllers,
+            arguments.max_participants_per_controller,
+            arguments.controllers_per_driver_process,
         )
         print_plan(points)
         if arguments.command == "plan" or arguments.dry_run:

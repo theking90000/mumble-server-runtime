@@ -65,6 +65,14 @@ if find "$RESULTS" -name manifest.json -type f -exec grep -L '"driver_event_mode
   echo "spaces-stress-smoke: milestone driver event mode is missing from a manifest" >&2
   exit 1
 fi
+if find "$RESULTS" -name manifest.json -type f -exec grep -L '"driver_processes": 1' {} + | grep -q .; then
+  echo "spaces-stress-smoke: normal runs did not pack two Controllers into one JVM" >&2
+  exit 1
+fi
+if find "$RESULTS" -name manifest.json -type f -exec grep -L '"max_participants_per_controller": 100' {} + | grep -q .; then
+  echo "spaces-stress-smoke: the default per-Controller participant bound is missing" >&2
+  exit 1
+fi
 if find "$RESULTS" -name events.jsonl -type f -exec grep -L '"kind":"driver_output"' {} + | grep -q .; then
   echo "spaces-stress-smoke: final driver output counters are missing" >&2
   exit 1
