@@ -40,8 +40,17 @@ run_case voice --voice-file "$VOICE"
 ci/spaces-resilience-smoke.sh
 
 test "$(find "$RESULTS" -name summary.json -type f | wc -l | tr -d ' ')" -eq 3
+test "$(find "$RESULTS" -name 'worker-*-report.json' -type f | wc -l | tr -d ' ')" -eq 3
 if find "$RESULTS" -name summary.json -type f -exec grep -L '"errors": 0' {} + | grep -q .; then
   echo "spaces-stress-smoke: a fixed scenario reported driver errors" >&2
+  exit 1
+fi
+if find "$RESULTS" -name summary.json -type f -exec grep -L '"missing_reports": 0' {} + | grep -q .; then
+  echo "spaces-stress-smoke: a fixed scenario lost a Mumble worker report" >&2
+  exit 1
+fi
+if find "$RESULTS" -name summary.json -type f -exec grep -L '"clients_completed": 8' {} + | grep -q .; then
+  echo "spaces-stress-smoke: a fixed scenario did not complete all Mumble clients" >&2
   exit 1
 fi
 grep -R -q '"channel":"load-space-0-migrated"' "$RESULTS/migration"
