@@ -304,6 +304,14 @@ pub struct ParticipantSpecChange {
     pub desired_space_key: String,
 }
 
+/// Runtime effects requested after Spaces accepts a participant event.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ParticipantEventOutcome {
+    ParticipantMissing,
+    WrongSpace,
+    Applied { disconnect: bool, refresh: bool },
+}
+
 impl SpacesState {
     #[must_use]
     pub fn new() -> Self {
@@ -341,6 +349,42 @@ impl SpacesState {
         };
         participant.spec = spec;
         Some(change)
+    }
+
+    /// Validate and apply one runtime event against the participant's current Space.
+    pub fn apply_participant_event(
+        &mut self,
+        participant_id: &str,
+        space_key: &str,
+        kind: SpaceEventKind,
+    ) -> ParticipantEventOutcome {
+        let Some(participant) = self.participants.get_mut(participant_id) else {
+            return ParticipantEventOutcome::ParticipantMissing;
+        };
+        if participant.spec.space_key().as_str() != space_key {
+            return ParticipantEventOutcome::WrongSpace;
+        }
+        match kind {
+            SpaceEventKind::Connected => ParticipantEventOutcome::Applied {
+                disconnect: false,
+                refresh: false,
+            },
+            SpaceEventKind::Disconnected => ParticipantEventOutcome::Applied {
+                disconnect: true,
+                refresh: true,
+            },
+            SpaceEventKind::SelfState {
+                self_mute,
+                self_deaf,
+            } => {
+                participant.self_mute = self_mute;
+                participant.self_deaf = self_deaf;
+                ParticipantEventOutcome::Applied {
+                    disconnect: false,
+                    refresh: true,
+                }
+            }
+        }
     }
 
     /// Apply one runtime reconciliation to the Space that produced it.
@@ -736,6 +780,55 @@ mod tests {
         let alice = &state.participants["alice"];
         assert_eq!(alice.spec.space_key().as_str(), "arena");
         assert!(alice.spec.server_mute());
+    }
+
+    #[test]
+    fn participant_events_are_scoped_to_the_current_space() {
+        let mut state = SpacesState::new();
+        state.participants.insert(
+            "alice".to_owned(),
+            ParticipantState {
+                participant_id: "alice".to_owned(),
+                applied_spec_revision: 0,
+                applied_space_key: None,
+                published_generation: 0,
+                spec: ParticipantSpec::new("arena".to_owned(), "Alice".to_owned(), false, false)
+                    .expect("valid participant"),
+                self_mute: false,
+                self_deaf: false,
+                application_error: String::new(),
+            },
+        );
+
+        assert_eq!(
+            state.apply_participant_event(
+                "alice",
+                "lobby",
+                SpaceEventKind::SelfState {
+                    self_mute: true,
+                    self_deaf: true,
+                },
+            ),
+            ParticipantEventOutcome::WrongSpace
+        );
+        assert!(!state.participants["alice"].self_mute);
+
+        assert_eq!(
+            state.apply_participant_event(
+                "alice",
+                "arena",
+                SpaceEventKind::SelfState {
+                    self_mute: true,
+                    self_deaf: false,
+                },
+            ),
+            ParticipantEventOutcome::Applied {
+                disconnect: false,
+                refresh: true,
+            }
+        );
+        assert!(state.participants["alice"].self_mute);
+        assert!(!state.participants["alice"].self_deaf);
     }
 
     #[derive(Clone)]
