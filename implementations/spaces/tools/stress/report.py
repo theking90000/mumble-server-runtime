@@ -457,6 +457,7 @@ def safe_manifest(manifest: dict[str, Any] | None) -> dict[str, Any]:
         "operating_system",
         "architecture",
         "available_parallelism",
+        "driver_event_mode",
         "mode",
         "scenario",
         "audio",
@@ -808,7 +809,7 @@ barChart('sync-chart',data.workers.synchronization_histogram||[]);barChart('even
 for(const check of data.checks){const row=el('tr');const badge=el('span',check.status,'badge '+check.status);const statusCell=el('td');statusCell.append(badge);row.append(el('td',check.name),statusCell,el('td',check.detail));document.getElementById('checks').append(row)}
 const notices=document.getElementById('notices');for(const failure of data.failures){notices.append(el('div',`${failure.message} (${fmt(failure.occurrences)} occurrences in ${failure.files.join(', ')})`,'notice failure'))}for(const warning of data.warnings){notices.append(el('div',warning,'notice'))}
 for(const item of data.processes.roles){const row=el('tr');row.append(el('td',item.role),el('td',`${fmt(item.peak_rss_mib,1)} MiB`),el('td',`${fmt(item.peak_cpu,1)}%`));document.getElementById('process-table').append(row)}
-const meta=document.getElementById('meta');const manifest=data.manifest||{};const metaItems=[['Scenario',manifest.scenario||summary.scenario],['Audio',manifest.audio||'none'],['Fault',manifest.fault],['Controllers',manifest.controllers||summary.controllers],['Participants / Space',manifest.participants_per_space],['Seed',manifest.seed],['Mode',manifest.mode],['Platform',[manifest.operating_system,manifest.architecture].filter(Boolean).join(' / ')],['Git SHA',manifest.git_sha]];for(const item of metaItems){const box=el('div');box.append(el('dt',item[0]),el('dd',item[1]==null?'n/a':String(item[1])));meta.append(box)}
+const meta=document.getElementById('meta');const manifest=data.manifest||{};const metaItems=[['Scenario',manifest.scenario||summary.scenario],['Audio',manifest.audio||'none'],['Fault',manifest.fault],['Controllers',manifest.controllers||summary.controllers],['Participants / Space',manifest.participants_per_space],['Driver events',manifest.driver_event_mode],['Seed',manifest.seed],['Mode',manifest.mode],['Platform',[manifest.operating_system,manifest.architecture].filter(Boolean).join(' / ')],['Git SHA',manifest.git_sha]];for(const item of metaItems){const box=el('div');box.append(el('dt',item[0]),el('dd',item[1]==null?'n/a':String(item[1])));meta.append(box)}
 for(const item of data.artifacts){const link=el('a',item.name,'artifact');link.href=item.href;document.getElementById('artifacts').append(link)}
 </script></body></html>'''
 

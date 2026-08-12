@@ -42,6 +42,14 @@ The automated campaign build stores its instrumented artifacts below
 mumble-spaces-server` therefore remains separate and contains no detailed load
 instrumentation.
 
+The coordinator starts Java drivers with `--driver-event-mode milestones` by
+default. Credentials, ownership, accepted revisions, errors, and command
+outcomes remain lossless; participant status is coalesced latest-wins and
+unsolicited Space snapshots are suppressed. Each driver publishes a final
+`driver_output` event with enqueue, coalescing, suppression, write, and batch
+counters. Use `--driver-event-mode full` only when debugging every SDK callback,
+because that mode intentionally restores the much heavier event stream.
+
 Generate a standalone HTML report from an existing run without repeating it:
 
 ```sh
