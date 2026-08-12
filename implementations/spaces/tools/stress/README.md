@@ -46,6 +46,65 @@ aggregated measurements directly in the HTML. It does not embed raw logs or
 unknown JSON fields. Incomplete runs are reported too, including recognized OS
 resource failures such as file-descriptor exhaustion.
 
+## Automated benchmark campaigns
+
+The campaign runner consumes the matrix emitted by `mumble-spaces-stress`; it
+does not maintain a second copy of the load points. Preview the default silent
+capacity campaign without starting a server or writing a campaign directory:
+
+```sh
+python3 implementations/spaces/tools/stress/campaign.py plan \
+  --profile capacity \
+  --max-participants 4096
+```
+
+Before a real campaign, raise the open-file limit in the same shell. The runner
+checks it before launching the first point and also ensures that no Java driver
+receives more than its 512-operation window:
+
+```sh
+ulimit -n 65536
+python3 implementations/spaces/tools/stress/campaign.py run \
+  --profile capacity \
+  --duration 60s \
+  --ramp 30s \
+  --cooldown 15 \
+  --result-root /var/tmp/mumble-spaces-campaigns
+```
+
+`quick` runs one silent full Space for each cardinality, `capacity` runs every
+silent matrix point, and `full` runs all three official audio levels. Audio
+points use deterministic speaker sets: exactly one participant per Space or
+every twentieth participant for the 5% load. Add seeds with `--seeds 42,43,44`
+for repeated runs. Controller count defaults to `auto`; a fixed value is
+rejected before the campaign if it would saturate the Java operation window.
+
+Loads above 4,096 participants require both `--max-participants` and the
+explicit `--ack-large-load` acknowledgement. They are intended for a dedicated
+authorized host:
+
+```sh
+python3 implementations/spaces/tools/stress/campaign.py run \
+  --profile full \
+  --max-participants 10000 \
+  --ack-large-load
+```
+
+Each campaign contains `campaign-plan.json`, an atomically updated
+`campaign-state.json`, JSONL runner events, per-point logs, raw run directories,
+and a generated `index.html`. `Ctrl-C` terminates the complete managed process
+group and marks the active point as interrupted. Resume without repeating
+successful points:
+
+```sh
+python3 implementations/spaces/tools/stress/campaign.py resume \
+  /var/tmp/mumble-spaces-campaigns/campaign-YYYYMMDDTHHMMSSZ
+```
+
+Use `--retry-failed` to retry failed points and `--continue-on-error` to keep
+running after a nonzero benchmark exit. The runner itself is not invoked by CI;
+CI only exercises its deterministic planning and state-management unit tests.
+
 The harness is not a conformance oracle. Keep the independent Core and Spaces
 verification suites enabled when interpreting load results.
 

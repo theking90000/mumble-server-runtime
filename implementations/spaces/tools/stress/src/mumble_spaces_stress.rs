@@ -141,6 +141,8 @@ struct RunArguments {
     participants_per_space: usize,
     #[arg(long, value_enum, default_value = "idle")]
     scenario: Scenario,
+    #[arg(long, value_enum)]
+    audio: Option<AudioLevel>,
     #[arg(long, default_value_t = 1)]
     seed: u64,
     #[arg(long, default_value = "30s", value_parser = parse_duration)]
@@ -175,6 +177,7 @@ struct WorkerArguments {
 struct WorkerCredential {
     participant_id: String,
     credential: String,
+    voice_enabled: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -187,6 +190,7 @@ struct Manifest<'a> {
     available_parallelism: usize,
     mode: Mode,
     scenario: Scenario,
+    audio: Option<AudioLevel>,
     fault: ProcessFault,
     controllers: u16,
     participants: usize,
@@ -275,7 +279,7 @@ struct LoadPoint {
     audio: AudioLevel,
 }
 
-#[derive(Debug, Clone, Copy, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ValueEnum)]
 #[serde(rename_all = "snake_case")]
 enum AudioLevel {
     None,
@@ -571,6 +575,18 @@ fn validate_run_arguments(arguments: &RunArguments) -> Result<()> {
     }
     if matches!(arguments.mode, Mode::Managed) && arguments.participants > 10_000 {
         return Err(CampaignError::TooManyManagedConnections(arguments.participants).into());
+    }
+    if !matches!(arguments.scenario, Scenario::Voice) {
+        ensure!(
+            arguments.audio.is_none(),
+            "--audio only applies to the voice scenario"
+        );
+    }
+    if effective_audio(arguments).is_some_and(|audio| !matches!(audio, AudioLevel::None)) {
+        ensure!(
+            arguments.voice_file.is_some(),
+            "voice audio loads require --voice-file"
+        );
     }
     if is_resilience_scenario(arguments.scenario) {
         ensure!(
@@ -896,6 +912,8 @@ async fn spawn_workers(
             .arg(format!("{}ms", arguments.duration.as_millis()))
             .arg("--ramp")
             .arg(format!("{}ms", arguments.ramp.as_millis()))
+            .arg("--talk-percent")
+            .arg("100")
             .stdin(Stdio::piped())
             .stdout(Stdio::from(stdout))
             .stderr(Stdio::from(stderr))
@@ -911,6 +929,7 @@ async fn spawn_workers(
             let line = serde_json::to_vec(&WorkerCredential {
                 participant_id: participant_id.clone(),
                 credential: credential.clone(),
+                voice_enabled: speaker_enabled(arguments, participant_id),
             })?;
             input.write_all(&line).await?;
             input.write_all(b"\n").await?;
@@ -968,7 +987,7 @@ async fn run_worker(arguments: WorkerArguments) -> Result<()> {
             credential: MumbleCredential::new(&credential.participant_id, credential.credential),
             client_number: index,
             voice_clip: voice_clip.as_ref().map(Arc::clone),
-            voice_enabled: voice_clip.is_some(),
+            voice_enabled: credential.voice_enabled,
         })?;
         tasks.spawn(async move {
             let mut client = client;
@@ -1312,6 +1331,43 @@ fn effective_fault(arguments: &RunArguments) -> ProcessFault {
     }
 }
 
+fn effective_audio(arguments: &RunArguments) -> Option<AudioLevel> {
+    if matches!(arguments.scenario, Scenario::Voice) {
+        Some(arguments.audio.unwrap_or(AudioLevel::FivePercent))
+    } else {
+        None
+    }
+}
+
+fn speaker_enabled(arguments: &RunArguments, participant_id: &str) -> bool {
+    speaker_enabled_for(
+        effective_audio(arguments),
+        arguments.participants_per_space,
+        participant_id,
+    )
+}
+
+fn speaker_enabled_for(
+    audio: Option<AudioLevel>,
+    participants_per_space: usize,
+    participant_id: &str,
+) -> bool {
+    let Some(audio) = audio else {
+        return false;
+    };
+    let Some(index) = participant_id
+        .strip_prefix("load-participant-")
+        .and_then(|value| value.parse::<usize>().ok())
+    else {
+        return false;
+    };
+    match audio {
+        AudioLevel::None => false,
+        AudioLevel::OnePerSpace => index.is_multiple_of(participants_per_space),
+        AudioLevel::FivePercent => index.is_multiple_of(20),
+    }
+}
+
 async fn terminate_workers(workers: &mut Vec<Child>) -> Result<()> {
     for worker in &mut *workers {
         worker.kill().await.context("cutting Mumble worker")?;
@@ -1562,6 +1618,7 @@ fn write_manifest(directory: &Path, arguments: &RunArguments) -> Result<()> {
         available_parallelism: std::thread::available_parallelism()?.get(),
         mode: arguments.mode,
         scenario: arguments.scenario,
+        audio: effective_audio(arguments),
         fault: arguments.fault,
         controllers: arguments.controllers,
         participants: arguments.participants,
@@ -1875,10 +1932,12 @@ impl Serialize for WorkerCredential {
         struct Wire<'a> {
             participant_id: &'a str,
             credential: &'a str,
+            voice_enabled: bool,
         }
         Wire {
             participant_id: &self.participant_id,
             credential: &self.credential,
+            voice_enabled: self.voice_enabled,
         }
         .serialize(serializer)
     }
@@ -1972,6 +2031,36 @@ mod tests {
             }
         }
         Ok(())
+    }
+
+    #[test]
+    fn voice_speakers_match_the_documented_audio_loads() {
+        let one_per_space = (0..64)
+            .filter(|index| {
+                speaker_enabled_for(
+                    Some(AudioLevel::OnePerSpace),
+                    8,
+                    &format!("load-participant-{index}"),
+                )
+            })
+            .count();
+        assert_eq!(one_per_space, 8);
+
+        let five_percent = (0..100)
+            .filter(|index| {
+                speaker_enabled_for(
+                    Some(AudioLevel::FivePercent),
+                    8,
+                    &format!("load-participant-{index}"),
+                )
+            })
+            .count();
+        assert_eq!(five_percent, 5);
+        assert!(!speaker_enabled_for(
+            Some(AudioLevel::FivePercent),
+            8,
+            "unexpected-participant"
+        ));
     }
 
     #[test]
