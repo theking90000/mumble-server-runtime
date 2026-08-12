@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
 use std::fs::{File, OpenOptions};
 use std::io::{BufRead, BufReader, BufWriter, Write};
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -120,11 +120,19 @@ struct RunArguments {
     controller_endpoint: Option<String>,
     #[arg(long)]
     mumble_server: Option<SocketAddr>,
+    #[arg(long, default_value = "127.0.0.1")]
+    managed_bind_ip: IpAddr,
     #[arg(
         long,
         default_value = "implementations/spaces/tools/load-driver-java/build/install/load-driver-java/bin/load-driver-java"
     )]
     driver: PathBuf,
+    #[arg(long)]
+    driver_netns_prefix: Option<String>,
+    #[arg(long)]
+    worker_netns_prefix: Option<String>,
+    #[arg(long)]
+    phase_control: Option<PathBuf>,
     #[arg(long, default_value_t = 1, value_parser = clap::value_parser!(u16).range(1..=64))]
     controllers: u16,
     #[arg(long, default_value_t = 8, value_parser = parse_participants)]
@@ -463,6 +471,7 @@ async fn run_campaign(arguments: RunArguments) -> Result<()> {
 
     tokio::time::sleep(arguments.ramp + Duration::from_millis(250)).await;
     record_failure_phase(&coordinator_events, FailurePhase::Stable).await?;
+    wait_for_phase_control(arguments.phase_control.as_deref()).await?;
     let outcome = apply_scenario(&arguments, &plans, &mut drivers, &coordinator_events).await?;
     let replacement_credentials =
         collect_rotated_credentials(outcome.expected_rotations, &mut rotation_receiver).await?;
@@ -540,6 +549,7 @@ async fn run_campaign(arguments: RunArguments) -> Result<()> {
     summary.recovery_audits = 1;
     summary.elapsed_millis = duration_millis(started.elapsed());
     write_summary(&result_directory, &summary)?;
+    mark_phase_control_complete(arguments.phase_control.as_deref())?;
     Ok(())
 }
 
@@ -572,6 +582,28 @@ fn validate_run_arguments(arguments: &RunArguments) -> Result<()> {
         ensure!(
             arguments.controllers >= 2,
             "process faults require at least two Controller IDs"
+        );
+    }
+    if !arguments.managed_bind_ip.is_loopback() {
+        ensure!(
+            matches!(arguments.mode, Mode::Managed),
+            "--managed-bind-ip only applies to managed mode"
+        );
+    }
+    for prefix in [
+        arguments.driver_netns_prefix.as_deref(),
+        arguments.worker_netns_prefix.as_deref(),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        ensure!(
+            !prefix.is_empty(),
+            "network namespace prefixes cannot be empty"
+        );
+        ensure!(
+            cfg!(target_os = "linux"),
+            "network namespace execution requires Linux"
         );
     }
     Ok(())
@@ -608,8 +640,8 @@ async fn start_environment(
     )
     .context("managed connection limit exceeds u32")?;
     let config = ControllerConfig {
-        controller_bind: "127.0.0.1:0".parse()?,
-        mumble_bind: "127.0.0.1:0".parse()?,
+        controller_bind: SocketAddr::new(arguments.managed_bind_ip, 0),
+        mumble_bind: SocketAddr::new(arguments.managed_bind_ip, 0),
         max_sessions: usize::from(arguments.controllers).max(1),
         max_participants: arguments.participants.max(1),
         max_participants_per_session: arguments.participants.max(1),
@@ -617,6 +649,7 @@ async fn start_environment(
         max_observations_per_session: arguments.participants.max(1),
         queue_capacity: arguments.participants.saturating_mul(2).max(1024),
         max_mumble_connections: maximum_connections,
+        allow_unauthenticated_controller_network: !arguments.managed_bind_ip.is_loopback(),
         lease_duration: if is_resilience_scenario(arguments.scenario)
             || !matches!(arguments.fault, ProcessFault::None)
         {
@@ -658,6 +691,7 @@ async fn spawn_drivers(
             index,
             result_directory,
             "",
+            arguments.driver_netns_prefix.as_deref(),
             events.clone(),
         )?);
     }
@@ -671,11 +705,13 @@ fn spawn_driver(
     index: usize,
     result_directory: &Path,
     log_suffix: &str,
+    netns_prefix: Option<&str>,
     events: mpsc::Sender<(usize, Value)>,
 ) -> Result<Driver> {
     let controller_id = format!("load-controller-{index}");
     let stderr = File::create(result_directory.join(format!("driver-{index}{log_suffix}.log")))?;
-    let mut child = ProcessCommand::new(executable)
+    let mut command = namespaced_command(netns_prefix, index, executable);
+    let mut child = command
         .arg(endpoint)
         .arg(&controller_id)
         .arg("512")
@@ -709,6 +745,20 @@ fn spawn_driver(
         child,
         reader,
     })
+}
+
+fn namespaced_command(prefix: Option<&str>, index: usize, executable: &Path) -> ProcessCommand {
+    if let Some(prefix) = prefix {
+        let mut command = ProcessCommand::new("ip");
+        command
+            .arg("netns")
+            .arg("exec")
+            .arg(format!("{prefix}{index}"))
+            .arg(executable);
+        command
+    } else {
+        ProcessCommand::new(executable)
+    }
 }
 
 async fn send_driver_command(driver: &mut Driver, value: Value) -> Result<()> {
@@ -836,7 +886,8 @@ async fn spawn_workers(
         let index = worker_offset.saturating_add(relative_index);
         let stdout = File::create(result_directory.join(format!("worker-{index}.jsonl")))?;
         let stderr = File::create(result_directory.join(format!("worker-{index}.log")))?;
-        let mut command = ProcessCommand::new(&executable);
+        let mut command =
+            namespaced_command(arguments.worker_netns_prefix.as_deref(), index, &executable);
         command
             .arg("worker")
             .arg("--mumble-server")
@@ -1306,6 +1357,7 @@ async fn restart_driver(
         index,
         result_directory,
         "-restarted",
+        arguments.driver_netns_prefix.as_deref(),
         events.clone(),
     )?;
     drivers[index] = replacement;
@@ -1421,6 +1473,32 @@ fn create_result_directory(arguments: &RunArguments) -> Result<PathBuf> {
     ));
     std::fs::create_dir_all(&path)?;
     Ok(path)
+}
+
+async fn wait_for_phase_control(directory: Option<&Path>) -> Result<()> {
+    let Some(directory) = directory else {
+        return Ok(());
+    };
+    std::fs::create_dir_all(directory)?;
+    std::fs::write(directory.join("stable.ready"), b"stable\n")?;
+    timeout(DRIVER_START_DEADLINE, async {
+        loop {
+            if directory.join("injection.go").is_file() {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .context("phase-control injection timeout")?;
+    Ok(())
+}
+
+fn mark_phase_control_complete(directory: Option<&Path>) -> Result<()> {
+    if let Some(directory) = directory {
+        std::fs::write(directory.join("complete.ready"), b"complete\n")?;
+    }
+    Ok(())
 }
 
 fn write_load_matrix(path: &Path) -> Result<()> {
@@ -1917,6 +1995,28 @@ mod tests {
             serde_json::to_string(&phases)?,
             "[\"stable\",\"injection\",\"degraded_load\",\"healing\",\"reconciliation\",\"final_audit\"]"
         );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn phase_control_waits_for_explicit_injection_release() -> Result<()> {
+        let directory = std::env::temp_dir().join(format!(
+            "mumble-spaces-phase-control-test-{}",
+            std::process::id()
+        ));
+        let controlled_directory = directory.clone();
+        let waiter =
+            tokio::spawn(async move { wait_for_phase_control(Some(&controlled_directory)).await });
+        timeout(Duration::from_secs(2), async {
+            while !directory.join("stable.ready").is_file() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await?;
+        assert!(!waiter.is_finished());
+        std::fs::write(directory.join("injection.go"), b"go\n")?;
+        waiter.await??;
+        std::fs::remove_dir_all(directory)?;
         Ok(())
     }
 }

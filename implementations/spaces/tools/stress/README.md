@@ -61,3 +61,39 @@ It contains cardinalities 8, 32, 64, 128, and 256, the rounded load steps,
 fixed totals 2,048 and 4,096, three audio levels, resilience fractions, and the
 provisional health thresholds. The 10,000-client campaign is intended for a
 dedicated Linux load host, not shared CI.
+
+## Linux network chaos
+
+`ci/spaces-chaos-linux.sh` creates one Linux network namespace per Java driver
+and per Mumble worker. It supports one-way or two-way gRPC partitions,
+latency/jitter, bandwidth limitation, Mumble UDP loss without cutting TCP,
+Mumble TCP cuts without deleting UDP, and a partition during takeover.
+
+Inspect the complete operation list without privileges or side effects:
+
+```sh
+ci/spaces-chaos-linux.sh --dry-run --fault takeover-partition
+```
+
+A real run needs Linux, root, `iproute2`, `tc`, and `nftables`, and deliberately
+requires the acknowledgement flag:
+
+```sh
+sudo ci/spaces-chaos-linux.sh \
+  --smoke \
+  --ack-dedicated-host \
+  --fault takeover-partition \
+  --result-root /var/tmp/voxloom-chaos
+```
+
+Run this only on a dedicated machine explicitly authorized to suffer network
+partitions and resource pressure. The cleanup trap removes namespaces, veth
+pairs, bridge, nft rules, and qdiscs. The smoke collects process threads, file
+descriptors, and sockets from `/proc`, then requires takeover convergence and
+credential-redaction before succeeding. `--managed-bind-ip` acknowledges that
+the private Controller endpoint is plaintext and must remain on the isolated
+test bridge.
+
+The committed smoke fixture is a short 440 Hz synthetic tone encoded as 10 ms,
+24 kbit/s CBR Opus packets and stored as base64 so the smoke does not require
+FFmpeg or third-party media at runtime.
