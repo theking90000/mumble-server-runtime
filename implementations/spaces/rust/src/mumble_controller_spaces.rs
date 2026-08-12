@@ -297,6 +297,13 @@ pub struct SpacesState {
     next_application_revision: u64,
 }
 
+/// Spaces affected by replacing one participant's desired specification.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParticipantSpecChange {
+    pub previous_space_key: String,
+    pub desired_space_key: String,
+}
+
 impl SpacesState {
     #[must_use]
     pub fn new() -> Self {
@@ -319,6 +326,21 @@ impl SpacesState {
     #[must_use]
     pub fn latest_application_revision(&self) -> u64 {
         self.next_application_revision.saturating_sub(1)
+    }
+
+    /// Replace the validated business specification of one participant.
+    pub fn replace_participant_spec(
+        &mut self,
+        participant_id: &str,
+        spec: ParticipantSpec,
+    ) -> Option<ParticipantSpecChange> {
+        let participant = self.participants.get_mut(participant_id)?;
+        let change = ParticipantSpecChange {
+            previous_space_key: participant.spec.space_key().as_str().to_owned(),
+            desired_space_key: spec.space_key().as_str().to_owned(),
+        };
+        participant.spec = spec;
+        Some(change)
     }
 
     /// Apply one runtime reconciliation to the Space that produced it.
@@ -676,6 +698,44 @@ mod tests {
         assert_eq!(alice.applied_space_key.as_deref(), Some("arena"));
         assert_eq!(alice.applied_spec_revision, 7);
         assert_eq!(alice.published_generation, 9);
+    }
+
+    #[test]
+    fn replacing_a_participant_spec_reports_both_affected_spaces() {
+        let mut state = SpacesState::new();
+        state.participants.insert(
+            "alice".to_owned(),
+            ParticipantState {
+                participant_id: "alice".to_owned(),
+                applied_spec_revision: 1,
+                applied_space_key: Some("lobby".to_owned()),
+                published_generation: 2,
+                spec: ParticipantSpec::new("lobby".to_owned(), "Alice".to_owned(), false, false)
+                    .expect("valid participant"),
+                self_mute: false,
+                self_deaf: false,
+                application_error: String::new(),
+            },
+        );
+
+        let change = state
+            .replace_participant_spec(
+                "alice",
+                ParticipantSpec::new("arena".to_owned(), "Alice".to_owned(), true, false)
+                    .expect("valid replacement"),
+            )
+            .expect("known participant");
+
+        assert_eq!(
+            change,
+            ParticipantSpecChange {
+                previous_space_key: "lobby".to_owned(),
+                desired_space_key: "arena".to_owned(),
+            }
+        );
+        let alice = &state.participants["alice"];
+        assert_eq!(alice.spec.space_key().as_str(), "arena");
+        assert!(alice.spec.server_mute());
     }
 
     #[derive(Clone)]
