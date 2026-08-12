@@ -34,6 +34,7 @@ use crate::actor_messages::{
     SpaceAbsent, SpaceClosed, SpaceParticipant, SpaceSnapshot,
 };
 use crate::config::ControllerConfig;
+#[cfg(feature = "load-metrics")]
 use crate::metrics::ActorMetrics;
 use crate::profile;
 
@@ -68,6 +69,7 @@ pub(crate) enum ActorCommand {
 #[derive(Clone)]
 struct ActorSpaceReporter {
     sender: mpsc::Sender<ActorCommand>,
+    #[cfg(feature = "load-metrics")]
     metrics: Arc<ActorMetrics>,
 }
 
@@ -77,6 +79,7 @@ impl SpaceReporter for ActorSpaceReporter {
         self.sender
             .try_send(ActorCommand::SpaceEvent(report))
             .map_err(|_error| {
+                #[cfg(feature = "load-metrics")]
                 self.metrics.saturated();
                 retained
             })
@@ -97,7 +100,7 @@ impl ActorHandle {
 pub(crate) fn spawn(
     config: ControllerConfig,
     runtime: RuntimeHandle,
-    metrics: Arc<ActorMetrics>,
+    #[cfg(feature = "load-metrics")] metrics: Arc<ActorMetrics>,
 ) -> Result<(ActorHandle, JoinHandle<()>), ActorStartError> {
     let control_epoch = random_bytes(16)?;
     let (sender, receiver) = mpsc::channel(config.queue_capacity);
@@ -116,7 +119,9 @@ pub(crate) fn spawn(
         sessions: HashMap::new(),
         streams: HashMap::new(),
         spaces_state: SpacesState::new(),
+        #[cfg(feature = "load-metrics")]
         render_started: HashMap::new(),
+        #[cfg(feature = "load-metrics")]
         metrics,
     };
     let task = tokio::spawn(actor.run(receiver));
@@ -140,7 +145,9 @@ struct ControllerActor {
     sessions: HashMap<SessionId, ControllerSession>,
     streams: HashMap<u64, SessionId>,
     spaces_state: SpacesState,
+    #[cfg(feature = "load-metrics")]
     render_started: HashMap<(String, u64), Instant>,
+    #[cfg(feature = "load-metrics")]
     metrics: Arc<ActorMetrics>,
 }
 
@@ -169,6 +176,7 @@ impl ControllerActor {
     }
 
     fn handle(&mut self, command: ActorCommand) {
+        #[cfg(feature = "load-metrics")]
         self.metrics.command(
             self.sender
                 .max_capacity()
@@ -196,6 +204,7 @@ impl ControllerActor {
                 report,
             } => self.reconciled(&space_key, application_revision, report),
         }
+        #[cfg(feature = "load-metrics")]
         self.metrics.gauges(
             self.sessions.len(),
             self.spaces_state.participant_count(),
@@ -1430,6 +1439,7 @@ impl ControllerActor {
         let (desired, receiver) = snapshot_channel(initial);
         let publication_marker = desired.publication_marker();
         let actor_for_logic = self.sender.clone();
+        #[cfg(feature = "load-metrics")]
         let metrics_for_logic = Arc::clone(&self.metrics);
         let actor_for_report = self.sender.clone();
         let key_for_logic = space_key.to_owned();
@@ -1442,6 +1452,7 @@ impl ControllerActor {
                     receiver,
                     ActorSpaceReporter {
                         sender: actor_for_logic,
+                        #[cfg(feature = "load-metrics")]
                         metrics: metrics_for_logic,
                     },
                 )
@@ -1505,6 +1516,7 @@ impl ControllerActor {
         let Some(space) = self.spaces_state.space_mut(space_key) else {
             return;
         };
+        #[cfg(feature = "load-metrics")]
         self.render_started
             .insert((space_key.to_owned(), application_revision), Instant::now());
         space.refresh(
@@ -1518,10 +1530,12 @@ impl ControllerActor {
     }
 
     fn reconciled(&mut self, space_key: &str, application_revision: u64, report: ReconcileReport) {
+        #[cfg(feature = "load-metrics")]
         let elapsed = self
             .render_started
             .remove(&(space_key.to_owned(), application_revision))
             .map_or(Duration::ZERO, |started| started.elapsed());
+        #[cfg(feature = "load-metrics")]
         self.metrics.reconciled(elapsed, &report);
         let Some(participant_ids) =
             self.spaces_state
@@ -1630,6 +1644,7 @@ impl ControllerActor {
     fn expire_due(&mut self) {
         let now = Instant::now();
         let expired_sessions = self.core_sessions.expired_sessions(now.into_std());
+        #[cfg(feature = "load-metrics")]
         self.metrics.expired(expired_sessions.len());
         for session_id in expired_sessions {
             self.remove_session(session_id, OwnershipRevocationReason::SessionExpired);
@@ -1907,6 +1922,7 @@ impl ControllerActor {
                     .complete(session_id, frame.request_id.clone(), frame.clone())
         {
             eprintln!("mumble-spaces-server: dropping an unrecorded reliable result: {error}");
+            #[cfg(feature = "load-metrics")]
             self.metrics.resync();
             self.core_sessions.mark_resync_required(session_id);
             return;
@@ -1923,12 +1939,17 @@ impl ControllerActor {
             return;
         };
         match sender.try_send(Ok(frame)) {
-            Ok(()) => self.metrics.response(),
+            Ok(()) => {
+                #[cfg(feature = "load-metrics")]
+                self.metrics.response();
+            }
             // A momentarily full queue is not a dead stream. Detaching it here would
             // silently drop every later command, including RenewLease, and the lease
             // would expire on a controller that never learned anything went wrong.
             Err(mpsc::error::TrySendError::Full(_dropped)) => {
+                #[cfg(feature = "load-metrics")]
                 self.metrics.saturated();
+                #[cfg(feature = "load-metrics")]
                 self.metrics.resync();
                 self.core_sessions.mark_resync_required(session_id);
             }
@@ -1950,6 +1971,7 @@ impl ControllerActor {
         code: CommandErrorCode,
         message: &str,
     ) {
+        #[cfg(feature = "load-metrics")]
         self.metrics.rejection();
         self.send_session(session_id, rejection(request_id, code, message));
     }
@@ -1978,6 +2000,7 @@ impl ControllerActor {
         code: CommandErrorCode,
         message: &str,
     ) {
+        #[cfg(feature = "load-metrics")]
         self.metrics.rejection();
         let _ignored = responses.try_send(Ok(rejection(request_id, code, message)));
         let _closed = responses.try_send(Err(Status::failed_precondition(
@@ -2065,8 +2088,11 @@ mod tests {
             config.controller_bind = "127.0.0.1:0".parse().expect("loopback address");
             config.mumble_bind = "127.0.0.1:0".parse().expect("loopback address");
             let runtime = Runtime::start();
-            let (actor, task) = spawn(config, runtime.handle(), Arc::new(ActorMetrics::default()))
-                .expect("actor starts");
+            #[cfg(feature = "load-metrics")]
+            let started = spawn(config, runtime.handle(), Arc::new(ActorMetrics::default()));
+            #[cfg(not(feature = "load-metrics"))]
+            let started = spawn(config, runtime.handle());
+            let (actor, task) = started.expect("actor starts");
             Self {
                 _runtime: runtime,
                 actor,
@@ -2643,7 +2669,9 @@ mod tests {
             sessions: HashMap::new(),
             streams: HashMap::new(),
             spaces_state: SpacesState::new(),
+            #[cfg(feature = "load-metrics")]
             render_started: HashMap::new(),
+            #[cfg(feature = "load-metrics")]
             metrics: Arc::new(ActorMetrics::default()),
         };
         (actor, receiver)

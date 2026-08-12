@@ -17,6 +17,13 @@ path = "src/mumble_spaces_stress.rs"
 name = "mumble-spaces-stress"
 path = "src/main.rs"
 
+[features]
+default = []
+load-metrics = [
+    "mumble-server-runtime-gateway/load-metrics",
+    "mumble-spaces-server/load-metrics",
+]
+
 [dependencies]
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }

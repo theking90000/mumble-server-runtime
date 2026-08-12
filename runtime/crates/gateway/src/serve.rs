@@ -12,6 +12,7 @@ use tokio_rustls::TlsAcceptor;
 
 use crate::config::GatewayConfig;
 use crate::connection;
+#[cfg(feature = "load-metrics")]
 use crate::metrics::VoiceMetrics;
 use crate::router::ConnectionRouter;
 use crate::runtime::{Runtime, RuntimeHandle};
@@ -29,6 +30,7 @@ pub struct Gateway {
     listener: TcpListener,
     udp: Arc<UdpSocket>,
     acceptor: TlsAcceptor,
+    #[cfg(feature = "load-metrics")]
     voice_metrics: Arc<VoiceMetrics>,
 }
 
@@ -52,6 +54,7 @@ impl Gateway {
             listener,
             udp: Arc::new(udp),
             acceptor,
+            #[cfg(feature = "load-metrics")]
             voice_metrics: Arc::new(VoiceMetrics::default()),
         })
     }
@@ -68,6 +71,7 @@ impl Gateway {
     }
 
     #[must_use]
+    #[cfg(feature = "load-metrics")]
     pub fn voice_metrics(&self) -> Arc<VoiceMetrics> {
         Arc::clone(&self.voice_metrics)
     }
@@ -81,11 +85,18 @@ impl Gateway {
     pub async fn serve<R: ConnectionRouter>(self, router: R) -> Result<()> {
         let router = Arc::new(router);
         let runtime = self.runtime.handle();
+        #[cfg(feature = "load-metrics")]
         let voice = Arc::new(VoicePlane::new_with_metrics(
             Arc::clone(&self.udp),
             Arc::clone(runtime.peers()),
             (*self.config).clone(),
             Arc::clone(&self.voice_metrics),
+        ));
+        #[cfg(not(feature = "load-metrics"))]
+        let voice = Arc::new(VoicePlane::new(
+            Arc::clone(&self.udp),
+            Arc::clone(runtime.peers()),
+            (*self.config).clone(),
         ));
 
         // The voice plane is owned by this future rather than detached: when

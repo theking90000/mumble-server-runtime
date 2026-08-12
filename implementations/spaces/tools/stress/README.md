@@ -8,7 +8,8 @@ Build the Java driver once, then run a managed eight-client smoke:
 ```sh
 GRADLE_USER_HOME=.gradle ./gradlew \
   :implementations:spaces:tools:load-driver-java:installDist
-cargo run --release -p mumble-spaces-stress -- run \
+CARGO_TARGET_DIR=target/spaces-load-metrics \
+  cargo run --release -p mumble-spaces-stress --features load-metrics -- run \
   --mode managed \
   --controllers 2 \
   --participants 8 \
@@ -21,10 +22,17 @@ cargo run --release -p mumble-spaces-stress -- run \
 The participant count must fill every Space exactly; supported cardinalities are
 8, 32, 64, 128, and 256. A run writes a manifest, redacted events, JSON and CSV
 summaries, and separate process logs below `--result-root`.
-Managed runs also write one-second `server-metrics.jsonl` snapshots and a
+Managed runs built with `--features load-metrics` also write one-second
+`server-metrics.jsonl` snapshots and a
 `process-metrics.csv` that keeps coordinator, Java driver, and Mumble worker
-resource usage separate. The standalone server exposes the same opt-in stream
-through `--metrics-output FILE --metrics-interval-seconds N`.
+resource usage separate. The standalone server exposes the same stream through
+`--metrics-output FILE --metrics-interval-seconds N` only when it is compiled
+with `--features load-metrics`. Production builds do not enable the feature.
+
+The automated campaign build stores its instrumented artifacts below
+`target/spaces-load-metrics`; a normal `cargo build --release -p
+mumble-spaces-server` therefore remains separate and contains no detailed load
+instrumentation.
 
 Generate a standalone HTML report from an existing run without repeating it:
 

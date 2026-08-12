@@ -41,6 +41,7 @@ use tokio::net::UdpSocket;
 
 use crate::config::GatewayConfig;
 use crate::limits;
+#[cfg(feature = "load-metrics")]
 use crate::metrics::VoiceMetrics;
 use crate::peer::{Peer, Peers};
 
@@ -97,16 +98,24 @@ pub struct VoicePlane {
     socket: Arc<UdpSocket>,
     peers: Arc<Peers>,
     config: GatewayConfig,
+    #[cfg(feature = "load-metrics")]
     metrics: Arc<VoiceMetrics>,
 }
 
 impl VoicePlane {
     #[must_use]
     pub fn new(socket: Arc<UdpSocket>, peers: Arc<Peers>, config: GatewayConfig) -> VoicePlane {
-        Self::new_with_metrics(socket, peers, config, Arc::new(VoiceMetrics::default()))
+        VoicePlane {
+            socket,
+            peers,
+            config,
+            #[cfg(feature = "load-metrics")]
+            metrics: Arc::new(VoiceMetrics::default()),
+        }
     }
 
     #[must_use]
+    #[cfg(feature = "load-metrics")]
     pub fn new_with_metrics(
         socket: Arc<UdpSocket>,
         peers: Arc<Peers>,
@@ -240,8 +249,10 @@ impl VoicePlane {
         now: Instant,
         bytes: usize,
     ) -> Vec<Datagram> {
+        #[cfg(feature = "load-metrics")]
         self.metrics.ingress(bytes);
         if !sender.allow_voice(now, bytes) {
+            #[cfg(feature = "load-metrics")]
             self.metrics.dropped();
             eprintln!(
                 "mumble-server-runtime-gateway: session {:?}: voice packet dropped, budget exhausted",
@@ -251,6 +262,7 @@ impl VoicePlane {
         }
 
         let Some(udp::audio::Header::Target(target)) = audio.header else {
+            #[cfg(feature = "load-metrics")]
             self.metrics.dropped();
             // `context` is the server-to-client direction and a header-less
             // packet says nothing. Either way there is no intent to honour.
@@ -265,6 +277,7 @@ impl VoicePlane {
             LOOPBACK_TARGET => self.reflect(sender, audio),
             NORMAL_TARGET => self.speak(sender, audio),
             registered => {
+                #[cfg(feature = "load-metrics")]
                 self.metrics.dropped();
                 // Shout and whisper targets are registered with a `VoiceTarget`
                 // control message, which this build refuses. Routing them as
@@ -355,10 +368,12 @@ impl VoicePlane {
         match receiver.destination() {
             Some(address) => match receiver.encrypt(&plaintext) {
                 Some(sealed) => {
+                    #[cfg(feature = "load-metrics")]
                     self.metrics.egress(plaintext.len());
                     out.push((sealed, address));
                 }
                 None => {
+                    #[cfg(feature = "load-metrics")]
                     self.metrics.dropped();
                     eprintln!(
                         "mumble-server-runtime-gateway: dropping audio for session {:?}: no usable crypto state",
@@ -367,16 +382,23 @@ impl VoicePlane {
                 }
             },
             None => {
+                #[cfg(feature = "load-metrics")]
                 let bytes = plaintext.len();
                 match receiver
                     .queue()
                     .push_voice(ControlMessage::UdpTunnel(plaintext))
                 {
-                    VoiceAdmission::Accepted => self.metrics.egress(bytes),
+                    VoiceAdmission::Accepted => {
+                        #[cfg(feature = "load-metrics")]
+                        self.metrics.egress(bytes);
+                    }
                     // A gap is the right outcome for a receiver already behind:
                     // stale voice helps nobody, and refusing it here keeps the same
                     // connection healthy for the control traffic that still matters.
-                    VoiceAdmission::Dropped => self.metrics.dropped(),
+                    VoiceAdmission::Dropped => {
+                        #[cfg(feature = "load-metrics")]
+                        self.metrics.dropped();
+                    }
                 }
             }
         }

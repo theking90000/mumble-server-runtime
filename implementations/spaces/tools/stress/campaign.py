@@ -29,7 +29,8 @@ ALLOWED_AUDIO_LEVELS = set(AUDIO_LEVELS)
 DURATION_PATTERN = re.compile(r"^[0-9]+(?:ms|s|m)$")
 SCRIPT_DIRECTORY = Path(__file__).resolve().parent
 REPOSITORY_ROOT = SCRIPT_DIRECTORY.parents[3]
-DEFAULT_BINARY = REPOSITORY_ROOT / "target/release/mumble-spaces-stress"
+BENCHMARK_TARGET_DIRECTORY = REPOSITORY_ROOT / "target/spaces-load-metrics"
+DEFAULT_BINARY = BENCHMARK_TARGET_DIRECTORY / "release/mumble-spaces-stress"
 DEFAULT_DRIVER = (
     REPOSITORY_ROOT
     / "implementations/spaces/tools/load-driver-java/build/install/load-driver-java/bin/load-driver-java"
@@ -342,10 +343,20 @@ def build_components(campaign: Path) -> None:
             str(REPOSITORY_ROOT / "gradlew"),
             ":implementations:spaces:tools:load-driver-java:installDist",
         ],
-        ["cargo", "build", "--locked", "--release", "-p", "mumble-spaces-stress"],
+        [
+            "cargo",
+            "build",
+            "--locked",
+            "--release",
+            "-p",
+            "mumble-spaces-stress",
+            "--features",
+            "load-metrics",
+        ],
     ]
     environment = os.environ.copy()
     environment.setdefault("GRADLE_USER_HOME", str(REPOSITORY_ROOT / ".gradle"))
+    environment["CARGO_TARGET_DIR"] = str(BENCHMARK_TARGET_DIRECTORY)
     for command in commands:
         with build_log.open("a", encoding="utf-8") as log:
             log.write(f"$ {' '.join(command)}\n")

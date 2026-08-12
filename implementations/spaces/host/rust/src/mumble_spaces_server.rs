@@ -4,6 +4,7 @@
 mod actor;
 mod actor_messages;
 pub mod config;
+#[cfg(feature = "load-metrics")]
 mod metrics;
 mod profile;
 mod server;
@@ -15,5 +16,6 @@ pub mod core_protocol {
 }
 
 pub use config::ControllerConfig;
+#[cfg(feature = "load-metrics")]
 pub use metrics::MetricsOutput;
 pub use server::{RunningControllerServer, ServerStartError};

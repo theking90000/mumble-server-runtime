@@ -17,6 +17,10 @@ path = "src/mumble_spaces_server.rs"
 name = "mumble-spaces-server"
 path = "src/main.rs"
 
+[features]
+default = []
+load-metrics = ["mumble-server-runtime-gateway/load-metrics"]
+
 [dependencies]
 anyhow = "1"
 base64 = "0.22"

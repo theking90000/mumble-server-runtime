@@ -41,6 +41,7 @@ pub mod config;
 pub mod connection;
 pub mod handshake;
 pub mod limits;
+#[cfg(feature = "load-metrics")]
 pub mod metrics;
 pub mod peer;
 pub mod router;
@@ -50,6 +51,7 @@ pub mod tls;
 pub mod voice;
 
 pub use config::GatewayConfig;
+#[cfg(feature = "load-metrics")]
 pub use metrics::{VoiceMetrics, VoiceMetricsSnapshot};
 pub use peer::{Peer, Peers, ShardPlane};
 pub use router::{ConnectionIdentity, ConnectionRouter, RouteDecision};
