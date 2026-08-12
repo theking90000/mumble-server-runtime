@@ -75,6 +75,13 @@ Lance les gates en local avant de committer :
 ci/gates.sh && ci/dep-direction.sh && ci/verifier-boundary.sh
 ```
 
+La documentation publiée se construit et vérifie par la même commande en local
+et dans GitHub Actions :
+
+```bash
+GRADLE_USER_HOME=.gradle ci/docs-site.sh
+```
+
 ## Direction des dépendances
 
 Arêtes interdites dans le graphe cargo (`ci/dep-direction.sh`) :

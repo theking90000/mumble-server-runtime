@@ -22,6 +22,9 @@ create-missing = false
 [output.html]
 default-theme = "rust"
 preferred-dark-theme = "navy"
+# GitHub Pages serves this project below the repository name. mdBook uses this
+# value for root-relative assets such as those referenced by 404.html.
+site-url = "/mumble-server-runtime/"
 git-repository-url = "https://github.com/theking90000/mumble-server-runtime"
 edit-url-template = "https://github.com/theking90000/mumble-server-runtime/edit/main/{path}"
 

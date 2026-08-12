@@ -16,15 +16,15 @@ Entry points, in the order a reader is likely to need them:
 A broken intra-doc link fails the build, so every link in the generated
 documentation resolves.
 
-The Java 8 controller SDK has a separate generated
-[`JavaDoc entry point`](../controller/index.html). It documents the declarative
-participant model, ownership lifecycle, read-only spaces and asynchronous
-completion semantics exposed by `be.theking90000.mumble.controller.core` and
-`be.theking90000.mumble.controller.spaces`.
+The Java 8 controller SDK has two generated entry points:
+
+| module | contents |
+|---|---|
+| [`controller-spaces`](../api/java/controller-spaces/index.html) | application-facing participants, named Spaces, observations and connection credentials |
+| [`controller-core`](../api/java/controller-core/index.html) | profile-neutral sessions, ownership, synchronization and transport lifecycle |
 
 To build the same documentation locally:
 
 ```console
-$ cargo doc --workspace --no-deps --all-features --open
-$ ./gradlew javadoc
+$ GRADLE_USER_HOME=.gradle ci/docs-site.sh
 ```
