@@ -102,7 +102,8 @@ done
 
 # --- Controller Core : pure synchronization state, without transport or business policy ---
 mapfile -t controller_core_files < <(controller_layer_files \
-  control-plane/core)
+  control-plane/core \
+  control/coordination)
 forbid "controller-core/no-runtime" \
        '(mumble[_-]server[_-]runtime|RuntimeHandle|ShardHandle|ShardId|ConnectionId)' "${controller_core_files[@]}"
 forbid "controller-core/no-transport" \
@@ -112,27 +113,34 @@ forbid "controller-core/no-spaces" \
 
 # --- Controller Host : runtime bridge without a concrete profile policy ---
 mapfile -t controller_host_files < <(controller_layer_files \
-  control-plane/host)
+  control-plane/host \
+  control/runtime-adapter)
 forbid "controller-host/no-spaces" \
        '(SpaceKey|SpaceSnapshot|SpaceParticipant|FetchSpace|ObservedSpaces|mumble[_-]controller[_-]spaces)' "${controller_host_files[@]}"
 
 # --- Java Spaces : typed profile facade, never a second Core session engine ---
 mapfile -t controller_spaces_java_files < <(controller_layer_files \
-  control-plane/implementations/spaces/clients/java/src/main/java)
+  control-plane/implementations/spaces/clients/java/src/main/java \
+  implementations/spaces/sdk/java/src/main/java)
 forbid "controller-spaces-java/no-core-engine" \
        '(OpenSession|RenewLease|SyncDesiredState|ReliableRequestTracker|CoreSessionLifecycle|GrpcCoreTransport|implements +CoreTransport)' "${controller_spaces_java_files[@]}"
 
 # --- Controller contracts : the pre-split schema must not return ---
-if [ -d control-plane/contract ]; then
-  while IFS= read -r file; do
-    report "[controller/no-legacy-contract-layer] $file"
-  done < <(find control-plane/contract -type f \
-    ! -path '*/build/*' \
-    ! -path '*/target/*' \
-    2>/dev/null || true)
-fi
+for legacy_contract_dir in control-plane/contract control/contract; do
+  if [ -d "$legacy_contract_dir" ]; then
+    while IFS= read -r file; do
+      report "[controller/no-legacy-contract-layer] $file"
+    done < <(find "$legacy_contract_dir" -type f \
+      ! -path '*/build/*' \
+      ! -path '*/target/*' \
+      2>/dev/null || true)
+  fi
+done
 
-mapfile -t controller_source_files < <(controller_layer_files control-plane)
+mapfile -t controller_source_files < <(controller_layer_files \
+  control-plane \
+  control \
+  implementations/spaces)
 forbid "controller/no-legacy-proto-package" \
        'mumble\.controller\.v1' "${controller_source_files[@]}"
 
