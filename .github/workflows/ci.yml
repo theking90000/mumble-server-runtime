@@ -35,6 +35,11 @@ jobs:
           fi
       - name: Autotests des gates structurels
         run: ci/structural-gates-self-test.sh
+      - name: Spaces stress HTML report tests
+        run: >-
+          python3 -m unittest discover
+          -s implementations/spaces/tools/stress/tests
+          -p 'test_*.py'
 
   build:
     name: fmt + clippy + test

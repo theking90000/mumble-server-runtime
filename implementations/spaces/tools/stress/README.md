@@ -26,6 +26,26 @@ Managed runs also write one-second `server-metrics.jsonl` snapshots and a
 resource usage separate. The standalone server exposes the same opt-in stream
 through `--metrics-output FILE --metrics-interval-seconds N`.
 
+Generate a standalone HTML report from an existing run without repeating it:
+
+```sh
+python3 implementations/spaces/tools/stress/report.py \
+  /var/tmp/mumble-spaces-load-runs/1786558655-Idle-42
+```
+
+This writes `report.html` in the run directory. Passing the result root instead
+generates one report per run plus a comparative `index.html`:
+
+```sh
+python3 implementations/spaces/tools/stress/report.py \
+  /var/tmp/mumble-spaces-load-runs
+```
+
+The generator uses only the Python standard library and embeds its charts and
+aggregated measurements directly in the HTML. It does not embed raw logs or
+unknown JSON fields. Incomplete runs are reported too, including recognized OS
+resource failures such as file-descriptor exhaustion.
+
 The harness is not a conformance oracle. Keep the independent Core and Spaces
 verification suites enabled when interpreting load results.
 
