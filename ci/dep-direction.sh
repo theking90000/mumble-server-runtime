@@ -49,12 +49,12 @@ FORBIDDEN=(
   "mumble-controller-core|mumble-server-runtime-gateway"
   "mumble-controller-core|mumble-controller-host"
   "mumble-controller-core|mumble-controller-spaces"
-  "mumble-controller-core|mumble-controller-server"
+  "mumble-controller-core|mumble-spaces-server"
   "mumble-controller-core|tokio"
   "mumble-controller-core|tonic"
   "mumble-controller-host|mumble-controller-spaces"
-  "mumble-controller-host|mumble-controller-server"
-  "mumble-controller-spaces|mumble-controller-server"
+  "mumble-controller-host|mumble-spaces-server"
+  "mumble-controller-spaces|mumble-spaces-server"
 )
 
 violations=0

@@ -6,12 +6,12 @@ use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 use clap::Parser;
-use mumble_controller_server::{ControllerConfig, RunningControllerServer};
 use mumble_server_runtime_gateway::tls::Identity;
+use mumble_spaces_server::{ControllerConfig, RunningControllerServer};
 
 #[derive(Debug, Parser)]
-#[command(name = "mumble-controller-server")]
-#[command(about = "gRPC Controller application for Mumble Server Runtime")]
+#[command(name = "mumble-spaces-server")]
+#[command(about = "Spaces application for Mumble Server Runtime")]
 struct Arguments {
     #[arg(long, default_value = "127.0.0.1:4000")]
     controller_bind: SocketAddr,
@@ -69,9 +69,9 @@ async fn main() -> Result<()> {
     };
     let server = RunningControllerServer::start(config, identity)
         .await
-        .context("starting Mumble Controller")?;
+        .context("starting the Mumble Spaces server")?;
     eprintln!(
-        "mumble-controller-server: Controller listening on {}, Mumble listening on {}",
+        "mumble-spaces-server: Controller listening on {}, Mumble listening on {}",
         server.controller_address(),
         server.mumble_address()
     );

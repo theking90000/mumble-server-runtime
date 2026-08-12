@@ -100,9 +100,9 @@ impl RunningControllerServer {
             match task.await {
                 Ok(Ok(())) => {}
                 Ok(Err(error)) => {
-                    eprintln!("mumble-controller-server: gRPC server stopped: {error}")
+                    eprintln!("mumble-spaces-server: gRPC server stopped: {error}")
                 }
-                Err(error) => eprintln!("mumble-controller-server: gRPC task failed: {error}"),
+                Err(error) => eprintln!("mumble-spaces-server: gRPC task failed: {error}"),
             }
         }
         if let Some(task) = &self.gateway_task {
@@ -115,17 +115,17 @@ impl RunningControllerServer {
             match task.await {
                 Ok(Ok(())) => {}
                 Ok(Err(error)) => {
-                    eprintln!("mumble-controller-server: Mumble gateway stopped: {error}")
+                    eprintln!("mumble-spaces-server: Mumble gateway stopped: {error}")
                 }
                 Err(error) if error.is_cancelled() => {}
-                Err(error) => eprintln!("mumble-controller-server: Mumble task failed: {error}"),
+                Err(error) => eprintln!("mumble-spaces-server: Mumble task failed: {error}"),
             }
         }
         if let Some(task) = self.actor_task.take() {
             match task.await {
                 Ok(()) => {}
                 Err(error) if error.is_cancelled() => {}
-                Err(error) => eprintln!("mumble-controller-server: actor task failed: {error}"),
+                Err(error) => eprintln!("mumble-spaces-server: actor task failed: {error}"),
             }
         }
     }

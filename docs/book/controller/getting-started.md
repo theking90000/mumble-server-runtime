@@ -60,13 +60,13 @@ different versions will break one of you. The configuration is in
 From the repository root:
 
 ```sh
-cargo run -p mumble-controller-server -- --dev-self-signed
+cargo run -p mumble-spaces-server -- --dev-self-signed
 ```
 
 It prints where it is listening:
 
 ```text
-mumble-controller-server: Controller listening on 127.0.0.1:4000, Mumble listening on 0.0.0.0:64738
+mumble-spaces-server: Controller listening on 127.0.0.1:4000, Mumble listening on 0.0.0.0:64738
 ```
 
 Two ports for two audiences. Port `4000` is the gRPC port your Java code talks

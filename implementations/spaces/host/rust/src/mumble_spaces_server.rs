@@ -1,4 +1,4 @@
-//! Rust application implementing the Mumble Controller contract.
+//! Runnable Rust host for the provided Spaces implementation.
 #![forbid(unsafe_code)]
 
 mod actor;

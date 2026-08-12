@@ -27,12 +27,12 @@ An integration has two halves that talk to each other over gRPC:
 ```text
 your application                the runtime
 +---------------------+         +--------------------------+
-| your plugin         |  gRPC   | mumble-controller-server |   TLS/UDP   Mumble
+| your plugin         |  gRPC   | mumble-spaces-server     |   TLS/UDP   Mumble
 | + controller SDK    | <-----> | (Rust)                   | <---------> clients
 +---------------------+         +--------------------------+
 ```
 
-`mumble-controller-server` is currently the Spaces Rust host you run next to
+`mumble-spaces-server` is the Spaces Rust host you run next to
 your game server. It speaks Mumble to the players and the generic Coordination
 protocol plus typed Spaces payloads to your application.
 
