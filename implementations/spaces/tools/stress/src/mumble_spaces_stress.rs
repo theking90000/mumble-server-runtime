@@ -131,6 +131,8 @@ struct RunArguments {
         default_value = "implementations/spaces/tools/load-driver-java/build/install/load-driver-java/bin/load-driver-java"
     )]
     driver: PathBuf,
+    #[arg(long, value_enum, default_value = "milestones")]
+    driver_event_mode: DriverEventMode,
     #[arg(long)]
     driver_netns_prefix: Option<String>,
     #[arg(long)]
@@ -226,6 +228,7 @@ struct Manifest<'a> {
     architecture: &'static str,
     available_parallelism: usize,
     load_metrics: bool,
+    driver_event_mode: DriverEventMode,
     mode: Mode,
     scenario: Scenario,
     audio: Option<AudioLevel>,
@@ -352,6 +355,22 @@ enum AudioLevel {
     FivePercent,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ValueEnum)]
+#[serde(rename_all = "snake_case")]
+enum DriverEventMode {
+    Full,
+    Milestones,
+}
+
+impl DriverEventMode {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Full => "full",
+            Self::Milestones => "milestones",
+        }
+    }
+}
+
 #[derive(Debug, Serialize)]
 struct HealthyThresholds {
     maximum_server_cpu_percent: u8,
@@ -368,6 +387,12 @@ struct Driver {
     input: ChildStdin,
     child: Child,
     reader: JoinHandle<()>,
+}
+
+struct DriverSpawnOptions<'a> {
+    log_suffix: &'a str,
+    netns_prefix: Option<&'a str>,
+    event_mode: DriverEventMode,
 }
 
 struct WorkerProcess {
@@ -886,8 +911,11 @@ async fn spawn_drivers(
             endpoint,
             index,
             result_directory,
-            "",
-            arguments.driver_netns_prefix.as_deref(),
+            DriverSpawnOptions {
+                log_suffix: "",
+                netns_prefix: arguments.driver_netns_prefix.as_deref(),
+                event_mode: arguments.driver_event_mode,
+            },
             events.clone(),
         )?);
     }
@@ -900,17 +928,18 @@ fn spawn_driver(
     endpoint: &str,
     index: usize,
     result_directory: &Path,
-    log_suffix: &str,
-    netns_prefix: Option<&str>,
+    options: DriverSpawnOptions<'_>,
     events: mpsc::Sender<(usize, Value)>,
 ) -> Result<Driver> {
     let controller_id = format!("load-controller-{index}");
-    let stderr = File::create(result_directory.join(format!("driver-{index}{log_suffix}.log")))?;
-    let mut command = namespaced_command(netns_prefix, index, executable);
+    let stderr =
+        File::create(result_directory.join(format!("driver-{index}{}.log", options.log_suffix)))?;
+    let mut command = namespaced_command(options.netns_prefix, index, executable);
     let mut child = command
         .arg(endpoint)
         .arg(&controller_id)
         .arg("512")
+        .arg(options.event_mode.as_str())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::from(stderr))
@@ -1798,8 +1827,11 @@ async fn restart_driver(
         endpoint,
         index,
         result_directory,
-        "-restarted",
-        arguments.driver_netns_prefix.as_deref(),
+        DriverSpawnOptions {
+            log_suffix: "-restarted",
+            netns_prefix: arguments.driver_netns_prefix.as_deref(),
+            event_mode: arguments.driver_event_mode,
+        },
         events.clone(),
     )?;
     if let Some(pid) = replacement.child.id() {
@@ -2006,6 +2038,7 @@ fn write_manifest(directory: &Path, arguments: &RunArguments) -> Result<()> {
         architecture: std::env::consts::ARCH,
         available_parallelism: std::thread::available_parallelism()?.get(),
         load_metrics: cfg!(feature = "load-metrics"),
+        driver_event_mode: arguments.driver_event_mode,
         mode: arguments.mode,
         scenario: arguments.scenario,
         audio: effective_audio(arguments),

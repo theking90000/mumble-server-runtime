@@ -25,69 +25,70 @@ import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
-import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicBoolean;
 
 /** Runs one real Spaces SDK Controller session behind a bounded NDJSON pipe. */
 public final class DriverMain {
     private static final int SCHEMA_VERSION = 1;
-    private static final int OUTPUT_CAPACITY = 4096;
+    private static final int OUTPUT_CAPACITY = 16384;
+    private static final int OUTPUT_BATCH_SIZE = 256;
 
     private DriverMain() {
     }
 
-    /** Entry point. Arguments: endpoint, controller ID, optional maximum in-flight commands. */
+    /** Entry point. Arguments: endpoint, controller ID, command window, and event mode. */
     public static void main(String[] arguments) throws Exception {
-        if (arguments.length < 2 || arguments.length > 3) {
+        if (arguments.length < 2 || arguments.length > 4) {
             throw new IllegalArgumentException(
-                    "usage: load-driver-java ENDPOINT CONTROLLER_ID [MAX_IN_FLIGHT]");
+                    "usage: load-driver-java ENDPOINT CONTROLLER_ID [MAX_IN_FLIGHT] [EVENT_MODE]");
         }
-        int maximumInFlight = arguments.length == 3 ? Integer.parseInt(arguments[2]) : 256;
+        int maximumInFlight = arguments.length >= 3 ? Integer.parseInt(arguments[2]) : 256;
         if (maximumInFlight < 1) {
             throw new IllegalArgumentException("MAX_IN_FLIGHT must be positive");
         }
+        DriverEventMode eventMode = arguments.length == 4
+                ? DriverEventMode.parse(arguments[3]) : DriverEventMode.FULL;
         Driver driver = new Driver(
-                URI.create(arguments[0]), ControllerId.of(arguments[1]), maximumInFlight);
+                URI.create(arguments[0]),
+                ControllerId.of(arguments[1]),
+                maximumInFlight,
+                eventMode);
         driver.run();
     }
 
     private static final class Driver {
         private final long started = System.nanoTime();
         private final ControllerId controllerId;
+        private final DriverEventMode eventMode;
         private final ExecutorService callbacks = Executors.newSingleThreadExecutor();
-        private final ArrayBlockingQueue<String> output =
-                new ArrayBlockingQueue<String>(OUTPUT_CAPACITY);
+        private final DriverOutput output = new DriverOutput(
+                new PrintWriter(System.out, false), OUTPUT_CAPACITY, OUTPUT_BATCH_SIZE);
         private final ConcurrentHashMap<ParticipantId, ParticipantHandle> participants =
                 new ConcurrentHashMap<ParticipantId, ParticipantHandle>();
         private final Semaphore operations;
-        private final AtomicBoolean outputFailed = new AtomicBoolean();
         private final ControllerSession session;
-        private final Thread writer;
 
-        private Driver(URI endpoint, ControllerId controllerId, int maximumInFlight) {
+        private Driver(
+                URI endpoint,
+                ControllerId controllerId,
+                int maximumInFlight,
+                DriverEventMode eventMode) {
             this.controllerId = controllerId;
+            this.eventMode = eventMode;
             operations = new Semaphore(maximumInFlight);
             session = ControllerSession.builder(controllerId, endpoint)
                     .callbackExecutor(callbacks)
                     .build();
-            writer = new Thread(new Runnable() {
-                @Override
-                public void run() {
-                    writeOutput();
-                }
-            }, "spaces-load-driver-output");
-            writer.setDaemon(true);
             installListeners();
         }
 
         private void run() throws Exception {
-            writer.start();
+            output.start();
             session.start().whenComplete((ignored, failure) -> {
                 if (failure == null) {
                     emit(event("started", "startup", ""));
@@ -99,16 +100,16 @@ public final class DriverMain {
                     System.in, StandardCharsets.UTF_8));
             boolean shutdown = false;
             String line;
-            while (!shutdown && !outputFailed.get() && (line = input.readLine()) != null) {
+            while (!shutdown && !output.failed() && (line = input.readLine()) != null) {
                 shutdown = accept(line);
             }
             session.stop().get(30, TimeUnit.SECONDS);
             callbacks.shutdown();
             callbacks.awaitTermination(30, TimeUnit.SECONDS);
             emit(event("stopped", "shutdown", ""));
-            writer.interrupt();
-            writer.join(TimeUnit.SECONDS.toMillis(5));
-            if (outputFailed.get()) {
+            emitOutputCounters();
+            output.close(TimeUnit.SECONDS.toMillis(5));
+            if (output.failed()) {
                 throw new IllegalStateException("bounded output queue saturated");
             }
         }
@@ -265,7 +266,11 @@ public final class DriverMain {
             session.addSpaceListener(new SpaceListener() {
                 @Override
                 public void onSpaceUpdated(ControllerSession ignored, SpaceSnapshot snapshot) {
-                    emit(snapshotEvent("space_updated", "", snapshot));
+                    if (eventMode == DriverEventMode.FULL) {
+                        emit(snapshotEvent("space_updated", "", snapshot));
+                    } else {
+                        output.suppress();
+                    }
                 }
             });
         }
@@ -301,7 +306,13 @@ public final class DriverMain {
                     event.put("published_generation", Long.toUnsignedString(
                             status.publishedGeneration()));
                     event.put("application_error", status.applicationError().orElse(""));
-                    emit(event);
+                    if (eventMode == DriverEventMode.FULL) {
+                        emit(event);
+                    } else {
+                        emitLatest(
+                                "participant_status:" + participant.participantId().value(),
+                                event);
+                    }
                 }
 
                 @Override
@@ -368,33 +379,23 @@ public final class DriverMain {
         }
 
         private void emit(String line) {
-            if (!output.offer(line)) {
-                outputFailed.set(true);
-            }
+            output.emit(line);
         }
 
-        private void writeOutput() {
-            PrintWriter writer = new PrintWriter(System.out, false);
-            try {
-                while (!Thread.currentThread().isInterrupted() || !output.isEmpty()) {
-                    String line = output.poll(100, TimeUnit.MILLISECONDS);
-                    if (line != null) {
-                        writer.println(line);
-                        writer.flush();
-                        if (writer.checkError()) {
-                            outputFailed.set(true);
-                            return;
-                        }
-                    }
-                }
-            } catch (InterruptedException interrupted) {
-                Thread.currentThread().interrupt();
-            } finally {
-                while (!output.isEmpty()) {
-                    writer.println(output.poll());
-                }
-                writer.flush();
-            }
+        private void emitLatest(String key, Map<String, Object> event) {
+            output.emitLatest(key, event);
+        }
+
+        private void emitOutputCounters() {
+            DriverOutput.Snapshot snapshot = output.snapshot();
+            Map<String, Object> event = event("driver_output", "shutdown", "");
+            event.put("event_mode", eventMode.name().toLowerCase());
+            event.put("enqueued", snapshot.enqueued);
+            event.put("coalesced", snapshot.coalesced);
+            event.put("suppressed", snapshot.suppressed);
+            event.put("written", snapshot.written);
+            event.put("batches", snapshot.batches);
+            emit(event);
         }
     }
 }

@@ -61,6 +61,18 @@ if find "$RESULTS" -name process-metrics.csv -type f -exec grep -L ',coordinator
   echo "spaces-stress-smoke: coordinator process metrics are missing" >&2
   exit 1
 fi
+if find "$RESULTS" -name manifest.json -type f -exec grep -L '"driver_event_mode": "milestones"' {} + | grep -q .; then
+  echo "spaces-stress-smoke: milestone driver event mode is missing from a manifest" >&2
+  exit 1
+fi
+if find "$RESULTS" -name events.jsonl -type f -exec grep -L '"kind":"driver_output"' {} + | grep -q .; then
+  echo "spaces-stress-smoke: final driver output counters are missing" >&2
+  exit 1
+fi
+if grep -R -q '"kind":"space_updated"' "$RESULTS"; then
+  echo "spaces-stress-smoke: milestone mode emitted an unsolicited Space snapshot" >&2
+  exit 1
+fi
 grep -R -q '"channel":"load-space-0-migrated"' "$RESULTS/migration"
 grep -R -q -E '"mute":true|"deaf":true' "$RESULTS/mute-deaf"
 grep -q -E '"audio_ingress_packets":[1-9][0-9]*' \
