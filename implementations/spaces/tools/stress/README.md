@@ -22,6 +22,11 @@ CARGO_TARGET_DIR=target/spaces-load-metrics \
 The participant count must fill every Space exactly; supported cardinalities are
 8, 32, 64, 128, and 256. A run writes a manifest, redacted events, JSON and CSV
 summaries, and separate process logs below `--result-root`.
+Each Mumble worker also writes a credential-free `worker-N-report.json`. The
+coordinator merges client completion, ping, traffic, audio, interaction, and
+reconnect counters into the `mumble` section of `summary.json` and into
+`summary.csv`. A report intentionally absent because a fault killed its worker
+is tracked separately from an unexpected missing report.
 Managed runs built with `--features load-metrics` also write one-second
 `server-metrics.jsonl` snapshots and a
 `process-metrics.csv` that keeps coordinator, Java driver, and Mumble worker

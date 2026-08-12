@@ -18,6 +18,8 @@ from typing import Any, Iterable
 
 
 SYNC_P99_LIMIT_MILLIS = 2_000.0
+PING_P99_LIMIT_MILLIS = 100.0
+AUDIO_DELIVERY_MINIMUM_PERCENT = 99.9
 MAX_CHART_POINTS = 600
 PROCESS_GROUP_LABELS = {
     "coordinator": "Coordinator + embedded server",
@@ -362,6 +364,60 @@ def read_worker_events(run_directory: Path, warnings: list[str]) -> dict[str, An
     }
 
 
+def read_worker_reports(run_directory: Path, warnings: list[str]) -> dict[str, Any]:
+    files = sorted(run_directory.glob("worker-*-report.json"))
+    totals: Counter[str] = Counter()
+    tcp_ping_p99_micros: list[float] = []
+    udp_ping_p99_micros: list[float] = []
+    for path in files:
+        report, error = read_json(path)
+        if error:
+            warnings.append(error)
+            continue
+        if report is None:
+            continue
+        stats = report.get("stats") if isinstance(report.get("stats"), dict) else {}
+        totals["clients_expected"] += integer(report.get("clients_expected"))
+        for name in (
+            "clients_reported",
+            "clients_completed",
+            "tcp_frames_received",
+            "tcp_pings_sent",
+            "udp_packets_sent",
+            "udp_packets_received",
+            "voice_packets_sent",
+            "voice_packets_received",
+            "interactions_sent",
+            "denied_interactions",
+            "reconnects",
+        ):
+            totals[name] += integer(stats.get(name))
+        for name, destination in (
+            ("tcp_ping_rtt", tcp_ping_p99_micros),
+            ("udp_ping_rtt", udp_ping_p99_micros),
+        ):
+            latency = stats.get(name) if isinstance(stats.get(name), dict) else {}
+            p99 = as_number(latency.get("p99_micros"))
+            if p99 is not None:
+                destination.append(p99)
+    clients_expected = totals["clients_expected"]
+    return {
+        "files": len(files),
+        **dict(totals),
+        "failure_rate": (
+            max(0, clients_expected - totals["clients_completed"]) / clients_expected
+            if clients_expected
+            else 0.0
+        ),
+        "maximum_worker_tcp_ping_p99_micros": (
+            max(tcp_ping_p99_micros) if tcp_ping_p99_micros else None
+        ),
+        "maximum_worker_udp_ping_p99_micros": (
+            max(udp_ping_p99_micros) if udp_ping_p99_micros else None
+        ),
+    }
+
+
 def scan_known_failures(run_directory: Path, warnings: list[str]) -> list[dict[str, Any]]:
     failures: dict[str, dict[str, Any]] = {}
     for path in sorted(run_directory.glob("*.log")):
@@ -428,7 +484,36 @@ def safe_summary(summary: dict[str, Any] | None) -> dict[str, Any]:
         "errors",
         "elapsed_millis",
     )
-    return {key: summary.get(key) for key in allowed if key in summary}
+    safe = {key: summary.get(key) for key in allowed if key in summary}
+    mumble = summary.get("mumble")
+    if isinstance(mumble, dict):
+        mumble_allowed = (
+            "processes_spawned",
+            "reports_expected",
+            "reports_received",
+            "interrupted_processes",
+            "missing_reports",
+            "process_exit_failures",
+            "clients_expected",
+            "clients_reported",
+            "clients_completed",
+            "failure_rate",
+            "maximum_worker_tcp_ping_p99_micros",
+            "maximum_worker_udp_ping_p99_micros",
+            "tcp_frames_received",
+            "tcp_pings_sent",
+            "udp_packets_sent",
+            "udp_packets_received",
+            "voice_packets_sent",
+            "voice_packets_received",
+            "interactions_sent",
+            "denied_interactions",
+            "reconnects",
+        )
+        safe["mumble"] = {
+            key: mumble.get(key) for key in mumble_allowed if key in mumble
+        }
+    return safe
 
 
 def health_status(
@@ -481,18 +566,53 @@ def health_status(
     else:
         add_check("Actor queue saturation", "unknown", "No server metrics")
 
+    aggregate = workers.get("aggregate") if isinstance(workers.get("aggregate"), dict) else {}
+    if aggregate:
+        missing = integer(aggregate.get("missing_reports"))
+        exits = integer(aggregate.get("process_exit_failures"))
+        completed = integer(aggregate.get("clients_completed"))
+        expected = integer(aggregate.get("clients_expected"))
+        completion_ok = missing == 0 and exits == 0 and completed == expected
+        add_check(
+            "Mumble client completion",
+            "pass" if completion_ok else "fail",
+            f"{completed}/{expected} completed; {missing} missing report(s); {exits} failed worker process(es)",
+        )
+        ping_values = [
+            value / 1000.0
+            for value in (
+                as_number(aggregate.get("maximum_worker_tcp_ping_p99_micros")),
+                as_number(aggregate.get("maximum_worker_udp_ping_p99_micros")),
+            )
+            if value is not None
+        ]
+        if ping_values:
+            maximum_ping = max(ping_values)
+            add_check(
+                "Mumble ping p99",
+                "pass" if maximum_ping < PING_P99_LIMIT_MILLIS else "fail",
+                f"{maximum_ping:.1f} ms maximum worker p99, provisional limit {PING_P99_LIMIT_MILLIS:.0f} ms",
+            )
+        else:
+            add_check("Mumble ping p99", "unknown", "No worker ping samples")
+    else:
+        add_check("Mumble client completion", "unknown", "No worker aggregate report")
+        add_check("Mumble ping p99", "unknown", "No worker aggregate report")
+
     scenario = str(manifest.get("scenario", "")).lower()
     if scenario == "voice":
-        add_check(
-            "Audio delivery",
-            "unknown",
-            "Worker aggregate reports are not persisted by the current harness",
-        )
-    add_check(
-        "Mumble completion and ping",
-        "unknown",
-        "Worker aggregate reports are not persisted by the current harness",
-    )
+        final = server.get("final") if isinstance(server.get("final"), dict) else {}
+        fanout = integer(final.get("audio_fanout_deliveries"))
+        received = integer(aggregate.get("voice_packets_received"))
+        if fanout > 0:
+            delivery = received * 100.0 / fanout
+            add_check(
+                "Audio delivery",
+                "pass" if delivery >= AUDIO_DELIVERY_MINIMUM_PERCENT else "fail",
+                f"{delivery:.3f}% observed ({received}/{fanout}), provisional minimum {AUDIO_DELIVERY_MINIMUM_PERCENT:.1f}%",
+            )
+        else:
+            add_check("Audio delivery", "unknown", "No server audio fanout samples")
 
     if failures:
         return (
@@ -538,6 +658,10 @@ def artifact_links(run_directory: Path, output_directory: Path) -> list[dict[str
         path = run_directory / name
         if path.is_file():
             links.append({"name": name, "href": os.path.relpath(path, output_directory)})
+    for path in sorted(run_directory.glob("worker-*-report.json")):
+        links.append(
+            {"name": path.name, "href": os.path.relpath(path, output_directory)}
+        )
     return links
 
 
@@ -555,6 +679,14 @@ def analyze_run(run_directory: Path, output_directory: Path | None = None) -> di
     server = read_server_metrics(run_directory / "server-metrics.jsonl", warnings)
     events = read_events(run_directory, warnings)
     workers = read_worker_events(run_directory, warnings)
+    persisted_worker_reports = read_worker_reports(run_directory, warnings)
+    summary_worker_aggregate = summary.get("mumble")
+    workers["persisted_reports"] = persisted_worker_reports
+    workers["aggregate"] = (
+        summary_worker_aggregate
+        if isinstance(summary_worker_aggregate, dict)
+        else persisted_worker_reports
+    )
     failures = scan_known_failures(run_directory, warnings)
     status, checks = health_status(manifest, summary, server, workers, failures)
     output_directory = output_directory or run_directory
@@ -643,10 +775,11 @@ const el=(name,text,cls)=>{const node=document.createElement(name);if(text!=null
 document.getElementById('run-title').textContent=data.run_name;
 document.getElementById('run-path').textContent=data.run_path;
 const status=document.getElementById('status');status.classList.add(data.status.code);status.querySelector('strong').textContent=data.status.label;status.querySelector('span').textContent=data.status.detail;
-const sync=data.workers.synchronization||{};const maxima=data.server.maxima||{};const summary=data.summary||{};
+const sync=data.workers.synchronization||{};const maxima=data.server.maxima||{};const summary=data.summary||{};const mumble=data.workers.aggregate||{};
 const cards=[
  ['Participants',fmt(data.participants_requested),`${fmt(maxima.connections)} max connections`],
  ['Sync p99',sync.p99==null?'n/a':`${fmt(sync.p99,1)} ms`,`${fmt(sync.count)} clients observed`],
+ ['Mumble clients',`${fmt(mumble.clients_completed)}/${fmt(mumble.clients_expected)}`,`${fmt(mumble.missing_reports)} missing worker reports`],
  ['Max actor queue',fmt(maxima.queue_depth_max),`${fmt(maxima.queue_saturations)} saturations`],
  ['Elapsed',summary.elapsed_millis==null?'n/a':`${fmt(summary.elapsed_millis/1000,1)} s`,`${fmt(data.server.samples)} server samples`],
  ['Ownership violations',fmt(summary.ownership_violations),`${fmt(summary.ownership_losses)} ownership losses`],

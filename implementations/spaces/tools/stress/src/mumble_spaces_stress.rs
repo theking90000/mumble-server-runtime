@@ -7,7 +7,7 @@ use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::net::{IpAddr, SocketAddr};
 use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
-use std::process::Stdio;
+use std::process::{ExitStatus, Stdio};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -15,8 +15,8 @@ use anyhow::{Context, Result, ensure};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use mumble_server_runtime_gateway::tls::Identity;
 use mumble_server_runtime_stress::{
-    Config as MumbleConfig, ManagedClientConfig, MumbleCredential, ScenarioKind, VoiceClip,
-    spawn_managed,
+    ClientReport, Config as MumbleConfig, ManagedClientConfig, MumbleCredential, ScenarioKind,
+    Stats, StatsSummary, VoiceClip, spawn_managed,
 };
 #[cfg(feature = "load-metrics")]
 use mumble_spaces_server::MetricsOutput;
@@ -164,6 +164,10 @@ struct RunArguments {
 #[derive(Debug, Args)]
 struct WorkerArguments {
     #[arg(long)]
+    worker_index: usize,
+    #[arg(long)]
+    report_output: PathBuf,
+    #[arg(long)]
     mumble_server: SocketAddr,
     #[arg(long, default_value = "30s", value_parser = parse_duration)]
     duration: Duration,
@@ -180,6 +184,14 @@ struct WorkerCredential {
     participant_id: String,
     credential: String,
     voice_enabled: bool,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct WorkerReport {
+    schema_version: u8,
+    worker_index: usize,
+    clients_expected: usize,
+    stats: StatsSummary,
 }
 
 #[derive(Debug, Serialize)]
@@ -209,6 +221,7 @@ struct Summary {
     participants_requested: usize,
     credentials_received: usize,
     workers: usize,
+    mumble: WorkerAggregate,
     driver_events: u64,
     credential_rotations: u64,
     ownership_losses: u64,
@@ -217,6 +230,32 @@ struct Summary {
     recovery_audits: u64,
     errors: u64,
     elapsed_millis: u64,
+}
+
+#[derive(Debug, Default, Serialize)]
+struct WorkerAggregate {
+    processes_spawned: usize,
+    reports_expected: usize,
+    reports_received: usize,
+    interrupted_processes: usize,
+    missing_reports: usize,
+    process_exit_failures: usize,
+    clients_expected: usize,
+    clients_reported: usize,
+    clients_completed: usize,
+    failure_rate: f64,
+    maximum_worker_tcp_ping_p99_micros: Option<u64>,
+    maximum_worker_udp_ping_p99_micros: Option<u64>,
+    tcp_frames_received: u64,
+    tcp_pings_sent: u64,
+    udp_packets_sent: u64,
+    udp_packets_received: u64,
+    voice_packets_sent: u64,
+    voice_packets_received: u64,
+    interactions_sent: u64,
+    denied_interactions: u64,
+    reconnects: u64,
+    errors: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -306,6 +345,15 @@ struct Driver {
     input: ChildStdin,
     child: Child,
     reader: JoinHandle<()>,
+}
+
+struct WorkerProcess {
+    index: usize,
+    clients_expected: usize,
+    report_path: PathBuf,
+    child: Option<Child>,
+    status: Option<ExitStatus>,
+    expected_interruption: bool,
 }
 
 struct ManagedEnvironment {
@@ -447,12 +495,13 @@ async fn run_campaign(arguments: RunArguments) -> Result<()> {
             .id()
             .map(|pid| (pid, format!("driver-{}", driver.controller_id)))
     }));
-    sampled_processes.extend(
-        workers
-            .iter()
-            .enumerate()
-            .filter_map(|(index, worker)| worker.id().map(|pid| (pid, format!("worker-{index}")))),
-    );
+    sampled_processes.extend(workers.iter().filter_map(|worker| {
+        worker.child.as_ref().and_then(|child| {
+            child
+                .id()
+                .map(|pid| (pid, format!("worker-{}", worker.index)))
+        })
+    }));
     let sampler = spawn_process_sampler(
         result_directory.join("process-metrics.csv"),
         sampled_processes,
@@ -514,13 +563,7 @@ async fn run_campaign(arguments: RunArguments) -> Result<()> {
     .await?;
     record_failure_phase(&coordinator_events, FailurePhase::FinalAudit).await?;
     for worker in &mut workers {
-        let status = worker.wait().await.context("waiting for Mumble worker")?;
-        ensure!(
-            status.success()
-                || is_resilience_scenario(arguments.scenario)
-                || !matches!(arguments.fault, ProcessFault::None),
-            "Mumble worker exited with {status}"
-        );
+        wait_worker_process(worker).await?;
     }
 
     for driver in &mut drivers {
@@ -554,9 +597,18 @@ async fn run_campaign(arguments: RunArguments) -> Result<()> {
     audit_ledger(&plans, &ledger, arguments.scenario)?;
     summary.ownership_violations = ledger.credential_reuse_violations;
     summary.recovery_audits = 1;
+    summary.workers = workers.len();
+    summary.mumble = aggregate_worker_reports(&workers)?;
     summary.elapsed_millis = duration_millis(started.elapsed());
     write_summary(&result_directory, &summary)?;
     mark_phase_control_complete(arguments.phase_control.as_deref())?;
+    ensure!(
+        summary.mumble.process_exit_failures == 0
+            || is_resilience_scenario(arguments.scenario)
+            || !matches!(arguments.fault, ProcessFault::None),
+        "{} Mumble worker process(es) exited unsuccessfully",
+        summary.mumble.process_exit_failures
+    );
     Ok(())
 }
 
@@ -900,18 +952,23 @@ async fn spawn_workers(
     result_directory: &Path,
     credentials: BTreeMap<String, String>,
     worker_offset: usize,
-) -> Result<Vec<Child>> {
+) -> Result<Vec<WorkerProcess>> {
     let executable = std::env::current_exe()?;
     let entries: Vec<_> = credentials.into_iter().collect();
     let mut workers = Vec::new();
     for (relative_index, chunk) in entries.chunks(MAX_CLIENTS_PER_WORKER).enumerate() {
         let index = worker_offset.saturating_add(relative_index);
+        let report_path = result_directory.join(format!("worker-{index}-report.json"));
         let stdout = File::create(result_directory.join(format!("worker-{index}.jsonl")))?;
         let stderr = File::create(result_directory.join(format!("worker-{index}.log")))?;
         let mut command =
             namespaced_command(arguments.worker_netns_prefix.as_deref(), index, &executable);
         command
             .arg("worker")
+            .arg("--worker-index")
+            .arg(index.to_string())
+            .arg("--report-output")
+            .arg(&report_path)
             .arg("--mumble-server")
             .arg(mumble_server.to_string())
             .arg("--duration")
@@ -941,7 +998,14 @@ async fn spawn_workers(
             input.write_all(b"\n").await?;
         }
         input.shutdown().await?;
-        workers.push(child);
+        workers.push(WorkerProcess {
+            index,
+            clients_expected: chunk.len(),
+            report_path,
+            child: Some(child),
+            status: None,
+            expected_interruption: false,
+        });
     }
     Ok(workers)
 }
@@ -951,6 +1015,7 @@ async fn run_worker(arguments: WorkerArguments) -> Result<()> {
         arguments.talk_percent <= 100,
         "--talk-percent must be at most 100"
     );
+    let started = Instant::now();
     let voice_clip = arguments
         .voice_file
         .as_deref()
@@ -1011,14 +1076,46 @@ async fn run_worker(arguments: WorkerArguments) -> Result<()> {
             Ok::<_, anyhow::Error>(report)
         });
     }
+    let mut stats = Stats::default();
     while let Some(result) = tasks.join_next().await {
-        let report = result??;
-        ensure!(
-            report.completed,
-            "Mumble client did not complete: {:?}",
-            report.error
-        );
+        match result {
+            Ok(Ok(report)) => stats.record(report),
+            Ok(Err(error)) => stats.record(ClientReport {
+                error: Some(error.to_string()),
+                ..ClientReport::default()
+            }),
+            Err(error) => stats.record(ClientReport {
+                error: Some(format!("client task failed: {error}")),
+                ..ClientReport::default()
+            }),
+        }
     }
+    let report = WorkerReport {
+        schema_version: PROTOCOL_VERSION,
+        worker_index: arguments.worker_index,
+        clients_expected: clients.get(),
+        stats: stats.summary(started.elapsed()),
+    };
+    write_worker_report(&arguments.report_output, &report)?;
+    ensure!(
+        report.stats.clients_reported == report.clients_expected,
+        "Mumble worker reported {}/{} clients",
+        report.stats.clients_reported,
+        report.clients_expected
+    );
+    ensure!(
+        report.stats.clients_completed == report.clients_expected,
+        "Mumble worker completed {}/{} clients",
+        report.stats.clients_completed,
+        report.clients_expected
+    );
+    Ok(())
+}
+
+fn write_worker_report(path: &Path, report: &WorkerReport) -> Result<()> {
+    let temporary = path.with_extension("json.tmp");
+    serde_json::to_writer_pretty(File::create(&temporary)?, report)?;
+    std::fs::rename(&temporary, path)?;
     Ok(())
 }
 
@@ -1205,7 +1302,7 @@ async fn apply_process_fault(
     arguments: &RunArguments,
     plans: &[ParticipantPlan],
     drivers: &mut [Driver],
-    workers: &mut Vec<Child>,
+    workers: &mut Vec<WorkerProcess>,
     known_credentials: &BTreeMap<String, String>,
     result_directory: &Path,
     controller_endpoint: &str,
@@ -1374,12 +1471,160 @@ fn speaker_enabled_for(
     }
 }
 
-async fn terminate_workers(workers: &mut Vec<Child>) -> Result<()> {
+async fn terminate_workers(workers: &mut [WorkerProcess]) -> Result<()> {
     for worker in &mut *workers {
-        worker.kill().await.context("cutting Mumble worker")?;
+        let Some(mut child) = worker.child.take() else {
+            continue;
+        };
+        let status = match child.try_wait().context("checking Mumble worker")? {
+            Some(status) => status,
+            None => {
+                worker.expected_interruption = true;
+                child.kill().await.context("cutting Mumble worker")?;
+                child.wait().await.context("reaping cut Mumble worker")?
+            }
+        };
+        worker.status = Some(status);
     }
-    workers.clear();
     Ok(())
+}
+
+async fn wait_worker_process(worker: &mut WorkerProcess) -> Result<()> {
+    let Some(mut child) = worker.child.take() else {
+        return Ok(());
+    };
+    worker.status = Some(
+        child
+            .wait()
+            .await
+            .with_context(|| format!("waiting for Mumble worker {}", worker.index))?,
+    );
+    Ok(())
+}
+
+fn aggregate_worker_reports(workers: &[WorkerProcess]) -> Result<WorkerAggregate> {
+    let mut aggregate = WorkerAggregate {
+        processes_spawned: workers.len(),
+        ..WorkerAggregate::default()
+    };
+    let mut expected_reports_received = 0usize;
+    for worker in workers {
+        if worker.expected_interruption {
+            aggregate.interrupted_processes = aggregate.interrupted_processes.saturating_add(1);
+        } else {
+            aggregate.reports_expected = aggregate.reports_expected.saturating_add(1);
+            aggregate.clients_expected = aggregate
+                .clients_expected
+                .saturating_add(worker.clients_expected);
+        }
+        if worker
+            .status
+            .as_ref()
+            .is_some_and(|status| !status.success())
+            && !worker.expected_interruption
+        {
+            aggregate.process_exit_failures = aggregate.process_exit_failures.saturating_add(1);
+        }
+        if !worker.report_path.is_file() {
+            continue;
+        }
+        let report: WorkerReport = serde_json::from_reader(File::open(&worker.report_path)?)?;
+        ensure!(
+            report.schema_version == PROTOCOL_VERSION,
+            "worker {} report schema mismatch",
+            worker.index
+        );
+        ensure!(
+            report.worker_index == worker.index,
+            "worker report index mismatch: expected {}, got {}",
+            worker.index,
+            report.worker_index
+        );
+        ensure!(
+            report.clients_expected == worker.clients_expected,
+            "worker {} client count mismatch",
+            worker.index
+        );
+        aggregate.reports_received = aggregate.reports_received.saturating_add(1);
+        if !worker.expected_interruption {
+            expected_reports_received = expected_reports_received.saturating_add(1);
+            aggregate.clients_reported = aggregate
+                .clients_reported
+                .saturating_add(report.stats.clients_reported);
+            aggregate.clients_completed = aggregate
+                .clients_completed
+                .saturating_add(report.stats.clients_completed);
+            aggregate.maximum_worker_tcp_ping_p99_micros = maximum_optional(
+                aggregate.maximum_worker_tcp_ping_p99_micros,
+                report
+                    .stats
+                    .tcp_ping_rtt
+                    .as_ref()
+                    .map(|value| value.p99_micros),
+            );
+            aggregate.maximum_worker_udp_ping_p99_micros = maximum_optional(
+                aggregate.maximum_worker_udp_ping_p99_micros,
+                report
+                    .stats
+                    .udp_ping_rtt
+                    .as_ref()
+                    .map(|value| value.p99_micros),
+            );
+        }
+        aggregate.tcp_frames_received = aggregate
+            .tcp_frames_received
+            .saturating_add(report.stats.tcp_frames_received);
+        aggregate.tcp_pings_sent = aggregate
+            .tcp_pings_sent
+            .saturating_add(report.stats.tcp_pings_sent);
+        aggregate.udp_packets_sent = aggregate
+            .udp_packets_sent
+            .saturating_add(report.stats.udp_packets_sent);
+        aggregate.udp_packets_received = aggregate
+            .udp_packets_received
+            .saturating_add(report.stats.udp_packets_received);
+        aggregate.voice_packets_sent = aggregate
+            .voice_packets_sent
+            .saturating_add(report.stats.voice_packets_sent);
+        aggregate.voice_packets_received = aggregate
+            .voice_packets_received
+            .saturating_add(report.stats.voice_packets_received);
+        aggregate.interactions_sent = aggregate
+            .interactions_sent
+            .saturating_add(report.stats.interactions_sent);
+        aggregate.denied_interactions = aggregate
+            .denied_interactions
+            .saturating_add(report.stats.denied_interactions);
+        aggregate.reconnects = aggregate.reconnects.saturating_add(report.stats.reconnects);
+        let remaining_error_capacity = 10usize.saturating_sub(aggregate.errors.len());
+        aggregate.errors.extend(
+            report
+                .stats
+                .errors
+                .into_iter()
+                .take(remaining_error_capacity),
+        );
+    }
+    aggregate.missing_reports = aggregate
+        .reports_expected
+        .saturating_sub(expected_reports_received);
+    aggregate.failure_rate = if aggregate.clients_expected == 0 {
+        0.0
+    } else {
+        aggregate
+            .clients_expected
+            .saturating_sub(aggregate.clients_completed) as f64
+            / aggregate.clients_expected as f64
+    };
+    Ok(aggregate)
+}
+
+fn maximum_optional(left: Option<u64>, right: Option<u64>) -> Option<u64> {
+    match (left, right) {
+        (Some(left), Some(right)) => Some(left.max(right)),
+        (Some(value), None) | (None, Some(value)) => Some(value),
+        (None, None) => None,
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1642,16 +1887,34 @@ fn write_summary(directory: &Path, summary: &Summary) -> Result<()> {
     let mut csv = BufWriter::new(File::create(directory.join("summary.csv"))?);
     writeln!(
         csv,
-        "scenario,controllers,participants,credentials,workers,driver_events,credential_rotations,ownership_losses,ownership_violations,stale_credential_rejections,recovery_audits,errors,elapsed_millis"
+        "scenario,controllers,participants,credentials,workers,worker_reports_expected,worker_reports_received,worker_reports_missing,worker_process_exit_failures,mumble_clients_expected,mumble_clients_reported,mumble_clients_completed,mumble_failure_rate,tcp_ping_max_worker_p99_micros,udp_ping_max_worker_p99_micros,voice_packets_sent,voice_packets_received,driver_events,credential_rotations,ownership_losses,ownership_violations,stale_credential_rejections,recovery_audits,errors,elapsed_millis"
     )?;
     writeln!(
         csv,
-        "{},{},{},{},{},{},{},{},{},{},{},{},{}",
+        "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
         summary.scenario,
         summary.controllers,
         summary.participants_requested,
         summary.credentials_received,
         summary.workers,
+        summary.mumble.reports_expected,
+        summary.mumble.reports_received,
+        summary.mumble.missing_reports,
+        summary.mumble.process_exit_failures,
+        summary.mumble.clients_expected,
+        summary.mumble.clients_reported,
+        summary.mumble.clients_completed,
+        summary.mumble.failure_rate,
+        summary
+            .mumble
+            .maximum_worker_tcp_ping_p99_micros
+            .map_or_else(String::new, |value| value.to_string()),
+        summary
+            .mumble
+            .maximum_worker_udp_ping_p99_micros
+            .map_or_else(String::new, |value| value.to_string()),
+        summary.mumble.voice_packets_sent,
+        summary.mumble.voice_packets_received,
         summary.driver_events,
         summary.credential_rotations,
         summary.ownership_losses,
@@ -2012,6 +2275,48 @@ mod tests {
         );
         assert!(!persisted.contains("secret-token"));
         assert!(!persisted.contains("\"credential\""));
+        Ok(())
+    }
+
+    #[test]
+    fn worker_reports_are_persisted_and_aggregated_without_credentials() -> Result<()> {
+        let temporary = std::env::temp_dir().join(format!(
+            "mumble-spaces-worker-report-test-{}.json",
+            std::process::id()
+        ));
+        let mut stats = Stats::default();
+        stats.record(ClientReport {
+            completed: true,
+            tcp_ping_rtts: vec![Duration::from_millis(12)],
+            voice_packets_sent: 3,
+            voice_packets_received: 6,
+            ..ClientReport::default()
+        });
+        write_worker_report(
+            &temporary,
+            &WorkerReport {
+                schema_version: PROTOCOL_VERSION,
+                worker_index: 7,
+                clients_expected: 1,
+                stats: stats.summary(Duration::from_secs(1)),
+            },
+        )?;
+        let aggregate = aggregate_worker_reports(&[WorkerProcess {
+            index: 7,
+            clients_expected: 1,
+            report_path: temporary.clone(),
+            child: None,
+            status: None,
+            expected_interruption: false,
+        }])?;
+        let persisted = std::fs::read_to_string(&temporary)?;
+        std::fs::remove_file(&temporary)?;
+
+        assert_eq!(aggregate.clients_completed, 1);
+        assert_eq!(aggregate.maximum_worker_tcp_ping_p99_micros, Some(12_000));
+        assert_eq!(aggregate.voice_packets_received, 6);
+        assert!(!persisted.contains("credential"));
+        assert!(!persisted.contains("password"));
         Ok(())
     }
 

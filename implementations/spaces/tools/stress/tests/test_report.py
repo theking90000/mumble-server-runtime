@@ -46,6 +46,22 @@ class ReportTest(unittest.TestCase):
                     "participants_requested": 8,
                     "credentials_received": 8,
                     "workers": 1,
+                    "mumble": {
+                        "processes_spawned": 1,
+                        "reports_expected": 1,
+                        "reports_received": 1,
+                        "interrupted_processes": 0,
+                        "missing_reports": 0,
+                        "process_exit_failures": 0,
+                        "clients_expected": 8,
+                        "clients_reported": 8,
+                        "clients_completed": 8,
+                        "failure_rate": 0.0,
+                        "maximum_worker_tcp_ping_p99_micros": 20_000,
+                        "maximum_worker_udp_ping_p99_micros": 30_000,
+                        "voice_packets_sent": 0,
+                        "voice_packets_received": 0,
+                    },
                     "driver_events": 100,
                     "credential_rotations": 8,
                     "ownership_losses": 0,
@@ -123,6 +139,24 @@ class ReportTest(unittest.TestCase):
             ),
             encoding="utf-8",
         )
+        (run / "worker-0-report.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "worker_index": 0,
+                    "clients_expected": 8,
+                    "stats": {
+                        "clients_reported": 8,
+                        "clients_completed": 8,
+                        "tcp_ping_rtt": {"p99_micros": 20_000},
+                        "udp_ping_rtt": {"p99_micros": 30_000},
+                        "voice_packets_sent": 0,
+                        "voice_packets_received": 0,
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
         return run
 
     def test_generates_redacted_run_report_with_derived_metrics(self) -> None:
@@ -132,7 +166,8 @@ class ReportTest(unittest.TestCase):
 
             self.assertEqual(data["workers"]["synchronization"]["p99"], 300.0)
             self.assertEqual(data["server"]["maxima"]["queue_depth_max"], 7)
-            self.assertEqual(data["status"]["code"], "partial")
+            self.assertEqual(data["status"]["code"], "pass")
+            self.assertEqual(data["workers"]["aggregate"]["clients_completed"], 8)
             document = output.read_text(encoding="utf-8")
             self.assertIn("Spaces headless load report", document)
             self.assertNotIn("must-not-appear", document)

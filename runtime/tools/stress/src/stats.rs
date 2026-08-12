@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Default, Clone)]
 pub struct ClientReport {
@@ -22,7 +22,7 @@ pub struct ClientReport {
     pub error: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub struct DistributionSummary {
     pub samples: usize,
     pub p50_micros: u64,
@@ -31,7 +31,7 @@ pub struct DistributionSummary {
     pub max_micros: u64,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub struct StatsSummary {
     pub elapsed_millis: u64,
     pub clients_reported: usize,
