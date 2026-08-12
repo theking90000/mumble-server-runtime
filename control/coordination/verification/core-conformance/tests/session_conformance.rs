@@ -19,8 +19,23 @@ use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 
 const RESPONSE_DEADLINE: Duration = Duration::from_secs(5);
-const SPACES_DESCRIPTOR_DIGEST: &str =
-    include_str!("../../../implementations/spaces/contract/controller-spaces-v1.pb.sha256");
+
+fn spaces_descriptor_digest() -> String {
+    let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let migrated =
+        manifest.join("../../../../implementations/spaces/protocol/controller-spaces-v1.pb.sha256");
+    let current = manifest.join(
+        "../../../../control-plane/implementations/spaces/contract/controller-spaces-v1.pb.sha256",
+    );
+    std::fs::read_to_string(if migrated.is_file() {
+        migrated
+    } else {
+        current
+    })
+    .expect("read the pinned Spaces descriptor digest")
+    .trim()
+    .to_owned()
+}
 
 struct ControllerStream {
     requests: mpsc::Sender<ClientFrame>,
@@ -119,7 +134,7 @@ fn open_frame(
     open.profile = Some(ProfileRef {
         profile_id: "mumble.controller.spaces".to_owned(),
         schema_version: 1,
-        descriptor_digest: SPACES_DESCRIPTOR_DIGEST.trim().to_owned(),
+        descriptor_digest: spaces_descriptor_digest(),
     });
     ClientFrame {
         request_id: request_id(request),

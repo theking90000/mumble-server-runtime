@@ -103,7 +103,9 @@ done
 # --- Controller Core : pure synchronization state, without transport or business policy ---
 mapfile -t controller_core_files < <(controller_layer_files \
   control-plane/core \
-  control/coordination)
+  control/coordination/protocol \
+  control/coordination/rust \
+  control/coordination/sdk)
 forbid "controller-core/no-runtime" \
        '(mumble[_-]server[_-]runtime|RuntimeHandle|ShardHandle|ShardId|ConnectionId)' "${controller_core_files[@]}"
 forbid "controller-core/no-transport" \
