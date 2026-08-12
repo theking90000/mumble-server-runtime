@@ -2,7 +2,9 @@ package be.theking90000.mumble.bukkit;
 
 import be.theking90000.mumble.controller.core.ControllerId;
 import be.theking90000.mumble.controller.core.ConnectionCredential;
+import be.theking90000.mumble.controller.core.ParticipantHandleState;
 import be.theking90000.mumble.controller.core.ParticipantId;
+import be.theking90000.mumble.controller.core.SessionClosedException;
 import be.theking90000.mumble.controller.spaces.ControllerSession;
 import be.theking90000.mumble.controller.spaces.ParticipantHandle;
 import be.theking90000.mumble.controller.spaces.ParticipantSpec;
@@ -34,9 +36,9 @@ import java.util.concurrent.TimeUnit;
 /**
  * A Bukkit plugin that mirrors the server's players into one controller session.
  *
- * <p>One participant per online player, one Space per world. The SDK itself has no
- * Minecraft dependency; this class is only the adapter between Bukkit events and
- * the controller's desired state.</p>
+ * <p>One participant per online player, one server-qualified Space per world. The
+ * SDK itself has no Minecraft dependency; this class is only the adapter between
+ * Bukkit events and the controller's desired state.</p>
  *
  * <p>Session lifecycle, ownership losses and application errors are always logged.
  * The per-player and per-Space traces are gated behind the {@code debug} key of
@@ -167,14 +169,31 @@ public final class VoicePlugin extends JavaPlugin implements Listener {
             debug("No handle for " + player.getName() + " on quit, ignoring");
             return;
         }
-        debug("Unregistering " + player.getName() + " from state " + handle.state());
-        handle.unregister().whenComplete((ignored, failure) -> {
-            if (failure != null) {
-                getLogger().warning("Unregistration of " + player.getName() + " failed: " + failure);
+        ParticipantHandleState state = handle.state();
+        debug("Unregistering " + player.getName() + " from state " + state);
+        if (state == ParticipantHandleState.REVOKED) {
+            debug("No unregistration needed for " + player.getName() + ", already revoked");
+            return;
+        }
+        try {
+            handle.unregister().whenComplete((ignored, failure) -> {
+                if (failure != null) {
+                    getLogger().warning("Unregistration of " + player.getName()
+                            + " failed: " + failure);
+                } else {
+                    debug("Unregistered " + player.getName());
+                }
+            });
+        } catch (SessionClosedException failure) {
+            // Ownership can be revoked between the state read and unregister().
+            if (handle.state() == ParticipantHandleState.REVOKED) {
+                debug("No unregistration needed for " + player.getName()
+                        + ", revoked concurrently");
             } else {
-                debug("Unregistered " + player.getName());
+                getLogger().warning("Unregistration of " + player.getName()
+                        + " failed: " + failure);
             }
-        });
+        }
     }
 
     /**
@@ -220,16 +239,17 @@ public final class VoicePlugin extends JavaPlugin implements Listener {
     }
 
     /**
-     * Builds the desired specification of a player from the world they stand in and
-     * the administrative mute set. Every call site goes through this method, so a
-     * world change cannot silently drop a mute applied by an operator.
+     * Builds the desired specification of a player from this server, the world they
+     * stand in and the administrative mute set. Every call site goes through this
+     * method, so a world change cannot silently drop a mute applied by an operator.
      *
      * @param player player to describe
      * @return complete desired specification
      */
     ParticipantSpec specFor(Player player) {
         return ParticipantSpec.builder(
-                        SpaceKey.of("world-" + player.getWorld().getName()),
+                        SpaceKey.of(getServer().getServerName() + "-"
+                                + player.getWorld().getName()),
                         player.getName())
                 .serverMute(serverMuted.contains(player.getUniqueId()))
                 .build();

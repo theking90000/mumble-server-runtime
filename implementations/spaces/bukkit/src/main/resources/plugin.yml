@@ -2,7 +2,7 @@ name: VoiceExample
 main: be.theking90000.mumble.bukkit.VoicePlugin
 version: ${version}
 author: theking90000
-description: Example Mumble Controller integration; one participant per player, one Space per world.
+description: Example Mumble Controller integration; one participant per player, one server-qualified Space per world.
 
 commands:
   voice:
