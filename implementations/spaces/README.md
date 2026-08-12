@@ -10,4 +10,6 @@ runtime shard and audio domain without exposing runtime identifiers.
 - `host/rust/` composes Coordination, the Runtime Adapter, Spaces, and the
   runtime into the runnable `mumble-controller-server` process;
 - `bukkit/` is the buildable Java 8 consumer example, kept as a separate Gradle
-  build so the SDK does not inherit a Minecraft dependency.
+  build so the SDK does not inherit a Minecraft dependency;
+- `verification/spaces-interop/` independently exercises the real Java SDK,
+  host, runtime, and simulated Mumble clients.

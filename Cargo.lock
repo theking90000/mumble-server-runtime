@@ -762,6 +762,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "mumble-controller-spaces-interop"
+version = "0.1.0"
+dependencies = [
+ "mumble-controller-server",
+ "mumble-server-runtime-gateway",
+ "mumble-server-runtime-protocol",
+ "mumble-server-runtime-testkit",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
 name = "mumble-server-runtime-arena"
 version = "0.1.0"
 dependencies = [
