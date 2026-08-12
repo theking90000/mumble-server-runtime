@@ -34,6 +34,10 @@ pub struct ModelUser {
     pub name: String,
     /// The channel the user is shown in (root if the server omitted channel_id).
     pub channel: u32,
+    pub mute: bool,
+    pub deaf: bool,
+    pub self_mute: bool,
+    pub self_deaf: bool,
 }
 
 /// The client's view of the server, built by applying control messages.
@@ -264,10 +268,26 @@ impl ClientModel {
             session,
             name: String::new(),
             channel,
+            mute: false,
+            deaf: false,
+            self_mute: false,
+            self_deaf: false,
         });
         entry.channel = channel;
         if let Some(name) = &us.name {
             entry.name = name.clone();
+        }
+        if let Some(mute) = us.mute {
+            entry.mute = mute;
+        }
+        if let Some(deaf) = us.deaf {
+            entry.deaf = deaf;
+        }
+        if let Some(self_mute) = us.self_mute {
+            entry.self_mute = self_mute;
+        }
+        if let Some(self_deaf) = us.self_deaf {
+            entry.self_deaf = self_deaf;
         }
     }
 
@@ -474,6 +494,30 @@ mod tests {
             model.users.get(&2).map(|u| u.channel),
             Some(ROOT_CHANNEL_ID)
         );
+    }
+
+    #[test]
+    fn user_flags_survive_partial_updates() {
+        let mut model = ClientModel::new();
+        model.apply(&channel(0, None));
+        model.apply(&ControlMessage::UserState(tcp::UserState {
+            session: Some(2),
+            name: Some("muted".to_owned()),
+            mute: Some(true),
+            self_deaf: Some(true),
+            ..Default::default()
+        }));
+        model.apply(&ControlMessage::UserState(tcp::UserState {
+            session: Some(2),
+            name: Some("renamed".to_owned()),
+            ..Default::default()
+        }));
+
+        let user = model.users.get(&2).expect("user");
+        assert!(user.mute);
+        assert!(user.self_deaf);
+        assert!(!user.deaf);
+        assert!(!user.self_mute);
     }
 
     #[test]
