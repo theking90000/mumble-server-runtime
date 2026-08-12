@@ -29,3 +29,7 @@ project(":implementations:spaces").projectDir = file("implementations/spaces")
 project(":implementations:spaces:sdk").projectDir = file("implementations/spaces/sdk")
 project(":implementations:spaces:sdk:controller-spaces").projectDir =
     file("implementations/spaces/sdk/java")
+include("implementations:spaces:tools:load-driver-java")
+project(":implementations:spaces:tools").projectDir = file("implementations/spaces/tools")
+project(":implementations:spaces:tools:load-driver-java").projectDir =
+    file("implementations/spaces/tools/load-driver-java")
