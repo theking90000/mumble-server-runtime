@@ -56,6 +56,7 @@ public final class ControllerInteropMain {
         bobToken = null;
 
         ControllerSession transfer = null;
+        boolean primaryStopped = false;
         BufferedReader commands = new BufferedReader(new InputStreamReader(System.in, StandardCharsets.UTF_8));
         System.out.println("CONTROLLER_INTEROP_READY");
         System.out.flush();
@@ -118,6 +119,10 @@ public final class ControllerInteropMain {
                         .map(ParticipantStatus::acceptedSpecRevision)
                         .orElse(1L), "handoff");
                 acknowledge("TRANSFERRED");
+            } else if ("STOP_PRIMARY".equals(command)) {
+                primary.stop().get(TIMEOUT_SECONDS, TimeUnit.SECONDS);
+                primaryStopped = true;
+                acknowledge("PRIMARY_STOPPED");
             } else if ("RELEASE".equals(command)) {
                 alice.unregister().get(TIMEOUT_SECONDS, TimeUnit.SECONDS);
                 acknowledge("RELEASED");
@@ -125,7 +130,9 @@ public final class ControllerInteropMain {
                 if (transfer != null) {
                     transfer.stop().get(TIMEOUT_SECONDS, TimeUnit.SECONDS);
                 }
-                primary.stop().get(TIMEOUT_SECONDS, TimeUnit.SECONDS);
+                if (!primaryStopped) {
+                    primary.stop().get(TIMEOUT_SECONDS, TimeUnit.SECONDS);
+                }
                 acknowledge("STOPPED");
                 return;
             } else {
