@@ -23,12 +23,16 @@ cargo run --quiet -p mumble-spaces-stress -- run \
 
 SUMMARY="$(find "$RESULTS" -name summary.json -type f -print -quit)"
 EVENTS="$(find "$RESULTS" -name events.jsonl -type f -print -quit)"
+PROCESSES="$(find "$RESULTS" -name process-metrics.csv -type f -print -quit)"
 test -n "$SUMMARY"
 test -n "$EVENTS"
+test -n "$PROCESSES"
 grep -q '"credential_rotations": 16' "$SUMMARY"
 grep -q '"ownership_violations": 0' "$SUMMARY"
 grep -q '"phase":"injection"' "$EVENTS"
 grep -q '"phase":"final_audit"' "$EVENTS"
+grep -q ',server,' "$PROCESSES"
+grep -q ',worker-1,' "$PROCESSES"
 if grep -R -E '"credential"|secret-token|bearer' "$RESULTS"; then
   echo "spaces-resilience-smoke: secret-shaped data found in artifacts" >&2
   exit 1

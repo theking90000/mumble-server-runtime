@@ -22,7 +22,8 @@ PING_P99_LIMIT_MILLIS = 100.0
 AUDIO_DELIVERY_MINIMUM_PERCENT = 99.9
 MAX_CHART_POINTS = 600
 PROCESS_GROUP_LABELS = {
-    "coordinator": "Coordinator + embedded server",
+    "coordinator": "Coordinator",
+    "server": "Spaces server",
     "drivers": "Java drivers (total)",
     "workers": "Mumble workers (total)",
     "other": "Other processes",
@@ -170,6 +171,8 @@ def downsample(points: list[list[float]], limit: int = MAX_CHART_POINTS) -> list
 def process_group(role: str) -> tuple[str, str]:
     if role == "coordinator":
         return "coordinator", PROCESS_GROUP_LABELS["coordinator"]
+    if role == "server":
+        return "server", PROCESS_GROUP_LABELS["server"]
     if role.startswith("driver-"):
         return "drivers", PROCESS_GROUP_LABELS["drivers"]
     if role.startswith("worker-"):
@@ -763,7 +766,7 @@ REPORT_HTML = r'''<!doctype html>
     <article class="panel"><h2>Driver events</h2><div id="events-chart" class="chart"></div></article>
     <article class="panel wide"><h2>Health checks</h2><div class="scroll"><table><thead><tr><th>Check</th><th>Status</th><th>Detail</th></tr></thead><tbody id="checks"></tbody></table></div><div id="notices"></div></article>
     <article class="panel wide"><h2>Process peaks</h2><div class="scroll"><table><thead><tr><th>Role</th><th>Peak RSS</th><th>Peak CPU</th></tr></thead><tbody id="process-table"></tbody></table></div></article>
-    <article class="panel wide"><h2>Run identity</h2><dl class="meta" id="meta"></dl><h3 style="margin-top:18px">Raw artifacts</h3><div class="artifacts" id="artifacts"></div><p class="footnote">The report embeds only allow-listed metadata and aggregated measurements. Raw logs are linked, not embedded. macOS process CPU can exceed 100% when a process uses multiple cores; the coordinator role includes the embedded managed server.</p></article>
+    <article class="panel wide"><h2>Run identity</h2><dl class="meta" id="meta"></dl><h3 style="margin-top:18px">Raw artifacts</h3><div class="artifacts" id="artifacts"></div><p class="footnote">The report embeds only allow-listed metadata and aggregated measurements. Raw logs are linked, not embedded. macOS process CPU can exceed 100% when a process uses multiple cores. Managed runs report the coordinator and Spaces server as separate processes.</p></article>
   </section>
 </main>
 <script id="report-data" type="application/json">__DATA__</script>
