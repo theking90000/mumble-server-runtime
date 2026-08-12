@@ -12,6 +12,7 @@ use tokio_rustls::TlsAcceptor;
 
 use crate::config::GatewayConfig;
 use crate::connection;
+use crate::metrics::VoiceMetrics;
 use crate::router::ConnectionRouter;
 use crate::runtime::{Runtime, RuntimeHandle};
 use crate::tls::{self, Identity};
@@ -28,6 +29,7 @@ pub struct Gateway {
     listener: TcpListener,
     udp: Arc<UdpSocket>,
     acceptor: TlsAcceptor,
+    voice_metrics: Arc<VoiceMetrics>,
 }
 
 impl Gateway {
@@ -50,6 +52,7 @@ impl Gateway {
             listener,
             udp: Arc::new(udp),
             acceptor,
+            voice_metrics: Arc::new(VoiceMetrics::default()),
         })
     }
 
@@ -64,6 +67,11 @@ impl Gateway {
         self.runtime.handle()
     }
 
+    #[must_use]
+    pub fn voice_metrics(&self) -> Arc<VoiceMetrics> {
+        Arc::clone(&self.voice_metrics)
+    }
+
     /// Accept connections until the listener fails.
     ///
     /// # Errors
@@ -73,10 +81,11 @@ impl Gateway {
     pub async fn serve<R: ConnectionRouter>(self, router: R) -> Result<()> {
         let router = Arc::new(router);
         let runtime = self.runtime.handle();
-        let voice = Arc::new(VoicePlane::new(
+        let voice = Arc::new(VoicePlane::new_with_metrics(
             Arc::clone(&self.udp),
             Arc::clone(runtime.peers()),
             (*self.config).clone(),
+            Arc::clone(&self.voice_metrics),
         ));
 
         // The voice plane is owned by this future rather than detached: when

@@ -18,13 +18,13 @@ use mumble_server_runtime_stress::{
     Config as MumbleConfig, ManagedClientConfig, MumbleCredential, ScenarioKind, VoiceClip,
     spawn_managed,
 };
-use mumble_spaces_server::{ControllerConfig, RunningControllerServer};
+use mumble_spaces_server::{ControllerConfig, MetricsOutput, RunningControllerServer};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use thiserror::Error;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader as AsyncBufReader};
 use tokio::process::{Child, ChildStdin, Command as ProcessCommand};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 use tokio::task::JoinSet;
 use tokio::time::{Instant, timeout};
@@ -193,6 +193,21 @@ struct ManagedEnvironment {
     mumble_server: SocketAddr,
 }
 
+struct ProcessSampler {
+    stop: oneshot::Sender<()>,
+    task: JoinHandle<Result<()>>,
+}
+
+impl ProcessSampler {
+    async fn stop(self) -> Result<()> {
+        let _receiver_gone = self.stop.send(());
+        self.task
+            .await
+            .context("joining process metrics sampler")??;
+        Ok(())
+    }
+}
+
 #[derive(Debug, Error)]
 enum CampaignError {
     #[error("external mode requires both --controller-endpoint and --mumble-server")]
@@ -215,7 +230,7 @@ async fn run_campaign(arguments: RunArguments) -> Result<()> {
     write_manifest(&result_directory, &arguments)?;
     let mut events = event_writer(&result_directory)?;
     let mut server_log = BufWriter::new(File::create(result_directory.join("server.log"))?);
-    let environment = start_environment(&arguments).await?;
+    let environment = start_environment(&arguments, &result_directory).await?;
     writeln!(
         server_log,
         "controller_endpoint={} mumble_server={}",
@@ -300,6 +315,23 @@ async fn run_campaign(arguments: RunArguments) -> Result<()> {
     };
     summary.credentials_received = plans.len().min(summary.credentials_received);
     summary.workers = workers.len();
+    let mut sampled_processes = vec![(std::process::id(), "coordinator".to_owned())];
+    sampled_processes.extend(drivers.iter().filter_map(|driver| {
+        driver
+            .child
+            .id()
+            .map(|pid| (pid, format!("driver-{}", driver.controller_id)))
+    }));
+    sampled_processes.extend(
+        workers
+            .iter()
+            .enumerate()
+            .filter_map(|(index, worker)| worker.id().map(|pid| (pid, format!("worker-{index}")))),
+    );
+    let sampler = spawn_process_sampler(
+        result_directory.join("process-metrics.csv"),
+        sampled_processes,
+    );
     let recorder = tokio::spawn(async move {
         while let Some((_, event)) = event_receiver.recv().await {
             record_driver_event(
@@ -345,6 +377,7 @@ async fn run_campaign(arguments: RunArguments) -> Result<()> {
     if let Some(server) = environment.server {
         server.shutdown().await;
     }
+    sampler.stop().await?;
     let (mut summary, ledger) = recorder.await.context("joining driver event recorder")??;
     audit_ledger(&plans, &ledger)?;
     summary.elapsed_millis = duration_millis(started.elapsed());
@@ -374,7 +407,10 @@ fn validate_run_arguments(arguments: &RunArguments) -> Result<()> {
     Ok(())
 }
 
-async fn start_environment(arguments: &RunArguments) -> Result<ManagedEnvironment> {
+async fn start_environment(
+    arguments: &RunArguments,
+    result_directory: &Path,
+) -> Result<ManagedEnvironment> {
     if matches!(arguments.mode, Mode::External) {
         return Ok(ManagedEnvironment {
             server: None,
@@ -401,7 +437,15 @@ async fn start_environment(arguments: &RunArguments) -> Result<ManagedEnvironmen
         max_mumble_connections: maximum_connections,
         ..ControllerConfig::default()
     };
-    let server = RunningControllerServer::start(config, identity).await?;
+    let server = RunningControllerServer::start_with_metrics(
+        config,
+        identity,
+        Some(MetricsOutput {
+            path: result_directory.join("server-metrics.jsonl"),
+            interval: Duration::from_secs(1),
+        }),
+    )
+    .await?;
     let controller_endpoint = format!("http://{}", server.controller_address());
     let mumble_server = server.mumble_address();
     Ok(ManagedEnvironment {
@@ -850,6 +894,67 @@ fn event_writer(directory: &Path) -> Result<BufWriter<File>> {
             .append(true)
             .open(directory.join("events.jsonl"))?,
     ))
+}
+
+fn spawn_process_sampler(path: PathBuf, processes: Vec<(u32, String)>) -> ProcessSampler {
+    let (stop, mut stopped) = oneshot::channel();
+    let task = tokio::spawn(async move {
+        let mut file = tokio::fs::File::create(path).await?;
+        file.write_all(b"unix_millis,pid,role,rss_kib,cpu_percent\n")
+            .await?;
+        let mut interval = tokio::time::interval(Duration::from_secs(1));
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            tokio::select! {
+                // Cancellation-safe: the next interval deadline remains owned by the interval.
+                _ = interval.tick() => sample_processes(&mut file, &processes).await?,
+                // Cancellation-safe: the one-shot is consumed only when shutdown is requested.
+                _ = &mut stopped => {
+                    file.flush().await?;
+                    return Ok(());
+                }
+            }
+        }
+    });
+    ProcessSampler { stop, task }
+}
+
+#[cfg(unix)]
+async fn sample_processes(file: &mut tokio::fs::File, processes: &[(u32, String)]) -> Result<()> {
+    let timestamp = unix_nanos() / 1_000_000;
+    for (pid, role) in processes {
+        let pid_string = pid.to_string();
+        let output = ProcessCommand::new("ps")
+            .args(["-o", "rss=", "-o", "%cpu=", "-p", &pid_string])
+            .output()
+            .await?;
+        if !output.status.success() {
+            continue;
+        }
+        let text = String::from_utf8(output.stdout)?;
+        let mut values = text.split_whitespace();
+        let Some(rss) = values.next() else {
+            continue;
+        };
+        let Some(cpu) = values.next() else {
+            continue;
+        };
+        file.write_all(format!("{timestamp},{pid},{role},{rss},{cpu}\n").as_bytes())
+            .await?;
+    }
+    file.flush().await?;
+    Ok(())
+}
+
+#[cfg(not(unix))]
+async fn sample_processes(file: &mut tokio::fs::File, processes: &[(u32, String)]) -> Result<()> {
+    let timestamp = unix_nanos() / 1_000_000;
+    for (pid, role) in processes {
+        file.write_all(format!("{timestamp},{pid},{role},0,0\n").as_bytes())
+            .await?;
+    }
+    file.flush().await?;
+    Ok(())
 }
 
 fn command_output(program: &str, arguments: &[&str]) -> Result<String> {

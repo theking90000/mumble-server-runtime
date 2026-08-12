@@ -34,6 +34,7 @@ use crate::actor_messages::{
     SpaceAbsent, SpaceClosed, SpaceParticipant, SpaceSnapshot,
 };
 use crate::config::ControllerConfig;
+use crate::metrics::ActorMetrics;
 use crate::profile;
 
 pub(crate) type ResponseSender = mpsc::Sender<Result<ServerFrame, Status>>;
@@ -67,6 +68,7 @@ pub(crate) enum ActorCommand {
 #[derive(Clone)]
 struct ActorSpaceReporter {
     sender: mpsc::Sender<ActorCommand>,
+    metrics: Arc<ActorMetrics>,
 }
 
 impl SpaceReporter for ActorSpaceReporter {
@@ -74,7 +76,10 @@ impl SpaceReporter for ActorSpaceReporter {
         let retained = report.clone();
         self.sender
             .try_send(ActorCommand::SpaceEvent(report))
-            .map_err(|_error| retained)
+            .map_err(|_error| {
+                self.metrics.saturated();
+                retained
+            })
     }
 }
 
@@ -92,6 +97,7 @@ impl ActorHandle {
 pub(crate) fn spawn(
     config: ControllerConfig,
     runtime: RuntimeHandle,
+    metrics: Arc<ActorMetrics>,
 ) -> Result<(ActorHandle, JoinHandle<()>), ActorStartError> {
     let control_epoch = random_bytes(16)?;
     let (sender, receiver) = mpsc::channel(config.queue_capacity);
@@ -110,6 +116,8 @@ pub(crate) fn spawn(
         sessions: HashMap::new(),
         streams: HashMap::new(),
         spaces_state: SpacesState::new(),
+        render_started: HashMap::new(),
+        metrics,
     };
     let task = tokio::spawn(actor.run(receiver));
     Ok((ActorHandle { sender }, task))
@@ -132,6 +140,8 @@ struct ControllerActor {
     sessions: HashMap<SessionId, ControllerSession>,
     streams: HashMap<u64, SessionId>,
     spaces_state: SpacesState,
+    render_started: HashMap<(String, u64), Instant>,
+    metrics: Arc<ActorMetrics>,
 }
 
 impl ControllerActor {
@@ -159,6 +169,11 @@ impl ControllerActor {
     }
 
     fn handle(&mut self, command: ActorCommand) {
+        self.metrics.command(
+            self.sender
+                .max_capacity()
+                .saturating_sub(self.sender.capacity()),
+        );
         match command {
             ActorCommand::Open {
                 stream_id,
@@ -181,6 +196,11 @@ impl ControllerActor {
                 report,
             } => self.reconciled(&space_key, application_revision, report),
         }
+        self.metrics.gauges(
+            self.sessions.len(),
+            self.spaces_state.participant_count(),
+            self.spaces_state.space_count(),
+        );
     }
 
     fn open(&mut self, stream_id: u64, responses: ResponseSender, frame: ClientFrame) {
@@ -1410,6 +1430,7 @@ impl ControllerActor {
         let (desired, receiver) = snapshot_channel(initial);
         let publication_marker = desired.publication_marker();
         let actor_for_logic = self.sender.clone();
+        let metrics_for_logic = Arc::clone(&self.metrics);
         let actor_for_report = self.sender.clone();
         let key_for_logic = space_key.to_owned();
         let key_for_report = space_key.to_owned();
@@ -1421,6 +1442,7 @@ impl ControllerActor {
                     receiver,
                     ActorSpaceReporter {
                         sender: actor_for_logic,
+                        metrics: metrics_for_logic,
                     },
                 )
             },
@@ -1483,6 +1505,8 @@ impl ControllerActor {
         let Some(space) = self.spaces_state.space_mut(space_key) else {
             return;
         };
+        self.render_started
+            .insert((space_key.to_owned(), application_revision), Instant::now());
         space.refresh(
             application_revision,
             space_key,
@@ -1494,6 +1518,11 @@ impl ControllerActor {
     }
 
     fn reconciled(&mut self, space_key: &str, application_revision: u64, report: ReconcileReport) {
+        let elapsed = self
+            .render_started
+            .remove(&(space_key.to_owned(), application_revision))
+            .map_or(Duration::ZERO, |started| started.elapsed());
+        self.metrics.reconciled(elapsed, &report);
         let Some(participant_ids) =
             self.spaces_state
                 .reconcile(space_key, application_revision, &report)
@@ -1601,6 +1630,7 @@ impl ControllerActor {
     fn expire_due(&mut self) {
         let now = Instant::now();
         let expired_sessions = self.core_sessions.expired_sessions(now.into_std());
+        self.metrics.expired(expired_sessions.len());
         for session_id in expired_sessions {
             self.remove_session(session_id, OwnershipRevocationReason::SessionExpired);
         }
@@ -1877,6 +1907,7 @@ impl ControllerActor {
                     .complete(session_id, frame.request_id.clone(), frame.clone())
         {
             eprintln!("mumble-spaces-server: dropping an unrecorded reliable result: {error}");
+            self.metrics.resync();
             self.core_sessions.mark_resync_required(session_id);
             return;
         }
@@ -1892,11 +1923,13 @@ impl ControllerActor {
             return;
         };
         match sender.try_send(Ok(frame)) {
-            Ok(()) => {}
+            Ok(()) => self.metrics.response(),
             // A momentarily full queue is not a dead stream. Detaching it here would
             // silently drop every later command, including RenewLease, and the lease
             // would expire on a controller that never learned anything went wrong.
             Err(mpsc::error::TrySendError::Full(_dropped)) => {
+                self.metrics.saturated();
+                self.metrics.resync();
                 self.core_sessions.mark_resync_required(session_id);
             }
             Err(mpsc::error::TrySendError::Closed(_dropped)) => {
@@ -1917,6 +1950,7 @@ impl ControllerActor {
         code: CommandErrorCode,
         message: &str,
     ) {
+        self.metrics.rejection();
         self.send_session(session_id, rejection(request_id, code, message));
     }
 
@@ -1944,6 +1978,7 @@ impl ControllerActor {
         code: CommandErrorCode,
         message: &str,
     ) {
+        self.metrics.rejection();
         let _ignored = responses.try_send(Ok(rejection(request_id, code, message)));
         let _closed = responses.try_send(Err(Status::failed_precondition(
             "OpenSession was rejected; this Controller stream carries no session",
@@ -2030,7 +2065,8 @@ mod tests {
             config.controller_bind = "127.0.0.1:0".parse().expect("loopback address");
             config.mumble_bind = "127.0.0.1:0".parse().expect("loopback address");
             let runtime = Runtime::start();
-            let (actor, task) = spawn(config, runtime.handle()).expect("actor starts");
+            let (actor, task) = spawn(config, runtime.handle(), Arc::new(ActorMetrics::default()))
+                .expect("actor starts");
             Self {
                 _runtime: runtime,
                 actor,
@@ -2607,6 +2643,8 @@ mod tests {
             sessions: HashMap::new(),
             streams: HashMap::new(),
             spaces_state: SpacesState::new(),
+            render_started: HashMap::new(),
+            metrics: Arc::new(ActorMetrics::default()),
         };
         (actor, receiver)
     }

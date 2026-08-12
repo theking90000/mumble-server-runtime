@@ -7,7 +7,7 @@ use std::time::Duration;
 use anyhow::{Context, Result, bail};
 use clap::Parser;
 use mumble_server_runtime_gateway::tls::Identity;
-use mumble_spaces_server::{ControllerConfig, RunningControllerServer};
+use mumble_spaces_server::{ControllerConfig, MetricsOutput, RunningControllerServer};
 
 #[derive(Debug, Parser)]
 #[command(name = "mumble-spaces-server")]
@@ -45,6 +45,10 @@ struct Arguments {
     mumble_key: Option<PathBuf>,
     #[arg(long)]
     dev_self_signed: bool,
+    #[arg(long)]
+    metrics_output: Option<PathBuf>,
+    #[arg(long, default_value_t = 1)]
+    metrics_interval_seconds: u64,
 }
 
 #[tokio::main]
@@ -67,7 +71,11 @@ async fn main() -> Result<()> {
         allow_unauthenticated_controller_network: arguments
             .allow_unauthenticated_controller_network,
     };
-    let server = RunningControllerServer::start(config, identity)
+    let metrics = arguments.metrics_output.map(|path| MetricsOutput {
+        path,
+        interval: Duration::from_secs(arguments.metrics_interval_seconds),
+    });
+    let server = RunningControllerServer::start_with_metrics(config, identity, metrics)
         .await
         .context("starting the Mumble Spaces server")?;
     eprintln!(

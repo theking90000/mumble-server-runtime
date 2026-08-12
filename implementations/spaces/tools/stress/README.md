@@ -21,6 +21,10 @@ cargo run --release -p mumble-spaces-stress -- run \
 The participant count must fill every Space exactly; supported cardinalities are
 8, 32, 64, 128, and 256. A run writes a manifest, redacted events, JSON and CSV
 summaries, and separate process logs below `--result-root`.
+Managed runs also write one-second `server-metrics.jsonl` snapshots and a
+`process-metrics.csv` that keeps coordinator, Java driver, and Mumble worker
+resource usage separate. The standalone server exposes the same opt-in stream
+through `--metrics-output FILE --metrics-interval-seconds N`.
 
 The harness is not a conformance oracle. Keep the independent Core and Spaces
 verification suites enabled when interpreting load results.
