@@ -23,7 +23,7 @@ GRADLE_USER_HOME=.gradle ./gradlew \
 run_case() {
   local scenario="$1"
   shift
-  cargo run --quiet -p mumble-spaces-stress -- run \
+  cargo run --quiet -p mumble-spaces-stress --features load-metrics -- run \
     --mode managed \
     --controllers 2 \
     --participants 8 \

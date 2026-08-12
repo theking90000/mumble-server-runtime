@@ -7,7 +7,9 @@ use std::time::Duration;
 use anyhow::{Context, Result, bail};
 use clap::Parser;
 use mumble_server_runtime_gateway::tls::Identity;
-use mumble_spaces_server::{ControllerConfig, MetricsOutput, RunningControllerServer};
+#[cfg(feature = "load-metrics")]
+use mumble_spaces_server::MetricsOutput;
+use mumble_spaces_server::{ControllerConfig, RunningControllerServer};
 
 #[derive(Debug, Parser)]
 #[command(name = "mumble-spaces-server")]
@@ -45,8 +47,10 @@ struct Arguments {
     mumble_key: Option<PathBuf>,
     #[arg(long)]
     dev_self_signed: bool,
+    #[cfg(feature = "load-metrics")]
     #[arg(long)]
     metrics_output: Option<PathBuf>,
+    #[cfg(feature = "load-metrics")]
     #[arg(long, default_value_t = 1)]
     metrics_interval_seconds: u64,
 }
@@ -71,11 +75,17 @@ async fn main() -> Result<()> {
         allow_unauthenticated_controller_network: arguments
             .allow_unauthenticated_controller_network,
     };
+    #[cfg(feature = "load-metrics")]
     let metrics = arguments.metrics_output.map(|path| MetricsOutput {
         path,
         interval: Duration::from_secs(arguments.metrics_interval_seconds),
     });
+    #[cfg(feature = "load-metrics")]
     let server = RunningControllerServer::start_with_metrics(config, identity, metrics)
+        .await
+        .context("starting the Mumble Spaces server")?;
+    #[cfg(not(feature = "load-metrics"))]
+    let server = RunningControllerServer::start(config, identity)
         .await
         .context("starting the Mumble Spaces server")?;
     eprintln!(

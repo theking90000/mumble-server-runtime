@@ -18,7 +18,9 @@ use mumble_server_runtime_stress::{
     Config as MumbleConfig, ManagedClientConfig, MumbleCredential, ScenarioKind, VoiceClip,
     spawn_managed,
 };
-use mumble_spaces_server::{ControllerConfig, MetricsOutput, RunningControllerServer};
+#[cfg(feature = "load-metrics")]
+use mumble_spaces_server::MetricsOutput;
+use mumble_spaces_server::{ControllerConfig, RunningControllerServer};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use thiserror::Error;
@@ -188,6 +190,7 @@ struct Manifest<'a> {
     operating_system: &'static str,
     architecture: &'static str,
     available_parallelism: usize,
+    load_metrics: bool,
     mode: Mode,
     scenario: Scenario,
     audio: Option<AudioLevel>,
@@ -627,7 +630,7 @@ fn validate_run_arguments(arguments: &RunArguments) -> Result<()> {
 
 async fn start_environment(
     arguments: &RunArguments,
-    result_directory: &Path,
+    _result_directory: &Path,
 ) -> Result<ManagedEnvironment> {
     if matches!(arguments.mode, Mode::External) {
         return Ok(ManagedEnvironment {
@@ -675,15 +678,18 @@ async fn start_environment(
         },
         ..ControllerConfig::default()
     };
+    #[cfg(feature = "load-metrics")]
     let server = RunningControllerServer::start_with_metrics(
         config,
         identity,
         Some(MetricsOutput {
-            path: result_directory.join("server-metrics.jsonl"),
+            path: _result_directory.join("server-metrics.jsonl"),
             interval: Duration::from_secs(1),
         }),
     )
     .await?;
+    #[cfg(not(feature = "load-metrics"))]
+    let server = RunningControllerServer::start(config, identity).await?;
     let controller_endpoint = format!("http://{}", server.controller_address());
     let mumble_server = server.mumble_address();
     Ok(ManagedEnvironment {
@@ -1616,6 +1622,7 @@ fn write_manifest(directory: &Path, arguments: &RunArguments) -> Result<()> {
         operating_system: std::env::consts::OS,
         architecture: std::env::consts::ARCH,
         available_parallelism: std::thread::available_parallelism()?.get(),
+        load_metrics: cfg!(feature = "load-metrics"),
         mode: arguments.mode,
         scenario: arguments.scenario,
         audio: effective_audio(arguments),

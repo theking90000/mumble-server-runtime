@@ -1,4 +1,5 @@
 use std::net::SocketAddr;
+#[cfg(feature = "load-metrics")]
 use std::sync::Arc;
 
 use mumble_server_runtime_gateway::tls::Identity;
@@ -11,6 +12,7 @@ use tokio_stream::wrappers::TcpListenerStream;
 use crate::actor;
 use crate::config::{ConfigError, ControllerConfig};
 use crate::core_protocol::controller_service_server::ControllerServiceServer as CoreServiceServer;
+#[cfg(feature = "load-metrics")]
 use crate::metrics::{ActorMetrics, MetricsOutput, spawn_writer};
 use crate::service::{ControllerRouter, service};
 
@@ -22,6 +24,7 @@ pub struct RunningControllerServer {
     grpc_task: Option<JoinHandle<Result<(), tonic::transport::Error>>>,
     gateway_task: Option<JoinHandle<Result<(), String>>>,
     actor_task: Option<JoinHandle<()>>,
+    #[cfg(feature = "load-metrics")]
     metrics_task: Option<JoinHandle<Result<(), std::io::Error>>>,
 }
 
@@ -31,16 +34,33 @@ impl RunningControllerServer {
         config: ControllerConfig,
         identity: Identity,
     ) -> Result<Self, ServerStartError> {
-        Self::start_with_metrics(config, identity, None).await
+        #[cfg(feature = "load-metrics")]
+        {
+            Self::start_inner(config, identity, None).await
+        }
+        #[cfg(not(feature = "load-metrics"))]
+        {
+            Self::start_inner(config, identity).await
+        }
     }
 
     /// Start the server with an optional periodic, secret-free JSONL metrics writer.
+    #[cfg(feature = "load-metrics")]
     pub async fn start_with_metrics(
         config: ControllerConfig,
         identity: Identity,
         metrics_output: Option<MetricsOutput>,
     ) -> Result<Self, ServerStartError> {
+        Self::start_inner(config, identity, metrics_output).await
+    }
+
+    async fn start_inner(
+        config: ControllerConfig,
+        identity: Identity,
+        #[cfg(feature = "load-metrics")] metrics_output: Option<MetricsOutput>,
+    ) -> Result<Self, ServerStartError> {
         config.validate()?;
+        #[cfg(feature = "load-metrics")]
         if metrics_output
             .as_ref()
             .is_some_and(|output| output.interval.is_zero())
@@ -59,6 +79,7 @@ impl RunningControllerServer {
         .map_err(|error| ServerStartError::MumbleBind(error.to_string()))?;
         let mumble_address = gateway.address();
         let runtime = gateway.runtime();
+        #[cfg(feature = "load-metrics")]
         let voice_metrics = gateway.voice_metrics();
 
         let listener = TcpListener::bind(config.controller_bind)
@@ -68,9 +89,13 @@ impl RunningControllerServer {
             .local_addr()
             .map_err(ServerStartError::ControllerAddress)?;
 
+        #[cfg(feature = "load-metrics")]
         let actor_metrics = Arc::new(ActorMetrics::default());
+        #[cfg(feature = "load-metrics")]
         let (actor, actor_task) =
             actor::spawn(config.clone(), runtime.clone(), Arc::clone(&actor_metrics))?;
+        #[cfg(not(feature = "load-metrics"))]
+        let (actor, actor_task) = actor::spawn(config.clone(), runtime.clone())?;
         let router = ControllerRouter::new(actor.clone());
         let gateway_task = tokio::spawn(async move {
             gateway
@@ -91,6 +116,7 @@ impl RunningControllerServer {
                     let _closed = shutdown.await;
                 }),
         );
+        #[cfg(feature = "load-metrics")]
         let metrics_task = metrics_output
             .map(|output| spawn_writer(output, actor_metrics, voice_metrics, runtime));
 
@@ -101,6 +127,7 @@ impl RunningControllerServer {
             grpc_task: Some(grpc_task),
             gateway_task: Some(gateway_task),
             actor_task: Some(actor_task),
+            #[cfg(feature = "load-metrics")]
             metrics_task,
         })
     }
@@ -135,6 +162,7 @@ impl RunningControllerServer {
         if let Some(task) = &self.actor_task {
             task.abort();
         }
+        #[cfg(feature = "load-metrics")]
         if let Some(task) = &self.metrics_task {
             task.abort();
         }
@@ -155,6 +183,7 @@ impl RunningControllerServer {
                 Err(error) => eprintln!("mumble-spaces-server: actor task failed: {error}"),
             }
         }
+        #[cfg(feature = "load-metrics")]
         if let Some(task) = self.metrics_task.take() {
             match task.await {
                 Ok(Ok(())) => {}
@@ -182,6 +211,7 @@ impl Drop for RunningControllerServer {
         if let Some(task) = &self.actor_task {
             task.abort();
         }
+        #[cfg(feature = "load-metrics")]
         if let Some(task) = &self.metrics_task {
             task.abort();
         }
@@ -200,11 +230,12 @@ pub enum ServerStartError {
     ControllerAddress(#[source] std::io::Error),
     #[error(transparent)]
     Actor(#[from] actor::ActorStartError),
+    #[cfg(feature = "load-metrics")]
     #[error("metrics interval must be positive")]
     ZeroMetricsInterval,
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "load-metrics"))]
 mod tests {
     use super::*;
     use std::path::PathBuf;

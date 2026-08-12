@@ -14,6 +14,10 @@ description = "The front door of the shard runtime : TLS control plane, handshak
 name = "mumble_server_runtime_gateway"
 path = "src/mumble_server_runtime_gateway.rs"
 
+[features]
+default = []
+load-metrics = []
+
 [dependencies]
 mumble-server-runtime-protocol = { path = "../protocol" }
 mumble-server-runtime-crypto = { path = "../crypto" }
