@@ -9,7 +9,7 @@ use anyhow::{Context, Result, ensure};
 pub const OPUS_FRAME_DURATION: std::time::Duration = std::time::Duration::from_millis(10);
 
 /// A pre-encoded clip made of fixed-size, raw Opus packets.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct VoiceClip {
     bytes: Vec<u8>,
     frame_bytes: NonZeroUsize,

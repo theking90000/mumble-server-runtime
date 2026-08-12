@@ -161,6 +161,10 @@ mod tests {
                     User {
                         name: "stress-0".to_owned(),
                         channel: id,
+                        mute: false,
+                        deaf: false,
+                        self_mute: false,
+                        self_deaf: false,
                     },
                 );
             }
