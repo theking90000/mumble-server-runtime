@@ -1,21 +1,14 @@
-#![forbid(unsafe_code)]
-
-mod audio;
-mod client;
-mod config;
-mod scenario;
-mod stats;
-
 use std::sync::Arc;
 
-use anyhow::{Result, ensure};
+use anyhow::{Context, Result, ensure};
 use clap::Parser;
+use mumble_server_runtime_stress::VoiceClip;
+use mumble_server_runtime_stress::audio;
+use mumble_server_runtime_stress::client;
+use mumble_server_runtime_stress::config::Config;
+use mumble_server_runtime_stress::stats::{ClientReport, Stats};
 use tokio::task::JoinSet;
 use tokio::time::Instant;
-
-use crate::audio::VoiceClip;
-use crate::config::Config;
-use crate::stats::{ClientReport, Stats};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -105,6 +98,13 @@ async fn main() -> Result<()> {
 
     let elapsed = started.elapsed();
     stats.print(elapsed);
+    if let Some(path) = &config.json_output {
+        let summary = stats.summary(elapsed);
+        let file = std::fs::File::create(path)
+            .with_context(|| format!("creating JSON report {}", path.display()))?;
+        serde_json::to_writer_pretty(file, &summary)
+            .with_context(|| format!("writing JSON report {}", path.display()))?;
+    }
     ensure!(
         stats.failure_rate() <= config.failure_threshold,
         "failure rate {:.2}% exceeds threshold {:.2}%",

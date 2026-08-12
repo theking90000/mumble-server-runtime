@@ -846,6 +846,9 @@ dependencies = [
  "mumble-server-runtime-crypto",
  "mumble-server-runtime-protocol",
  "rustls",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.19",
  "tokio",
  "tokio-rustls",
 ]
@@ -884,6 +887,8 @@ dependencies = [
  "prost-types 0.14.4",
  "protoc-bin-vendored",
  "rustls-pemfile",
+ "serde",
+ "serde_json",
  "tempfile",
  "thiserror 2.0.19",
  "tokio",
@@ -891,6 +896,21 @@ dependencies = [
  "tonic",
  "tonic-prost",
  "tonic-prost-build",
+]
+
+[[package]]
+name = "mumble-spaces-stress"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "mumble-server-runtime-gateway",
+ "mumble-server-runtime-stress",
+ "mumble-spaces-server",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.19",
+ "tokio",
 ]
 
 [[package]]

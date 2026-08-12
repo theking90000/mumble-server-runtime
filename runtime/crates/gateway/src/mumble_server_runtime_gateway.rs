@@ -41,6 +41,7 @@ pub mod config;
 pub mod connection;
 pub mod handshake;
 pub mod limits;
+pub mod metrics;
 pub mod peer;
 pub mod router;
 pub mod runtime;
@@ -49,6 +50,7 @@ pub mod tls;
 pub mod voice;
 
 pub use config::GatewayConfig;
+pub use metrics::{VoiceMetrics, VoiceMetricsSnapshot};
 pub use peer::{Peer, Peers, ShardPlane};
 pub use router::{ConnectionIdentity, ConnectionRouter, RouteDecision};
 pub use runtime::{Runtime, RuntimeHandle, ShardStatus};

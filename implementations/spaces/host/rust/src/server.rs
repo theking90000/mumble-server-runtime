@@ -1,4 +1,5 @@
 use std::net::SocketAddr;
+use std::sync::Arc;
 
 use mumble_server_runtime_gateway::tls::Identity;
 use mumble_server_runtime_gateway::{Gateway, GatewayConfig};
@@ -10,6 +11,7 @@ use tokio_stream::wrappers::TcpListenerStream;
 use crate::actor;
 use crate::config::{ConfigError, ControllerConfig};
 use crate::core_protocol::controller_service_server::ControllerServiceServer as CoreServiceServer;
+use crate::metrics::{ActorMetrics, MetricsOutput, spawn_writer};
 use crate::service::{ControllerRouter, service};
 
 /// Both public listeners and their owned background tasks.
@@ -20,6 +22,7 @@ pub struct RunningControllerServer {
     grpc_task: Option<JoinHandle<Result<(), tonic::transport::Error>>>,
     gateway_task: Option<JoinHandle<Result<(), String>>>,
     actor_task: Option<JoinHandle<()>>,
+    metrics_task: Option<JoinHandle<Result<(), std::io::Error>>>,
 }
 
 impl RunningControllerServer {
@@ -28,7 +31,22 @@ impl RunningControllerServer {
         config: ControllerConfig,
         identity: Identity,
     ) -> Result<Self, ServerStartError> {
+        Self::start_with_metrics(config, identity, None).await
+    }
+
+    /// Start the server with an optional periodic, secret-free JSONL metrics writer.
+    pub async fn start_with_metrics(
+        config: ControllerConfig,
+        identity: Identity,
+        metrics_output: Option<MetricsOutput>,
+    ) -> Result<Self, ServerStartError> {
         config.validate()?;
+        if metrics_output
+            .as_ref()
+            .is_some_and(|output| output.interval.is_zero())
+        {
+            return Err(ServerStartError::ZeroMetricsInterval);
+        }
         let gateway = Gateway::bind(
             GatewayConfig {
                 bind: config.mumble_bind,
@@ -41,6 +59,7 @@ impl RunningControllerServer {
         .map_err(|error| ServerStartError::MumbleBind(error.to_string()))?;
         let mumble_address = gateway.address();
         let runtime = gateway.runtime();
+        let voice_metrics = gateway.voice_metrics();
 
         let listener = TcpListener::bind(config.controller_bind)
             .await
@@ -49,7 +68,9 @@ impl RunningControllerServer {
             .local_addr()
             .map_err(ServerStartError::ControllerAddress)?;
 
-        let (actor, actor_task) = actor::spawn(config.clone(), runtime)?;
+        let actor_metrics = Arc::new(ActorMetrics::default());
+        let (actor, actor_task) =
+            actor::spawn(config.clone(), runtime.clone(), Arc::clone(&actor_metrics))?;
         let router = ControllerRouter::new(actor.clone());
         let gateway_task = tokio::spawn(async move {
             gateway
@@ -70,6 +91,8 @@ impl RunningControllerServer {
                     let _closed = shutdown.await;
                 }),
         );
+        let metrics_task = metrics_output
+            .map(|output| spawn_writer(output, actor_metrics, voice_metrics, runtime));
 
         Ok(Self {
             controller_address,
@@ -78,6 +101,7 @@ impl RunningControllerServer {
             grpc_task: Some(grpc_task),
             gateway_task: Some(gateway_task),
             actor_task: Some(actor_task),
+            metrics_task,
         })
     }
 
@@ -111,6 +135,9 @@ impl RunningControllerServer {
         if let Some(task) = &self.actor_task {
             task.abort();
         }
+        if let Some(task) = &self.metrics_task {
+            task.abort();
+        }
         if let Some(task) = self.gateway_task.take() {
             match task.await {
                 Ok(Ok(())) => {}
@@ -126,6 +153,16 @@ impl RunningControllerServer {
                 Ok(()) => {}
                 Err(error) if error.is_cancelled() => {}
                 Err(error) => eprintln!("mumble-spaces-server: actor task failed: {error}"),
+            }
+        }
+        if let Some(task) = self.metrics_task.take() {
+            match task.await {
+                Ok(Ok(())) => {}
+                Ok(Err(error)) => {
+                    eprintln!("mumble-spaces-server: metrics writer stopped: {error}")
+                }
+                Err(error) if error.is_cancelled() => {}
+                Err(error) => eprintln!("mumble-spaces-server: metrics task failed: {error}"),
             }
         }
     }
@@ -145,6 +182,9 @@ impl Drop for RunningControllerServer {
         if let Some(task) = &self.actor_task {
             task.abort();
         }
+        if let Some(task) = &self.metrics_task {
+            task.abort();
+        }
     }
 }
 
@@ -160,4 +200,31 @@ pub enum ServerStartError {
     ControllerAddress(#[source] std::io::Error),
     #[error(transparent)]
     Actor(#[from] actor::ActorStartError),
+    #[error("metrics interval must be positive")]
+    ZeroMetricsInterval,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+    use std::time::Duration;
+
+    #[tokio::test]
+    async fn zero_metrics_interval_is_rejected_before_binding()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let identity = Identity::self_signed(vec!["localhost".to_owned()])?;
+        let result = RunningControllerServer::start_with_metrics(
+            ControllerConfig::default(),
+            identity,
+            Some(MetricsOutput {
+                path: PathBuf::from("unused.jsonl"),
+                interval: Duration::ZERO,
+            }),
+        )
+        .await;
+
+        assert!(matches!(result, Err(ServerStartError::ZeroMetricsInterval)));
+        Ok(())
+    }
 }

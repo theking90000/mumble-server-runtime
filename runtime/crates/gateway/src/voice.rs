@@ -41,6 +41,7 @@ use tokio::net::UdpSocket;
 
 use crate::config::GatewayConfig;
 use crate::limits;
+use crate::metrics::VoiceMetrics;
 use crate::peer::{Peer, Peers};
 
 /// A sealed datagram and where it goes.
@@ -96,15 +97,27 @@ pub struct VoicePlane {
     socket: Arc<UdpSocket>,
     peers: Arc<Peers>,
     config: GatewayConfig,
+    metrics: Arc<VoiceMetrics>,
 }
 
 impl VoicePlane {
     #[must_use]
     pub fn new(socket: Arc<UdpSocket>, peers: Arc<Peers>, config: GatewayConfig) -> VoicePlane {
+        Self::new_with_metrics(socket, peers, config, Arc::new(VoiceMetrics::default()))
+    }
+
+    #[must_use]
+    pub fn new_with_metrics(
+        socket: Arc<UdpSocket>,
+        peers: Arc<Peers>,
+        config: GatewayConfig,
+        metrics: Arc<VoiceMetrics>,
+    ) -> VoicePlane {
         VoicePlane {
             socket,
             peers,
             config,
+            metrics,
         }
     }
 
@@ -227,7 +240,9 @@ impl VoicePlane {
         now: Instant,
         bytes: usize,
     ) -> Vec<Datagram> {
+        self.metrics.ingress(bytes);
         if !sender.allow_voice(now, bytes) {
+            self.metrics.dropped();
             eprintln!(
                 "mumble-server-runtime-gateway: session {:?}: voice packet dropped, budget exhausted",
                 sender.session()
@@ -236,6 +251,7 @@ impl VoicePlane {
         }
 
         let Some(udp::audio::Header::Target(target)) = audio.header else {
+            self.metrics.dropped();
             // `context` is the server-to-client direction and a header-less
             // packet says nothing. Either way there is no intent to honour.
             eprintln!(
@@ -249,6 +265,7 @@ impl VoicePlane {
             LOOPBACK_TARGET => self.reflect(sender, audio),
             NORMAL_TARGET => self.speak(sender, audio),
             registered => {
+                self.metrics.dropped();
                 // Shout and whisper targets are registered with a `VoiceTarget`
                 // control message, which this build refuses. Routing them as
                 // normal speech would deliver voice to listeners the client
@@ -337,22 +354,31 @@ impl VoicePlane {
 
         match receiver.destination() {
             Some(address) => match receiver.encrypt(&plaintext) {
-                Some(sealed) => out.push((sealed, address)),
-                None => eprintln!(
-                    "mumble-server-runtime-gateway: dropping audio for session {:?}: no usable crypto state",
-                    receiver.session()
-                ),
+                Some(sealed) => {
+                    self.metrics.egress(plaintext.len());
+                    out.push((sealed, address));
+                }
+                None => {
+                    self.metrics.dropped();
+                    eprintln!(
+                        "mumble-server-runtime-gateway: dropping audio for session {:?}: no usable crypto state",
+                        receiver.session()
+                    );
+                }
             },
-            None => match receiver
-                .queue()
-                .push_voice(ControlMessage::UdpTunnel(plaintext))
-            {
-                VoiceAdmission::Accepted => {}
-                // A gap is the right outcome for a receiver already behind:
-                // stale voice helps nobody, and refusing it here keeps the same
-                // connection healthy for the control traffic that still matters.
-                VoiceAdmission::Dropped => {}
-            },
+            None => {
+                let bytes = plaintext.len();
+                match receiver
+                    .queue()
+                    .push_voice(ControlMessage::UdpTunnel(plaintext))
+                {
+                    VoiceAdmission::Accepted => self.metrics.egress(bytes),
+                    // A gap is the right outcome for a receiver already behind:
+                    // stale voice helps nobody, and refusing it here keeps the same
+                    // connection healthy for the control traffic that still matters.
+                    VoiceAdmission::Dropped => self.metrics.dropped(),
+                }
+            }
         }
     }
 

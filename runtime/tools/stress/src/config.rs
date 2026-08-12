@@ -85,6 +85,10 @@ pub struct Config {
     /// Accept this fraction of failed clients before returning a failing exit code.
     #[arg(long, default_value = "0", value_parser = parse_failure_threshold)]
     pub failure_threshold: f64,
+
+    /// Optional path for a secret-free JSON summary.
+    #[arg(long)]
+    pub json_output: Option<PathBuf>,
 }
 
 impl Config {

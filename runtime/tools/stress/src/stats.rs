@@ -1,6 +1,8 @@
 use std::time::Duration;
 
-#[derive(Debug, Default)]
+use serde::Serialize;
+
+#[derive(Debug, Default, Clone)]
 pub struct ClientReport {
     pub tcp_connect: Option<Duration>,
     pub tls_handshake: Option<Duration>,
@@ -15,8 +17,41 @@ pub struct ClientReport {
     pub voice_packets_received: u64,
     pub interactions_sent: u64,
     pub denied_interactions: u64,
+    pub reconnects: u64,
     pub completed: bool,
     pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct DistributionSummary {
+    pub samples: usize,
+    pub p50_micros: u64,
+    pub p95_micros: u64,
+    pub p99_micros: u64,
+    pub max_micros: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct StatsSummary {
+    pub elapsed_millis: u64,
+    pub clients_reported: usize,
+    pub clients_completed: usize,
+    pub failure_rate: f64,
+    pub tcp_connect: Option<DistributionSummary>,
+    pub tls_handshake: Option<DistributionSummary>,
+    pub protocol_handshake: Option<DistributionSummary>,
+    pub tcp_ping_rtt: Option<DistributionSummary>,
+    pub udp_ping_rtt: Option<DistributionSummary>,
+    pub tcp_frames_received: u64,
+    pub tcp_pings_sent: u64,
+    pub udp_packets_sent: u64,
+    pub udp_packets_received: u64,
+    pub voice_packets_sent: u64,
+    pub voice_packets_received: u64,
+    pub interactions_sent: u64,
+    pub denied_interactions: u64,
+    pub reconnects: u64,
+    pub errors: Vec<String>,
 }
 
 #[derive(Debug, Default)]
@@ -36,6 +71,7 @@ pub struct Stats {
     voice_packets_received: u64,
     interactions_sent: u64,
     denied_interactions: u64,
+    reconnects: u64,
     errors: Vec<String>,
 }
 
@@ -70,6 +106,7 @@ impl Stats {
         self.denied_interactions = self
             .denied_interactions
             .saturating_add(report.denied_interactions);
+        self.reconnects = self.reconnects.saturating_add(report.reconnects);
         if let Some(error) = report.error
             && self.errors.len() < 5
         {
@@ -93,6 +130,30 @@ impl Stats {
         failed as f64 / self.reports as f64
     }
 
+    pub fn summary(&mut self, elapsed: Duration) -> StatsSummary {
+        StatsSummary {
+            elapsed_millis: duration_millis(elapsed),
+            clients_reported: self.reports,
+            clients_completed: self.completed,
+            failure_rate: self.failure_rate(),
+            tcp_connect: distribution_summary(&mut self.tcp_connect),
+            tls_handshake: distribution_summary(&mut self.tls_handshake),
+            protocol_handshake: distribution_summary(&mut self.protocol_handshake),
+            tcp_ping_rtt: distribution_summary(&mut self.tcp_ping_rtts),
+            udp_ping_rtt: distribution_summary(&mut self.udp_ping_rtts),
+            tcp_frames_received: self.tcp_frames_received,
+            tcp_pings_sent: self.tcp_pings_sent,
+            udp_packets_sent: self.udp_packets_sent,
+            udp_packets_received: self.udp_packets_received,
+            voice_packets_sent: self.voice_packets_sent,
+            voice_packets_received: self.voice_packets_received,
+            interactions_sent: self.interactions_sent,
+            denied_interactions: self.denied_interactions,
+            reconnects: self.reconnects,
+            errors: self.errors.clone(),
+        }
+    }
+
     pub fn print(&mut self, elapsed: Duration) {
         println!();
         println!("clients");
@@ -114,6 +175,7 @@ impl Stats {
         );
         println!("  interactions    {}", self.interactions_sent);
         println!("  denied          {}", self.denied_interactions);
+        println!("  reconnects      {}", self.reconnects);
         let seconds = elapsed.as_secs_f64();
         if seconds > 0.0 {
             println!(
@@ -152,6 +214,28 @@ fn percentile(values: &[Duration], percentile: usize) -> Duration {
     values[index.min(last)]
 }
 
+fn distribution_summary(values: &mut [Duration]) -> Option<DistributionSummary> {
+    if values.is_empty() {
+        return None;
+    }
+    values.sort_unstable();
+    Some(DistributionSummary {
+        samples: values.len(),
+        p50_micros: duration_micros(percentile(values, 50)),
+        p95_micros: duration_micros(percentile(values, 95)),
+        p99_micros: duration_micros(percentile(values, 99)),
+        max_micros: duration_micros(values[values.len() - 1]),
+    })
+}
+
+fn duration_micros(duration: Duration) -> u64 {
+    u64::try_from(duration.as_micros()).unwrap_or(u64::MAX)
+}
+
+fn duration_millis(duration: Duration) -> u64 {
+    u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)
+}
+
 fn display(duration: Duration) -> String {
     if duration >= Duration::from_secs(1) {
         format!("{:.2}s", duration.as_secs_f64())
@@ -171,5 +255,21 @@ mod tests {
         let values: Vec<Duration> = (1..=100).map(Duration::from_millis).collect();
         assert_eq!(percentile(&values, 50), Duration::from_millis(50));
         assert_eq!(percentile(&values, 99), Duration::from_millis(99));
+    }
+
+    #[test]
+    fn structured_summary_contains_no_credentials() -> Result<(), serde_json::Error> {
+        let mut stats = Stats::default();
+        stats.record(ClientReport {
+            completed: true,
+            tcp_connect: Some(Duration::from_millis(2)),
+            ..ClientReport::default()
+        });
+
+        let encoded = serde_json::to_string(&stats.summary(Duration::from_secs(1)))?;
+        assert!(encoded.contains("tcp_connect"));
+        assert!(!encoded.contains("password"));
+        assert!(!encoded.contains("credential"));
+        Ok(())
     }
 }

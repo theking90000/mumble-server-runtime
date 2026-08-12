@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::fmt;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -12,8 +13,12 @@ use mumble_server_runtime_protocol::{
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
 use rustls::{DigitallySignedStruct, Error as TlsError, SignatureScheme};
+use serde::Serialize;
+use thiserror::Error;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt, ReadHalf, WriteHalf};
 use tokio::net::{TcpStream, UdpSocket};
+use tokio::sync::mpsc;
+use tokio::task::{JoinError, JoinHandle};
 use tokio::time::{Instant, Interval, MissedTickBehavior};
 use tokio_rustls::TlsConnector;
 use tokio_rustls::client::TlsStream;
@@ -22,6 +27,140 @@ use crate::audio::{OPUS_FRAME_DURATION, VoiceClip};
 use crate::config::Config;
 use crate::scenario::Scenario;
 use crate::stats::ClientReport;
+
+const EVENT_CAPACITY: usize = 256;
+const ACTION_CAPACITY: usize = 32;
+
+#[derive(Clone, PartialEq, Eq)]
+pub struct MumbleCredential {
+    pub username: String,
+    password: String,
+}
+
+impl MumbleCredential {
+    pub fn new(username: impl Into<String>, password: impl Into<String>) -> Self {
+        Self {
+            username: username.into(),
+            password: password.into(),
+        }
+    }
+
+    fn password(&self) -> &str {
+        &self.password
+    }
+}
+
+impl fmt::Debug for MumbleCredential {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("MumbleCredential")
+            .field("username", &self.username)
+            .field("password", &"[REDACTED]")
+            .finish()
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum ClientAction {
+    ReplaceCredential(MumbleCredential),
+    SetVoiceEnabled(bool),
+    Disconnect,
+    Stop,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ClientEvent {
+    Synchronized {
+        monotonic_micros: u64,
+        channel: String,
+        mute: bool,
+        deaf: bool,
+        self_mute: bool,
+        self_deaf: bool,
+    },
+    StateChanged {
+        monotonic_micros: u64,
+        channel: String,
+        mute: bool,
+        deaf: bool,
+        self_mute: bool,
+        self_deaf: bool,
+    },
+    CredentialReplaced {
+        monotonic_micros: u64,
+    },
+    Disconnected {
+        monotonic_micros: u64,
+    },
+    Failed {
+        monotonic_micros: u64,
+        message: String,
+    },
+}
+
+#[derive(Debug, Error)]
+pub enum ClientControlError {
+    #[error("managed Mumble client is no longer accepting actions")]
+    ActionChannelClosed,
+    #[error("managed Mumble client task failed")]
+    TaskFailed(#[source] JoinError),
+    #[error("spawn_managed requires a Tokio runtime")]
+    MissingRuntime(#[source] tokio::runtime::TryCurrentError),
+}
+
+#[derive(Debug, Clone)]
+pub struct ManagedClientConfig {
+    pub config: Config,
+    pub credential: MumbleCredential,
+    pub client_number: usize,
+    pub voice_clip: Option<Arc<VoiceClip>>,
+    pub voice_enabled: bool,
+}
+
+pub struct ManagedClient {
+    actions: mpsc::Sender<ClientAction>,
+    events: mpsc::Receiver<ClientEvent>,
+    task: JoinHandle<ClientReport>,
+}
+
+impl ManagedClient {
+    pub async fn send(&self, action: ClientAction) -> Result<(), ClientControlError> {
+        self.actions
+            .send(action)
+            .await
+            .map_err(|_| ClientControlError::ActionChannelClosed)
+    }
+
+    pub async fn next_event(&mut self) -> Option<ClientEvent> {
+        self.events.recv().await
+    }
+
+    pub async fn wait(self) -> Result<ClientReport, ClientControlError> {
+        let ManagedClient {
+            actions,
+            events,
+            task,
+        } = self;
+        drop(actions);
+        let report = task.await.map_err(ClientControlError::TaskFailed)?;
+        drop(events);
+        Ok(report)
+    }
+}
+
+pub fn spawn_managed(config: ManagedClientConfig) -> Result<ManagedClient, ClientControlError> {
+    let runtime =
+        tokio::runtime::Handle::try_current().map_err(ClientControlError::MissingRuntime)?;
+    let (action_sender, action_receiver) = mpsc::channel(ACTION_CAPACITY);
+    let (event_sender, event_receiver) = mpsc::channel(EVENT_CAPACITY);
+    let task = runtime.spawn(run_managed(config, action_receiver, event_sender));
+    Ok(ManagedClient {
+        actions: action_sender,
+        events: event_receiver,
+        task,
+    })
+}
 
 #[derive(Debug, Clone, Copy)]
 struct TalkSchedule {
@@ -82,6 +221,10 @@ pub struct Channel {
 pub struct User {
     pub name: String,
     pub channel: u32,
+    pub mute: bool,
+    pub deaf: bool,
+    pub self_mute: bool,
+    pub self_deaf: bool,
 }
 
 impl Model {
@@ -100,6 +243,20 @@ impl Model {
             .map(|channel| channel.name.as_str())
     }
 
+    fn self_observation(&self) -> Option<SelfObservation> {
+        let session = self.session?;
+        let user = self.users.get(&session)?;
+        let channel = self.channels.get(&user.channel)?;
+        Some(SelfObservation {
+            channel: channel.name.clone(),
+            mute: user.mute,
+            deaf: user.deaf,
+            self_mute: user.self_mute,
+            self_deaf: user.self_deaf,
+        })
+    }
+
+    // REF: runtime/references/vendored/Mumble.proto:ChannelState, UserState, and ServerSync.
     fn apply(&mut self, message: &ControlMessage) {
         match message {
             ControlMessage::ChannelState(state) => {
@@ -127,12 +284,28 @@ impl Model {
                 let user = self.users.entry(session).or_insert(User {
                     name: String::new(),
                     channel: 0,
+                    mute: false,
+                    deaf: false,
+                    self_mute: false,
+                    self_deaf: false,
                 });
                 if let Some(name) = &state.name {
                     user.name.clone_from(name);
                 }
                 if let Some(channel) = state.channel_id {
                     user.channel = channel;
+                }
+                if let Some(mute) = state.mute {
+                    user.mute = mute;
+                }
+                if let Some(deaf) = state.deaf {
+                    user.deaf = deaf;
+                }
+                if let Some(self_mute) = state.self_mute {
+                    user.self_mute = self_mute;
+                }
+                if let Some(self_deaf) = state.self_deaf {
+                    user.self_deaf = self_deaf;
                 }
             }
             ControlMessage::UserRemove(remove) => {
@@ -142,6 +315,15 @@ impl Model {
             _ => {}
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SelfObservation {
+    channel: String,
+    mute: bool,
+    deaf: bool,
+    self_mute: bool,
+    self_deaf: bool,
 }
 
 /// This executable targets locally controlled servers whose generated
@@ -231,6 +413,33 @@ async fn run_inner(
     stop_at: Instant,
     report: &mut ClientReport,
 ) -> Result<()> {
+    let username = format!("{}-{client_number}", config.username_prefix);
+    let mut active = connect_client(
+        config,
+        connector,
+        &username,
+        config.password.as_deref(),
+        report,
+    )
+    .await?;
+    active.open_udp(report).await?;
+    let exit = active
+        .run(config, voice_clip, client_number, stop_at, report, None)
+        .await?;
+    ensure!(
+        matches!(exit, ConnectionExit::Deadline),
+        "unmanaged client received a managed action"
+    );
+    Ok(())
+}
+
+async fn connect_client(
+    config: &Config,
+    connector: TlsConnector,
+    username: &str,
+    password: Option<&str>,
+    report: &mut ClientReport,
+) -> Result<ActiveClient> {
     let tcp_started = Instant::now();
     let tcp = tokio::time::timeout(config.connect_timeout, TcpStream::connect(config.server))
         .await
@@ -250,11 +459,10 @@ async fn run_inner(
     report.tls_handshake = Some(tls_started.elapsed());
 
     let (reader, mut writer) = tokio::io::split(tls);
-    let username = format!("{}-{client_number}", config.username_prefix);
-    send_initial(&mut writer, &username, config.password.as_deref()).await?;
+    send_initial(&mut writer, username, password).await?;
 
     let protocol_started = Instant::now();
-    let mut active = tokio::time::timeout(
+    let active = tokio::time::timeout(
         config.handshake_timeout,
         finish_handshake(reader, writer, config.server, report),
     )
@@ -278,10 +486,198 @@ async fn run_inner(
         "ServerSync arrived without a complete CryptSetup"
     );
 
-    active.open_udp(report).await?;
-    active
-        .run(config, voice_clip, client_number, stop_at, report)
-        .await
+    Ok(active)
+}
+
+async fn run_managed(
+    managed: ManagedClientConfig,
+    mut actions: mpsc::Receiver<ClientAction>,
+    events: mpsc::Sender<ClientEvent>,
+) -> ClientReport {
+    let _installed = rustls::crypto::ring::default_provider().install_default();
+    let connector = tls_connector();
+    let started = Instant::now();
+    let stop_at = started + managed.config.duration;
+    let mut credential = managed.credential;
+    let mut voice_enabled = managed.voice_enabled;
+    let mut report = ClientReport::default();
+
+    loop {
+        let connected = connect_client(
+            &managed.config,
+            connector.clone(),
+            &credential.username,
+            Some(credential.password()),
+            &mut report,
+        )
+        .await;
+        let mut active = match connected {
+            Ok(active) => active,
+            Err(error) => {
+                let message = format!("client {}: {error:#}", managed.client_number);
+                if emit_event(
+                    &events,
+                    ClientEvent::Failed {
+                        monotonic_micros: elapsed_micros(started),
+                        message: message.clone(),
+                    },
+                )
+                .is_err()
+                {
+                    report.error = Some(message);
+                    return report;
+                }
+                report.error = Some(message);
+                return report;
+            }
+        };
+        if let Err(error) = active.open_udp(&mut report).await {
+            report.error = Some(format!("client {}: {error:#}", managed.client_number));
+            return report;
+        }
+        let Some(observation) = active.model.self_observation() else {
+            report.error = Some(format!(
+                "client {}: synchronized without a self observation",
+                managed.client_number
+            ));
+            return report;
+        };
+        if emit_event(&events, event_from_observation(started, observation, true)).is_err() {
+            report.error = Some("managed client event receiver closed".to_owned());
+            return report;
+        }
+
+        let control = ManagedConnection {
+            actions: &mut actions,
+            events: &events,
+            started,
+            voice_enabled,
+        };
+        let exit = active
+            .run(
+                &managed.config,
+                managed.voice_clip.as_ref().map(Arc::clone),
+                managed.client_number,
+                stop_at,
+                &mut report,
+                Some(control),
+            )
+            .await;
+        match exit {
+            Ok(ConnectionExit::Deadline | ConnectionExit::Stop) => {
+                report.completed = true;
+                return report;
+            }
+            Ok(ConnectionExit::ReplaceCredential(replacement, enabled)) => {
+                credential = replacement;
+                voice_enabled = enabled;
+                report.reconnects = report.reconnects.saturating_add(1);
+                if emit_event(
+                    &events,
+                    ClientEvent::CredentialReplaced {
+                        monotonic_micros: elapsed_micros(started),
+                    },
+                )
+                .is_err()
+                {
+                    report.error = Some("managed client event receiver closed".to_owned());
+                    return report;
+                }
+            }
+            Ok(ConnectionExit::Disconnected(enabled)) => {
+                voice_enabled = enabled;
+                if emit_event(
+                    &events,
+                    ClientEvent::Disconnected {
+                        monotonic_micros: elapsed_micros(started),
+                    },
+                )
+                .is_err()
+                {
+                    report.error = Some("managed client event receiver closed".to_owned());
+                    return report;
+                }
+                match wait_for_reconnect(&mut actions, &mut voice_enabled).await {
+                    Some(replacement) => {
+                        credential = replacement;
+                        report.reconnects = report.reconnects.saturating_add(1);
+                    }
+                    None => {
+                        report.completed = true;
+                        return report;
+                    }
+                }
+            }
+            Err(error) => {
+                let message = format!("client {}: {error:#}", managed.client_number);
+                if emit_event(
+                    &events,
+                    ClientEvent::Failed {
+                        monotonic_micros: elapsed_micros(started),
+                        message: message.clone(),
+                    },
+                )
+                .is_err()
+                {
+                    report.error = Some(message);
+                    return report;
+                }
+                report.error = Some(message);
+                return report;
+            }
+        }
+    }
+}
+
+async fn wait_for_reconnect(
+    actions: &mut mpsc::Receiver<ClientAction>,
+    voice_enabled: &mut bool,
+) -> Option<MumbleCredential> {
+    while let Some(action) = actions.recv().await {
+        match action {
+            ClientAction::ReplaceCredential(credential) => return Some(credential),
+            ClientAction::SetVoiceEnabled(enabled) => *voice_enabled = enabled,
+            ClientAction::Disconnect => {}
+            ClientAction::Stop => return None,
+        }
+    }
+    None
+}
+
+fn emit_event(events: &mpsc::Sender<ClientEvent>, event: ClientEvent) -> Result<()> {
+    events
+        .try_send(event)
+        .map_err(|error| anyhow!("managed client event backpressure: {error}"))
+}
+
+fn elapsed_micros(started: Instant) -> u64 {
+    u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX)
+}
+
+fn event_from_observation(
+    started: Instant,
+    observation: SelfObservation,
+    synchronized: bool,
+) -> ClientEvent {
+    if synchronized {
+        ClientEvent::Synchronized {
+            monotonic_micros: elapsed_micros(started),
+            channel: observation.channel,
+            mute: observation.mute,
+            deaf: observation.deaf,
+            self_mute: observation.self_mute,
+            self_deaf: observation.self_deaf,
+        }
+    } else {
+        ClientEvent::StateChanged {
+            monotonic_micros: elapsed_micros(started),
+            channel: observation.channel,
+            mute: observation.mute,
+            deaf: observation.deaf,
+            self_mute: observation.self_mute,
+            self_deaf: observation.self_deaf,
+        }
+    }
 }
 
 // REF: runtime/references/mumble/src/Mumble.proto:Version and Authenticate.
@@ -320,6 +716,20 @@ struct ActiveClient {
     crypt: Option<CryptState>,
     server: SocketAddr,
     udp: Option<UdpSocket>,
+}
+
+struct ManagedConnection<'a> {
+    actions: &'a mut mpsc::Receiver<ClientAction>,
+    events: &'a mpsc::Sender<ClientEvent>,
+    started: Instant,
+    voice_enabled: bool,
+}
+
+enum ConnectionExit {
+    Deadline,
+    Stop,
+    Disconnected(bool),
+    ReplaceCredential(MumbleCredential, bool),
 }
 
 async fn finish_handshake(
@@ -387,7 +797,8 @@ impl ActiveClient {
         client_number: usize,
         stop_at: Instant,
         report: &mut ClientReport,
-    ) -> Result<()> {
+        mut managed: Option<ManagedConnection<'_>>,
+    ) -> Result<ConnectionExit> {
         let mut scenario = Scenario::new(config.scenario, client_number);
         let mut tcp_ping = interval(config.ping_interval);
         let mut udp_ping = interval(config.ping_interval);
@@ -418,6 +829,7 @@ impl ActiveClient {
                 UdpPing,
                 Voice,
                 Interaction,
+                Action(ClientAction),
             }
             let event = tokio::select! {
                 // Cancellation-safe: Sleep retains its deadline when polled again.
@@ -434,6 +846,8 @@ impl ActiveClient {
                 _ = optional_tick(&mut voice) => Event::Voice,
                 // Cancellation-safe: scenario state changes only after this branch wins.
                 _ = interaction.tick() => Event::Interaction,
+                // Cancellation-safe: mpsc::Receiver::recv does not consume a message when cancelled.
+                action = optional_action(&mut managed) => Event::Action(action),
             };
 
             match event {
@@ -442,12 +856,22 @@ impl ActiveClient {
                         .shutdown()
                         .await
                         .context("closing the TLS control connection")?;
-                    return Ok(());
+                    return Ok(ConnectionExit::Deadline);
                 }
                 Event::Control(message) => {
                     let message = (*message)?;
                     report.tcp_frames_received = report.tcp_frames_received.saturating_add(1);
+                    let previous = self.model.self_observation();
                     self.model.apply(&message);
+                    let current = self.model.self_observation();
+                    if previous != current
+                        && let (Some(observation), Some(control)) = (current, managed.as_ref())
+                    {
+                        emit_event(
+                            control.events,
+                            event_from_observation(control.started, observation, false),
+                        )?;
+                    }
                     match message {
                         ControlMessage::CryptSetup(setup) => {
                             handle_crypt_setup(&mut self.crypt, &mut self.writer, &setup).await?;
@@ -541,8 +965,11 @@ impl ActiveClient {
                 Event::Voice => {
                     let packet_frame = frame_number;
                     frame_number = frame_number.saturating_add(1);
-                    if let Some(is_terminator) =
-                        talk_schedule.packet_at(voice_started.elapsed(), OPUS_FRAME_DURATION)
+                    let voice_enabled =
+                        managed.as_ref().is_none_or(|control| control.voice_enabled);
+                    if voice_enabled
+                        && let Some(is_terminator) =
+                            talk_schedule.packet_at(voice_started.elapsed(), OPUS_FRAME_DURATION)
                     {
                         let clip = voice_clip
                             .as_ref()
@@ -572,6 +999,40 @@ impl ActiveClient {
                         report.interactions_sent = report.interactions_sent.saturating_add(1);
                     }
                 }
+                Event::Action(action) => match action {
+                    ClientAction::SetVoiceEnabled(enabled) => {
+                        if let Some(control) = managed.as_mut() {
+                            control.voice_enabled = enabled;
+                        }
+                    }
+                    ClientAction::Disconnect => {
+                        self.writer
+                            .shutdown()
+                            .await
+                            .context("closing the managed TLS control connection")?;
+                        let enabled = managed
+                            .as_ref()
+                            .is_some_and(|control| control.voice_enabled);
+                        return Ok(ConnectionExit::Disconnected(enabled));
+                    }
+                    ClientAction::ReplaceCredential(credential) => {
+                        self.writer
+                            .shutdown()
+                            .await
+                            .context("closing the replaced TLS control connection")?;
+                        let enabled = managed
+                            .as_ref()
+                            .is_some_and(|control| control.voice_enabled);
+                        return Ok(ConnectionExit::ReplaceCredential(credential, enabled));
+                    }
+                    ClientAction::Stop => {
+                        self.writer
+                            .shutdown()
+                            .await
+                            .context("stopping the managed TLS control connection")?;
+                        return Ok(ConnectionExit::Stop);
+                    }
+                },
             }
         }
     }
@@ -601,6 +1062,13 @@ async fn optional_tick(interval: &mut Option<Interval>) {
         Some(interval) => {
             interval.tick().await;
         }
+        None => std::future::pending().await,
+    }
+}
+
+async fn optional_action(managed: &mut Option<ManagedConnection<'_>>) -> ClientAction {
+    match managed {
+        Some(control) => control.actions.recv().await.unwrap_or(ClientAction::Stop),
         None => std::future::pending().await,
     }
 }
@@ -736,5 +1204,47 @@ mod tests {
             Some(false)
         );
         Ok(())
+    }
+
+    #[test]
+    fn credential_debug_redacts_bearer_password() {
+        let credential = MumbleCredential::new("participant-7", "secret-token");
+        let debug = format!("{credential:?}");
+
+        assert!(debug.contains("participant-7"));
+        assert!(debug.contains("[REDACTED]"));
+        assert!(!debug.contains("secret-token"));
+    }
+
+    #[test]
+    fn self_observation_tracks_server_and_self_mutes() {
+        let mut model = Model::default();
+        model.apply(&ControlMessage::ChannelState(tcp::ChannelState {
+            channel_id: Some(0),
+            name: Some("Space alpha".to_owned()),
+            ..Default::default()
+        }));
+        model.apply(&ControlMessage::UserState(tcp::UserState {
+            session: Some(17),
+            channel_id: Some(0),
+            mute: Some(true),
+            self_deaf: Some(true),
+            ..Default::default()
+        }));
+        model.apply(&ControlMessage::ServerSync(tcp::ServerSync {
+            session: Some(17),
+            ..Default::default()
+        }));
+
+        assert_eq!(
+            model.self_observation(),
+            Some(SelfObservation {
+                channel: "Space alpha".to_owned(),
+                mute: true,
+                deaf: false,
+                self_mute: false,
+                self_deaf: true,
+            })
+        );
     }
 }

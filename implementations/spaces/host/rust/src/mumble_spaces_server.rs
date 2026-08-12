@@ -4,6 +4,7 @@
 mod actor;
 mod actor_messages;
 pub mod config;
+mod metrics;
 mod profile;
 mod server;
 mod service;
@@ -14,4 +15,5 @@ pub mod core_protocol {
 }
 
 pub use config::ControllerConfig;
+pub use metrics::MetricsOutput;
 pub use server::{RunningControllerServer, ServerStartError};
