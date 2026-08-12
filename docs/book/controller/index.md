@@ -32,11 +32,13 @@ your application                the runtime
 +---------------------+         +--------------------------+
 ```
 
-`mumble-controller-server` is a Rust process you run next to your game server.
-It speaks Mumble to the players and gRPC to you.
+`mumble-controller-server` is currently the Spaces Rust host you run next to
+your game server. It speaks Mumble to the players and the generic Coordination
+protocol plus typed Spaces payloads to your application.
 
-The Spaces Java client (`be.theking90000.mumble:controller-spaces`) is the library you add to
-your plugin. `ControllerSession` is almost all of it.
+The Spaces Java client (`be.theking90000.mumble:controller-spaces`) is the
+library you add to your plugin. It is a typed facade over the reusable
+Coordination SDK; `ControllerSession` is almost all of the Spaces-facing API.
 
 ## Spaces, participants, sessions
 

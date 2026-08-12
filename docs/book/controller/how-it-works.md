@@ -73,15 +73,24 @@ published -> the Mumble generation produced by that render
 
 ## Repository layout
 
-The contract and the Java SDK live under `control-plane`:
+The current checkout still stores the integration under `control-plane` while
+the repository migrates to two sibling trees:
 
-- `contract` holds the canonical versioned Protobuf/gRPC definition. Its
-  compiled descriptor digest is pinned in CI, so a wire-incompatible edit fails
-  the build rather than reaching a release.
-- `core/clients/java` holds common Java synchronization types;
-- `implementations/spaces/clients/java` holds the Java 8 compatible Spaces client.
-- `server-rust` holds the composed server described in
-  [Reference: the Rust server](server.md).
+```text
+control/                    reusable coordination and runtime adaptation
+implementations/spaces/     typed Spaces protocol, SDK, Rust model and host
+```
+
+Coordination carries opaque, bounded payloads and owns sessions, leases,
+fencing, revisions and reliable requests. It never decodes a Space. The Spaces
+implementation owns `SpaceKey`, participant specifications, observations,
+snapshots and their materialization over the Runtime Adapter.
+
+The Core and Spaces descriptor digests are pinned independently in CI, so a
+wire-incompatible edit fails the build rather than reaching a release. The
+current `server-rust` path contains the Spaces host described in
+[Reference: the Spaces Rust host](server.md); its target path is
+`implementations/spaces/host/rust`.
 
 See [Reference: lifecycles](java.md) for the session and participant state
 machines.

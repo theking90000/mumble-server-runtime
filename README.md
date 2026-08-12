@@ -12,9 +12,10 @@ No plugin, custom client or protocol extension is required. Instead of a channel
 tree you configure, channels, visibility and audibility are computed live from
 your application's state.
 
-> **Preliminary.** The runtime works and ships with a runnable demo. The
-> published API is still work-in-progress, and there is no ready-made plugin for
-> any game. See [Status](#status) for what is real and what is not.
+> **Preliminary.** The runtime and the provided Spaces remote-control host work.
+> The published APIs are still work-in-progress. A buildable Bukkit example is
+> included, but it is not a production-ready plugin. See [Status](#status) for
+> what is real and what is not.
 
 > **AI-assisted development.** Most of Mumble Server Runtime's implementation was delegated
 > to AI coding agents. See the [AI development notice](#ai-assisted-development)
@@ -164,8 +165,9 @@ cargo run --release -p mumble-server-runtime-stress -- --clients 200 --duration 
 - API documentation is generated and published, but its coverage is uneven.
 - The book documents the model, how to build on it, and what a Mumble client
   gets. The development chapter is not written yet.
-- No plugin or bridge for any game, Minecraft included. Today you write Rust
-  against the runtime directly.
+- The Bukkit integration is a worked example rather than a supported production
+  plugin. Applications can embed the Rust runtime directly or use the provided
+  Spaces host from Java.
 - No distributed topology: every shard lives in one runtime.
 - Opus only, forwarded without ever being decoded, so no server-side mixing.
 
@@ -183,10 +185,19 @@ protobuf, UDP envelopes, OCB2. `runtime/reference/arena` is the demo above.
 `mumble-server-runtime-testkit` is the independent judge, a simulated Mumble client that
 applies the protocol and refuses any violation of its strict model.
 
-`control-plane` contains the language-neutral gRPC contract, the Java
-8 `ControllerSession` SDK and the composed Rust server. Controller sessions own
-participants, while dynamic Spaces are materialized as runtime shards without
-exposing shard identifiers to Java.
+Remote integration has two layers. **Control** provides reusable coordination
+for many remote controllers targeting one host, plus the adapter to Mumble
+Server Runtime. **Spaces** is the provided implementation: its Java SDK assigns
+participants to named Spaces and its Rust host materializes them as runtime
+shards without exposing shard identifiers. The current files still live under
+`control-plane/` while they migrate to sibling `control/` and
+`implementations/spaces/` trees.
+
+This creates three entry points:
+
+1. use `runtime/` directly from Rust for full control;
+2. use Control Coordination to build a different remote model;
+3. use the provided Spaces SDK and host without designing a voice model.
 
 The current architecture reference is the [`docs/book/`](docs/book) source. The
 working rules live in [`AGENT.md`](AGENT.md). The earlier exploratory pipeline

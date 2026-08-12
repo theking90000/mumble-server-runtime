@@ -27,13 +27,21 @@ mumble-server-runtime-gateway -> mumble-server-runtime-shard -> mumble-server-ru
 
 Le benchmark actif est `ci/bench-shard.sh`.
 
-## Implémentation Controller
+## Control et implémentation Spaces
 
-`control-plane` contient le contrat Protobuf/gRPC v1, le SDK Java 8
-`ControllerSession`, le serveur Rust composé au-dessus du runtime et la
-référence Bukkit Spaces. Le serveur possède les sessions, leases, fencing,
-révisions et publications de Spaces. L'interop de CI relie une vraie session
-Java au serveur Rust puis à des clients Mumble simulés.
+`control-plane` est encore le chemin physique transitoire. Il contient deux
+responsabilités déjà séparées dans les contrats et les SDK :
+
+- Coordination possède sessions, reprise, leases, fencing, révisions,
+  déduplication, backpressure et commandes fiables ;
+- Spaces fournit le modèle métier nommé, son SDK Java, son rendu Rust, son host
+  exécutable et la référence Bukkit.
+
+Le host Rust actuel compose encore ces responsabilités dans un acteur unique.
+La migration acceptée déplace le socle générique sous `control/` et toute la
+verticale Spaces sous `implementations/spaces/`, puis extrait l'état métier
+restant de l'acteur. L'interop de CI relie une vraie session Java au host Spaces
+puis à des clients Mumble simulés.
 
 ## Pipeline retiré
 
