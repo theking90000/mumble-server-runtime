@@ -14,7 +14,7 @@ as-is. The SDK has no Minecraft dependency, and nothing here is required by it.
 
 ```sh
 cd implementations/spaces/bukkit
-../../../control-plane/gradlew build
+../../../gradlew build
 ```
 
 The relocated, self-contained jar lands in
@@ -22,10 +22,10 @@ The relocated, self-contained jar lands in
 
 This is a separate Gradle build, not a module of `mumble-controller`. The SDK
 dependency is substituted onto `:implementations:spaces:sdk:controller-spaces`
-of the repository's temporary Gradle composition build, so the example always
+of the repository's root Gradle composition build, so the example always
 compiles against the sources in this repository. Keeping it out of the SDK
-build also keeps `./gradlew check` there free of the Spigot repository, which is
-why CI does not build the example.
+build also keeps the root `./gradlew check` free of the Spigot repository, which
+is why CI does not build the example.
 
 ## Differences from the book page
 

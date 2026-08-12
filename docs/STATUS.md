@@ -31,8 +31,8 @@ Le benchmark actif est `ci/bench-shard.sh`.
 
 Le socle générique est désormais sous `control/`. Le protocole, le modèle Rust
 et le SDK Java Spaces sont sous `implementations/spaces/`, ainsi que le host
-exécutable et la référence Bukkit. Seul le build Gradle transitoire garde encore
-un chemin `control-plane/`.
+exécutable et la référence Bukkit. Le build Gradle racine compose les deux SDK
+sans leur donner un propriétaire artificiel commun.
 Les deux responsabilités sont séparées dans les contrats et les SDK :
 
 - Coordination possède sessions, reprise, leases, fencing, révisions,
@@ -78,7 +78,7 @@ cargo fmt --all --check
 RUSTFLAGS="-D warnings" cargo clippy --workspace --all-targets --all-features
 RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --all-features
 RUSTFLAGS="-D warnings" cargo test --workspace --all-features
-(cd control-plane && ./gradlew check)
+./gradlew check
 ```
 
 Les tests live ouvrent des sockets loopback locales.

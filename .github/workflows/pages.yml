@@ -48,8 +48,9 @@ jobs:
           java-version: "17"
           cache: gradle
           cache-dependency-path: |
-            control-plane/**/*.gradle.kts
-            control-plane/gradle/wrapper/gradle-wrapper.properties
+            build.gradle.kts
+            settings.gradle.kts
+            gradle/wrapper/gradle-wrapper.properties
             control/**/*.gradle.kts
             implementations/**/*.gradle.kts
 
@@ -62,7 +63,6 @@ jobs:
         run: cargo doc --workspace --no-deps --all-features
 
       - name: Controller JavaDoc
-        working-directory: control-plane
         run: ./gradlew --no-daemon -Dorg.gradle.java.installations.paths="$JAVA_HOME,$JAVA8_HOME" :implementations:spaces:sdk:controller-spaces:javadoc
 
       - name: Assembler le site
