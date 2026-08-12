@@ -27,6 +27,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArraySet;
 import java.util.concurrent.TimeUnit;
 
@@ -239,20 +240,59 @@ public final class VoicePlugin extends JavaPlugin implements Listener {
      *
      * @param player player to mute or unmute
      * @param muted requested state
-     * @return true if the state changed, false if it already held
+     * @return future completed with true after acceptance, or false if the state already held
      */
-    boolean setServerMuted(Player player, boolean muted) {
+    CompletableFuture<Boolean> setServerMuted(Player player, boolean muted) {
+        UUID playerId = player.getUniqueId();
         boolean changed = muted
-                ? serverMuted.add(player.getUniqueId())
-                : serverMuted.remove(player.getUniqueId());
+                ? serverMuted.add(playerId)
+                : serverMuted.remove(playerId);
         if (!changed) {
-            return false;
+            return CompletableFuture.completedFuture(Boolean.FALSE);
         }
-        ParticipantHandle handle = handles.get(player.getUniqueId());
-        if (handle != null) {
-            handle.setSpec(specFor(player));
+        ParticipantHandle handle = handles.get(playerId);
+        if (handle == null) {
+            replaceMuteState(playerId, !muted);
+            CompletableFuture<Boolean> missing = new CompletableFuture<Boolean>();
+            missing.completeExceptionally(new IllegalStateException(
+                    "no voice participant is registered for " + player.getName()));
+            return missing;
         }
-        return true;
+        ParticipantSpec requested = specFor(player);
+        CompletableFuture<Boolean> result = new CompletableFuture<Boolean>();
+        handle.setSpec(requested).whenComplete((accepted, failure) -> {
+            if (failure == null) {
+                result.complete(Boolean.TRUE);
+                return;
+            }
+            // Bukkit state is server-thread confined. A later spec may already have
+            // superseded this request, in which case rolling it back would overwrite
+            // the newer operator or world-change decision.
+            Bukkit.getScheduler().runTask(this, () -> {
+                if (handles.get(playerId) == handle
+                        && handle.desiredSpec().equals(requested)
+                        && serverMuted.contains(playerId) == muted) {
+                    replaceMuteState(playerId, !muted);
+                    ParticipantSpec rollback = specFor(player);
+                    handle.setSpec(rollback).whenComplete((ignored, rollbackFailure) -> {
+                        if (rollbackFailure != null) {
+                            getLogger().warning("Could not restore the voice specification for "
+                                    + player.getName() + " after a mute failure: " + rollbackFailure);
+                        }
+                    });
+                }
+                result.completeExceptionally(failure);
+            });
+        });
+        return result;
+    }
+
+    private void replaceMuteState(UUID playerId, boolean muted) {
+        if (muted) {
+            serverMuted.add(playerId);
+        } else {
+            serverMuted.remove(playerId);
+        }
     }
 
     ControllerSession session() {

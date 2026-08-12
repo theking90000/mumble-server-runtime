@@ -228,12 +228,21 @@ final class VoiceCommand implements CommandExecutor, TabCompleter {
             error(sender, "No player named " + args[1] + " is online.");
             return true;
         }
-        if (plugin.setServerMuted(target, muted)) {
-            sender.sendMessage(ChatColor.GRAY + target.getName()
-                    + (muted ? " is now server muted." : " is no longer server muted."));
-        } else {
-            sender.sendMessage(ChatColor.GRAY + target.getName() + " was already in that state.");
-        }
+        plugin.setServerMuted(target, muted).whenComplete((changed, failure) -> {
+            // Controller callbacks do not run on the Bukkit server thread.
+            Bukkit.getScheduler().runTask(plugin, () -> {
+                if (failure != null) {
+                    error(sender, "Could not " + (muted ? "mute " : "unmute ")
+                            + target.getName() + ": " + failure.getMessage());
+                } else if (changed.booleanValue()) {
+                    sender.sendMessage(ChatColor.GRAY + target.getName()
+                            + (muted ? " is now server muted." : " is no longer server muted."));
+                } else {
+                    sender.sendMessage(ChatColor.GRAY + target.getName()
+                            + " was already in that state.");
+                }
+            });
+        });
         return true;
     }
 
