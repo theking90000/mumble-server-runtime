@@ -1,5 +1,5 @@
 [package]
-name = "mumble-controller-server"
+name = "mumble-spaces-server"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -10,11 +10,11 @@ description = "Runnable Spaces host composed over Control and Mumble Server Runt
 publish = false
 
 [lib]
-name = "mumble_controller_server"
-path = "src/mumble_controller_server.rs"
+name = "mumble_spaces_server"
+path = "src/mumble_spaces_server.rs"
 
 [[bin]]
-name = "mumble-controller-server"
+name = "mumble-spaces-server"
 path = "src/main.rs"
 
 [dependencies]

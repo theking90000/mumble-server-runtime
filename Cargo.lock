@@ -697,8 +697,8 @@ dependencies = [
 name = "mumble-controller-core-conformance"
 version = "0.1.0"
 dependencies = [
- "mumble-controller-server",
  "mumble-server-runtime-gateway",
+ "mumble-spaces-server",
  "prost 0.14.4",
  "prost-build 0.14.4",
  "prost-types 0.14.4",
@@ -721,35 +721,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "mumble-controller-server"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "base64",
- "clap",
- "getrandom 0.4.3",
- "mumble-controller-core",
- "mumble-controller-host",
- "mumble-controller-spaces",
- "mumble-server-runtime-gateway",
- "mumble-server-runtime-protocol",
- "mumble-server-runtime-shard",
- "mumble-server-runtime-testkit",
- "prost 0.14.4",
- "prost-build 0.14.4",
- "prost-types 0.14.4",
- "protoc-bin-vendored",
- "rustls-pemfile",
- "tempfile",
- "thiserror 2.0.19",
- "tokio",
- "tokio-stream",
- "tonic",
- "tonic-prost",
- "tonic-prost-build",
-]
-
-[[package]]
 name = "mumble-controller-spaces"
 version = "0.1.0"
 dependencies = [
@@ -765,10 +736,10 @@ dependencies = [
 name = "mumble-controller-spaces-interop"
 version = "0.1.0"
 dependencies = [
- "mumble-controller-server",
  "mumble-server-runtime-gateway",
  "mumble-server-runtime-protocol",
  "mumble-server-runtime-testkit",
+ "mumble-spaces-server",
  "tempfile",
  "tokio",
 ]
@@ -891,6 +862,35 @@ dependencies = [
  "rustls",
  "tokio",
  "tokio-rustls",
+]
+
+[[package]]
+name = "mumble-spaces-server"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64",
+ "clap",
+ "getrandom 0.4.3",
+ "mumble-controller-core",
+ "mumble-controller-host",
+ "mumble-controller-spaces",
+ "mumble-server-runtime-gateway",
+ "mumble-server-runtime-protocol",
+ "mumble-server-runtime-shard",
+ "mumble-server-runtime-testkit",
+ "prost 0.14.4",
+ "prost-build 0.14.4",
+ "prost-types 0.14.4",
+ "protoc-bin-vendored",
+ "rustls-pemfile",
+ "tempfile",
+ "thiserror 2.0.19",
+ "tokio",
+ "tokio-stream",
+ "tonic",
+ "tonic-prost",
+ "tonic-prost-build",
 ]
 
 [[package]]

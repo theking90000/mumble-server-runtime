@@ -42,8 +42,10 @@ authors = ["Mumble Server Runtime contributors"]
 
 # Verifiers inherit mutable internal paths from the workspace so a mechanical
 # move never requires an implementation diff to edit verifier-owned manifests.
+# Keep the previous dependency key as an internal alias while the public package
+# and binary adopt the implementation-specific Spaces name.
 [workspace.dependencies]
-mumble-controller-server = { path = "implementations/spaces/host/rust" }
+mumble-controller-server = { package = "mumble-spaces-server", path = "implementations/spaces/host/rust" }
 mumble-server-runtime-protocol = { path = "runtime/crates/protocol" }
 mumble-server-runtime-crypto = { path = "runtime/crates/crypto" }
 mumble-server-runtime-shard = { path = "runtime/crates/shard" }

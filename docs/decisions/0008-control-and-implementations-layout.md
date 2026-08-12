@@ -54,8 +54,9 @@ coordination policy or a concrete business model.
 
 An implementation is a complete vertical model. Spaces owns its typed protocol,
 host-side Rust behavior, Java SDK facade, runnable host composition, and Bukkit
-example. The runnable process currently called `mumble-controller-server` is a
-Spaces host and moves to `implementations/spaces/host/rust`.
+example. The runnable process is a Spaces host and moves to
+`implementations/spaces/host/rust`. Its implementation-specific public name is
+`mumble-spaces-server`.
 
 The word `profile` remains the protocol concept selected by `profile_id`, schema
 version, and descriptor digest. It does not name a repository ownership layer.

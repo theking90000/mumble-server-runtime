@@ -1,0 +1,121 @@
+name: Build artifacts
+
+# This workflow produces short-lived CI artifacts only. Publishing a GitHub
+# release or registry package remains a separate, explicit step.
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-artifacts-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  spaces-java:
+    name: Spaces Java SDK and Bukkit example
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "8"
+      - name: Remember Java 8 toolchain
+        run: echo "JAVA8_HOME=$JAVA_HOME" >> "$GITHUB_ENV"
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+          cache-dependency-path: |
+            build.gradle.kts
+            settings.gradle.kts
+            gradle/wrapper/gradle-wrapper.properties
+            control/**/*.gradle.kts
+            implementations/**/*.gradle.kts
+
+      - name: Build Spaces Java SDK
+        run: >-
+          ./gradlew --no-daemon
+          -Dorg.gradle.java.installations.paths="$JAVA_HOME,$JAVA8_HOME"
+          :implementations:spaces:sdk:controller-spaces:build
+
+      - name: Build shaded Bukkit example
+        working-directory: implementations/spaces/bukkit
+        run: >-
+          ../../../gradlew --no-daemon
+          -Dorg.gradle.java.installations.paths="$JAVA_HOME,$JAVA8_HOME"
+          build
+
+      - name: Upload Spaces Java SDK
+        uses: actions/upload-artifact@v7
+        with:
+          name: controller-spaces-java
+          path: implementations/spaces/sdk/java/build/libs/controller-spaces-*.jar
+          if-no-files-found: error
+
+      - name: Upload shaded Bukkit example
+        uses: actions/upload-artifact@v7
+        with:
+          name: spaces-bukkit-example
+          path: implementations/spaces/bukkit/build/libs/voice-example-plugin-*.jar
+          if-no-files-found: error
+
+  spaces-rust-host:
+    name: Spaces Rust library and host (${{ matrix.target }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            executable: mumble-spaces-server
+            archive: mumble-spaces-server-x86_64-unknown-linux-gnu.tar.gz
+          - runner: windows-latest
+            target: x86_64-pc-windows-msvc
+            executable: mumble-spaces-server.exe
+            archive: mumble-spaces-server-x86_64-pc-windows-msvc.zip
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@1.93.0
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: artifacts-${{ matrix.target }}
+
+      - name: Build Spaces Rust library and host
+        run: >-
+          cargo build --locked --release
+          --package mumble-controller-spaces
+          --package mumble-spaces-server
+          --target ${{ matrix.target }}
+
+      - name: Package Linux host
+        if: runner.os == 'Linux'
+        run: >-
+          tar -C target/${{ matrix.target }}/release
+          -czf ${{ matrix.archive }}
+          ${{ matrix.executable }}
+
+      - name: Package Windows host
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: >-
+          Compress-Archive
+          -Path target/${{ matrix.target }}/release/${{ matrix.executable }}
+          -DestinationPath ${{ matrix.archive }}
+
+      - name: Upload Spaces Rust host
+        uses: actions/upload-artifact@v7
+        with:
+          name: mumble-spaces-server-${{ matrix.target }}
+          path: ${{ matrix.archive }}
+          if-no-files-found: error

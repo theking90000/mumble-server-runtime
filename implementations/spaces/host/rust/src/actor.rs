@@ -1876,7 +1876,7 @@ impl ControllerActor {
                 self.reliable
                     .complete(session_id, frame.request_id.clone(), frame.clone())
         {
-            eprintln!("mumble-controller-server: dropping an unrecorded reliable result: {error}");
+            eprintln!("mumble-spaces-server: dropping an unrecorded reliable result: {error}");
             self.core_sessions.mark_resync_required(session_id);
             return;
         }

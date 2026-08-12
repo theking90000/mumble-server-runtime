@@ -3,11 +3,11 @@
 > Internals and complete option list. [Getting started](getting-started.md)
 > covers what is needed to run the process.
 
-`mumble-controller-server` is currently the runnable host for the provided
+`mumble-spaces-server` is the runnable host for the provided
 Spaces implementation. It composes the generic Coordination protocol, the
 Spaces payload protocol, the Runtime Adapter, and the gateway/shard runtime.
 Its source lives at `implementations/spaces/host/rust`; the existing package and
-binary names remain stable during the repository migration.
+binary use the implementation-specific `mumble-spaces-server` name.
 
 One Tokio actor currently serializes session leases,
 participant ownership, join credentials, observations, Space lifetimes and
@@ -30,7 +30,7 @@ the protocol report accepted, applied and published as separate watermarks.
 A persistent Mumble certificate is supplied as PEM files:
 
 ```sh
-cargo run -p mumble-controller-server -- \
+cargo run -p mumble-spaces-server -- \
   --mumble-cert server-cert.pem \
   --mumble-key server-key.pem
 ```
@@ -38,7 +38,7 @@ cargo run -p mumble-controller-server -- \
 For explicit local development only:
 
 ```sh
-cargo run -p mumble-controller-server -- --dev-self-signed
+cargo run -p mumble-spaces-server -- --dev-self-signed
 ```
 
 The Controller listener defaults to `127.0.0.1:4000`. Binding it to a
