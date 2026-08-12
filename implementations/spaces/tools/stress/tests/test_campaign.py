@@ -43,6 +43,8 @@ class CampaignTest(unittest.TestCase):
             4_096,
             (42,),
             "auto",
+            100,
+            8,
         )
 
         self.assertEqual(len(points), 5)
@@ -51,7 +53,7 @@ class CampaignTest(unittest.TestCase):
 
     def test_capacity_profile_uses_the_official_silent_points_and_all_seeds(self) -> None:
         points = CAMPAIGN.plan_points(
-            sample_matrix(), "capacity", (32,), 3_200, (41, 42), "auto"
+            sample_matrix(), "capacity", (32,), 3_200, (41, 42), "auto", 100, 8
         )
 
         self.assertEqual([(point["participants"], point["seed"]) for point in points], [
@@ -60,20 +62,24 @@ class CampaignTest(unittest.TestCase):
             (3_200, 41),
             (3_200, 42),
         ])
-        self.assertEqual(points[-1]["controllers"], 8)
+        self.assertEqual(points[-1]["controllers"], 32)
+        self.assertEqual(points[-1]["driver_processes"], 4)
 
-    def test_fixed_controller_count_rejects_java_operation_window_overflow(self) -> None:
-        with self.assertRaisesRegex(ValueError, "use at least 7"):
-            CAMPAIGN.controller_count(3_200, 4)
+    def test_fixed_controller_count_rejects_per_controller_target_overflow(self) -> None:
+        with self.assertRaisesRegex(ValueError, "use at least 32"):
+            CAMPAIGN.controller_count(3_200, 4, 100)
 
     def test_auto_controller_count_scales_beyond_the_power_of_two_range(self) -> None:
-        self.assertEqual(CAMPAIGN.controller_count(3_200, "auto"), 8)
-        self.assertEqual(CAMPAIGN.controller_count(10_000, "auto"), 20)
+        self.assertEqual(CAMPAIGN.controller_count(3_200, "auto", 100), 32)
+        self.assertEqual(CAMPAIGN.controller_count(10_000, "auto", 100), 100)
 
     def test_audio_command_uses_exact_matrix_level_and_voice_fixture(self) -> None:
         command = CAMPAIGN.command_for_point(
             {
                 "controllers": 2,
+                "driver_processes": 1,
+                "controllers_per_driver_process": 8,
+                "max_participants_per_controller": 100,
                 "participants": 64,
                 "participants_per_space": 32,
                 "seed": 42,
@@ -90,6 +96,8 @@ class CampaignTest(unittest.TestCase):
         self.assertEqual(command[command.index("--scenario") + 1], "voice")
         self.assertEqual(command[command.index("--audio") + 1], "one-per-space")
         self.assertEqual(command[command.index("--voice-file") + 1], "voice.opuspack")
+        self.assertEqual(command[command.index("--max-participants-per-controller") + 1], "100")
+        self.assertEqual(command[command.index("--controllers-per-driver-process") + 1], "8")
 
     def test_voice_fixture_accepts_wrapped_base64(self) -> None:
         packet = bytes(range(30))

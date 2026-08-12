@@ -139,8 +139,12 @@ struct RunArguments {
     worker_netns_prefix: Option<String>,
     #[arg(long)]
     phase_control: Option<PathBuf>,
-    #[arg(long, default_value_t = 1, value_parser = clap::value_parser!(u16).range(1..=64))]
+    #[arg(long, default_value_t = 1, value_parser = clap::value_parser!(u16).range(1..=128))]
     controllers: u16,
+    #[arg(long, default_value_t = 100, value_parser = clap::value_parser!(u16).range(1..=200))]
+    max_participants_per_controller: u16,
+    #[arg(long, default_value_t = 8, value_parser = clap::value_parser!(u16).range(1..=64))]
+    controllers_per_driver_process: u16,
     #[arg(long, default_value_t = 8, value_parser = parse_participants)]
     participants: usize,
     #[arg(long, default_value_t = 8, value_parser = parse_participants_per_space)]
@@ -234,6 +238,9 @@ struct Manifest<'a> {
     audio: Option<AudioLevel>,
     fault: ProcessFault,
     controllers: u16,
+    driver_processes: usize,
+    controllers_per_driver_process: usize,
+    max_participants_per_controller: u16,
     participants: usize,
     participants_per_space: usize,
     seed: u64,
@@ -244,6 +251,8 @@ struct Manifest<'a> {
 struct Summary {
     scenario: String,
     controllers: u16,
+    driver_processes: usize,
+    max_participants_per_controller: u16,
     participants_requested: usize,
     credentials_received: usize,
     workers: usize,
@@ -382,14 +391,16 @@ struct HealthyThresholds {
     minimum_audio_delivery_percent: f64,
 }
 
-struct Driver {
-    controller_id: String,
+struct DriverProcess {
+    index: usize,
+    controller_indices: Vec<usize>,
     input: ChildStdin,
     child: Child,
     reader: JoinHandle<()>,
 }
 
 struct DriverSpawnOptions<'a> {
+    controller_indices: &'a [usize],
     log_suffix: &'a str,
     netns_prefix: Option<&'a str>,
     event_mode: DriverEventMode,
@@ -502,16 +513,17 @@ async fn run_campaign(arguments: RunArguments) -> Result<()> {
     let mut summary = Summary {
         scenario: format!("{:?}", arguments.scenario),
         controllers: arguments.controllers,
+        driver_processes: drivers.len(),
+        max_participants_per_controller: arguments.max_participants_per_controller,
         participants_requested: plans.len(),
         ..Summary::default()
     };
     let mut ledger = Ledger::from_plans(&plans);
 
     for plan in &plans {
-        send_driver_command(
-            drivers
-                .get_mut(plan.controller)
-                .context("driver assignment")?,
+        send_controller_command(
+            &mut drivers,
+            plan.controller,
             json!({
                 "schema_version": PROTOCOL_VERSION,
                 "kind": "register",
@@ -641,8 +653,8 @@ async fn run_campaign(arguments: RunArguments) -> Result<()> {
             .context("driver shutdown timeout")??;
         ensure!(
             status.success(),
-            "driver {} exited with {status}",
-            driver.controller_id
+            "driver process {} exited with {status}",
+            driver.index
         );
         (&mut driver.reader)
             .await
@@ -682,6 +694,20 @@ fn validate_run_arguments(arguments: &RunArguments) -> Result<()> {
     ensure!(
         arguments.participants >= arguments.participants_per_space,
         "at least one full Space is required"
+    );
+    let plans = participant_plans(
+        arguments.participants,
+        arguments.participants_per_space,
+        usize::from(arguments.controllers),
+        arguments.scenario,
+        arguments.seed,
+    );
+    let maximum_assigned = maximum_controller_load(&plans, usize::from(arguments.controllers));
+    ensure!(
+        maximum_assigned <= usize::from(arguments.max_participants_per_controller),
+        "a Controller would receive {maximum_assigned} participants, above \
+         --max-participants-per-controller {}; increase --controllers",
+        arguments.max_participants_per_controller
     );
     if matches!(arguments.mode, Mode::External)
         && (arguments.controller_endpoint.is_none() || arguments.mumble_server.is_none())
@@ -738,6 +764,26 @@ fn validate_run_arguments(arguments: &RunArguments) -> Result<()> {
         );
     }
     Ok(())
+}
+
+fn effective_controllers_per_driver_process(arguments: &RunArguments) -> usize {
+    if is_resilience_scenario(arguments.scenario)
+        || !matches!(arguments.fault, ProcessFault::None)
+        || arguments.driver_netns_prefix.is_some()
+    {
+        1
+    } else {
+        usize::from(arguments.controllers_per_driver_process)
+            .min(usize::from(arguments.controllers))
+    }
+}
+
+fn controller_groups(controllers: usize, controllers_per_process: usize) -> Vec<Vec<usize>> {
+    (0..controllers)
+        .collect::<Vec<_>>()
+        .chunks(controllers_per_process)
+        .map(|chunk| chunk.to_vec())
+        .collect()
 }
 
 async fn start_environment(
@@ -880,10 +926,15 @@ async fn shutdown_managed_server(mut server: ManagedServerProcess) -> Result<()>
     Ok(())
 }
 
-fn register_drivers(sampler: &ProcessSampler, drivers: &[Driver]) -> Result<()> {
+fn register_drivers(sampler: &ProcessSampler, drivers: &[DriverProcess]) -> Result<()> {
     for driver in drivers {
         if let Some(pid) = driver.child.id() {
-            sampler.register(pid, format!("driver-{}", driver.controller_id))?;
+            let role = if driver.controller_indices.len() == 1 {
+                format!("driver-load-controller-{}", driver.controller_indices[0])
+            } else {
+                format!("driver-process-{}", driver.index)
+            };
+            sampler.register(pid, role)?;
         }
     }
     Ok(())
@@ -903,15 +954,18 @@ async fn spawn_drivers(
     endpoint: &str,
     result_directory: &Path,
     events: mpsc::Sender<(usize, Value)>,
-) -> Result<Vec<Driver>> {
+) -> Result<Vec<DriverProcess>> {
     let mut drivers = Vec::new();
-    for index in 0..usize::from(arguments.controllers) {
+    let controllers_per_process = effective_controllers_per_driver_process(arguments);
+    let groups = controller_groups(usize::from(arguments.controllers), controllers_per_process);
+    for (index, controllers) in groups.iter().enumerate() {
         drivers.push(spawn_driver(
             &arguments.driver,
             endpoint,
             index,
             result_directory,
             DriverSpawnOptions {
+                controller_indices: controllers,
                 log_suffix: "",
                 netns_prefix: arguments.driver_netns_prefix.as_deref(),
                 event_mode: arguments.driver_event_mode,
@@ -930,14 +984,23 @@ fn spawn_driver(
     result_directory: &Path,
     options: DriverSpawnOptions<'_>,
     events: mpsc::Sender<(usize, Value)>,
-) -> Result<Driver> {
-    let controller_id = format!("load-controller-{index}");
+) -> Result<DriverProcess> {
+    ensure!(
+        !options.controller_indices.is_empty(),
+        "a Java driver process requires at least one Controller"
+    );
+    let controller_ids = options
+        .controller_indices
+        .iter()
+        .map(|controller| format!("load-controller-{controller}"))
+        .collect::<Vec<_>>()
+        .join(",");
     let stderr =
         File::create(result_directory.join(format!("driver-{index}{}.log", options.log_suffix)))?;
     let mut command = namespaced_command(options.netns_prefix, index, executable);
     let mut child = command
         .arg(endpoint)
-        .arg(&controller_id)
+        .arg(controller_ids)
         .arg("512")
         .arg(options.event_mode.as_str())
         .stdin(Stdio::piped())
@@ -964,8 +1027,9 @@ fn spawn_driver(
             }
         }
     });
-    Ok(Driver {
-        controller_id,
+    Ok(DriverProcess {
+        index,
+        controller_indices: options.controller_indices.to_vec(),
         input,
         child,
         reader,
@@ -986,12 +1050,37 @@ fn namespaced_command(prefix: Option<&str>, index: usize, executable: &Path) -> 
     }
 }
 
-async fn send_driver_command(driver: &mut Driver, value: Value) -> Result<()> {
+async fn send_driver_command(driver: &mut DriverProcess, value: Value) -> Result<()> {
     let mut encoded = serde_json::to_vec(&value)?;
     encoded.push(b'\n');
     driver.input.write_all(&encoded).await?;
     driver.input.flush().await?;
     Ok(())
+}
+
+fn driver_for_controller_mut(
+    drivers: &mut [DriverProcess],
+    controller: usize,
+) -> Result<&mut DriverProcess> {
+    drivers
+        .iter_mut()
+        .find(|driver| driver.controller_indices.contains(&controller))
+        .with_context(|| format!("no Java driver process hosts Controller {controller}"))
+}
+
+async fn send_controller_command(
+    drivers: &mut [DriverProcess],
+    controller: usize,
+    mut value: Value,
+) -> Result<()> {
+    value
+        .as_object_mut()
+        .context("driver command must be a JSON object")?
+        .insert(
+            "controller_id".to_owned(),
+            Value::String(format!("load-controller-{controller}")),
+        );
+    send_driver_command(driver_for_controller_mut(drivers, controller)?, value).await
 }
 
 async fn collect_credentials(
@@ -1273,7 +1362,7 @@ fn write_worker_report(path: &Path, report: &WorkerReport) -> Result<()> {
 async fn apply_scenario(
     arguments: &RunArguments,
     plans: &[ParticipantPlan],
-    drivers: &mut [Driver],
+    drivers: &mut [DriverProcess],
     events: &mpsc::Sender<(usize, Value)>,
 ) -> Result<ScenarioOutcome> {
     let mut outcome = ScenarioOutcome::default();
@@ -1304,10 +1393,9 @@ async fn apply_scenario(
         }
         Scenario::Churn => {
             for plan in plans.iter().step_by(4) {
-                send_driver_command(
-                    drivers
-                        .get_mut(plan.controller)
-                        .context("driver assignment")?,
+                send_controller_command(
+                    drivers,
+                    plan.controller,
                     json!({
                         "schema_version": PROTOCOL_VERSION,
                         "kind": "release",
@@ -1321,7 +1409,7 @@ async fn apply_scenario(
         Scenario::BatchTakeover => {
             record_failure_phase(events, FailurePhase::Injection).await?;
             for plan in plans {
-                let target = (plan.controller + 1) % drivers.len();
+                let target = (plan.controller + 1) % usize::from(arguments.controllers);
                 register_on(drivers, plan, target, "batch-takeover").await?;
                 record_expected_owner(events, plan, target).await?;
                 outcome.expected_rotations = outcome.expected_rotations.saturating_add(1);
@@ -1330,7 +1418,7 @@ async fn apply_scenario(
         Scenario::SimultaneousClaim => {
             record_failure_phase(events, FailurePhase::Injection).await?;
             let plan = plans.first().context("simultaneous claim participant")?;
-            let target = (plan.controller + 1) % drivers.len();
+            let target = (plan.controller + 1) % usize::from(arguments.controllers);
             register_on(drivers, plan, target, "simultaneous-claim").await?;
             record_expected_owner(events, plan, target).await?;
             outcome.expected_rotations = 1;
@@ -1338,7 +1426,7 @@ async fn apply_scenario(
         Scenario::CrossedTakeover => {
             record_failure_phase(events, FailurePhase::Injection).await?;
             for plan in plans.iter().take(2) {
-                let target = (plan.controller + 1) % drivers.len();
+                let target = (plan.controller + 1) % usize::from(arguments.controllers);
                 register_on(drivers, plan, target, "crossed-takeover").await?;
                 record_expected_owner(events, plan, target).await?;
                 outcome.expected_rotations = outcome.expected_rotations.saturating_add(1);
@@ -1347,7 +1435,7 @@ async fn apply_scenario(
         Scenario::PingPong => {
             record_failure_phase(events, FailurePhase::Injection).await?;
             let plan = plans.first().context("ping-pong participant")?;
-            let first_target = (plan.controller + 1) % drivers.len();
+            let first_target = (plan.controller + 1) % usize::from(arguments.controllers);
             register_on(drivers, plan, first_target, "ping-pong-1").await?;
             record_expected_owner(events, plan, first_target).await?;
             outcome.expected_rotations = 1;
@@ -1361,13 +1449,14 @@ async fn apply_scenario(
 }
 
 async fn register_on(
-    drivers: &mut [Driver],
+    drivers: &mut [DriverProcess],
     plan: &ParticipantPlan,
     target: usize,
     correlation: &str,
 ) -> Result<()> {
-    send_driver_command(
-        drivers.get_mut(target).context("takeover driver")?,
+    send_controller_command(
+        drivers,
+        target,
         json!({
             "schema_version": PROTOCOL_VERSION,
             "kind": "register",
@@ -1452,7 +1541,7 @@ async fn collect_rotated_credentials(
 async fn apply_process_fault(
     arguments: &RunArguments,
     plans: &[ParticipantPlan],
-    drivers: &mut [Driver],
+    drivers: &mut [DriverProcess],
     workers: &mut Vec<WorkerProcess>,
     known_credentials: &BTreeMap<String, String>,
     result_directory: &Path,
@@ -1790,7 +1879,7 @@ fn maximum_optional(left: Option<u64>, right: Option<u64>) -> Option<u64> {
 async fn restart_driver(
     arguments: &RunArguments,
     plans: &[ParticipantPlan],
-    drivers: &mut [Driver],
+    drivers: &mut [DriverProcess],
     index: usize,
     result_directory: &Path,
     endpoint: &str,
@@ -1799,6 +1888,7 @@ async fn restart_driver(
     sampler: &ProcessSampler,
 ) -> Result<()> {
     let driver = drivers.get_mut(index).context("fault target driver")?;
+    let restarted_controllers = driver.controller_indices.clone();
     let previous_pid = driver.child.id();
     if graceful {
         send_driver_command(
@@ -1828,6 +1918,7 @@ async fn restart_driver(
         index,
         result_directory,
         DriverSpawnOptions {
+            controller_indices: &restarted_controllers,
             log_suffix: "-restarted",
             netns_prefix: arguments.driver_netns_prefix.as_deref(),
             event_mode: arguments.driver_event_mode,
@@ -1835,18 +1926,29 @@ async fn restart_driver(
         events.clone(),
     )?;
     if let Some(pid) = replacement.child.id() {
-        sampler.register(pid, format!("driver-{}", replacement.controller_id))?;
+        let role = if replacement.controller_indices.len() == 1 {
+            format!(
+                "driver-load-controller-{}",
+                replacement.controller_indices[0]
+            )
+        } else {
+            format!("driver-process-{}", replacement.index)
+        };
+        sampler.register(pid, role)?;
     }
     drivers[index] = replacement;
     tokio::time::sleep(Duration::from_millis(250)).await;
-    for plan in plans.iter().filter(|plan| plan.controller == index) {
-        register_on(drivers, plan, index, "recovery-register").await?;
+    for plan in plans
+        .iter()
+        .filter(|plan| restarted_controllers.contains(&plan.controller))
+    {
+        register_on(drivers, plan, plan.controller, "recovery-register").await?;
     }
     Ok(())
 }
 
 #[cfg(unix)]
-async fn signal_driver(driver: &Driver, signal: &str) -> Result<()> {
+async fn signal_driver(driver: &DriverProcess, signal: &str) -> Result<()> {
     let pid = driver.child.id().context("Java driver has no pid")?;
     let status = ProcessCommand::new("kill")
         .arg(format!("-{signal}"))
@@ -1861,21 +1963,20 @@ async fn signal_driver(driver: &Driver, signal: &str) -> Result<()> {
 }
 
 #[cfg(not(unix))]
-async fn signal_driver(_driver: &Driver, _signal: &str) -> Result<()> {
+async fn signal_driver(_driver: &DriverProcess, _signal: &str) -> Result<()> {
     anyhow::bail!("freeze faults require a Unix host")
 }
 
 async fn send_spec(
-    drivers: &mut [Driver],
+    drivers: &mut [DriverProcess],
     plan: &ParticipantPlan,
     space_key: String,
     server_mute: bool,
     server_deaf: bool,
 ) -> Result<()> {
-    send_driver_command(
-        drivers
-            .get_mut(plan.controller)
-            .context("driver assignment")?,
+    send_controller_command(
+        drivers,
+        plan.controller,
         json!({
             "schema_version": PROTOCOL_VERSION,
             "kind": "set_spec",
@@ -1924,6 +2025,14 @@ fn participant_plans(
             }
         })
         .collect()
+}
+
+fn maximum_controller_load(plans: &[ParticipantPlan], controllers: usize) -> usize {
+    let mut counts = vec![0usize; controllers];
+    for plan in plans {
+        counts[plan.controller] = counts[plan.controller].saturating_add(1);
+    }
+    counts.into_iter().max().unwrap_or(0)
 }
 
 fn is_resilience_scenario(scenario: Scenario) -> bool {
@@ -2030,6 +2139,7 @@ fn write_manifest(directory: &Path, arguments: &RunArguments) -> Result<()> {
     let git_sha = command_output("git", &["rev-parse", "HEAD"])?;
     let git_dirty = !command_output("git", &["status", "--porcelain"])?.is_empty();
     let command_line: Vec<_> = std::env::args_os().collect();
+    let controllers_per_driver_process = effective_controllers_per_driver_process(arguments);
     let manifest = Manifest {
         schema_version: PROTOCOL_VERSION,
         git_sha,
@@ -2044,6 +2154,10 @@ fn write_manifest(directory: &Path, arguments: &RunArguments) -> Result<()> {
         audio: effective_audio(arguments),
         fault: arguments.fault,
         controllers: arguments.controllers,
+        driver_processes: usize::from(arguments.controllers)
+            .div_ceil(controllers_per_driver_process),
+        controllers_per_driver_process,
+        max_participants_per_controller: arguments.max_participants_per_controller,
         participants: arguments.participants,
         participants_per_space: arguments.participants_per_space,
         seed: arguments.seed,
@@ -2058,13 +2172,15 @@ fn write_summary(directory: &Path, summary: &Summary) -> Result<()> {
     let mut csv = BufWriter::new(File::create(directory.join("summary.csv"))?);
     writeln!(
         csv,
-        "scenario,controllers,participants,credentials,workers,worker_reports_expected,worker_reports_received,worker_reports_missing,worker_process_exit_failures,mumble_clients_expected,mumble_clients_reported,mumble_clients_completed,mumble_failure_rate,tcp_ping_max_worker_p99_micros,udp_ping_max_worker_p99_micros,voice_packets_sent,voice_packets_received,driver_events,credential_rotations,ownership_losses,ownership_violations,stale_credential_rejections,recovery_audits,errors,elapsed_millis"
+        "scenario,controllers,driver_processes,max_participants_per_controller,participants,credentials,workers,worker_reports_expected,worker_reports_received,worker_reports_missing,worker_process_exit_failures,mumble_clients_expected,mumble_clients_reported,mumble_clients_completed,mumble_failure_rate,tcp_ping_max_worker_p99_micros,udp_ping_max_worker_p99_micros,voice_packets_sent,voice_packets_received,driver_events,credential_rotations,ownership_losses,ownership_violations,stale_credential_rejections,recovery_audits,errors,elapsed_millis"
     )?;
     writeln!(
         csv,
-        "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
+        "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
         summary.scenario,
         summary.controllers,
+        summary.driver_processes,
+        summary.max_participants_per_controller,
         summary.participants_requested,
         summary.credentials_received,
         summary.workers,
@@ -2583,6 +2699,22 @@ mod tests {
         let plans = participant_plans(100, 8, 2, Scenario::Skew90_10, 9);
         assert_eq!(plans.iter().filter(|plan| plan.controller == 0).count(), 90);
         assert_eq!(plans.iter().filter(|plan| plan.controller == 1).count(), 10);
+    }
+
+    #[test]
+    fn balanced_load_is_bounded_and_controller_sessions_are_packed() {
+        let plans = participant_plans(3_200, 32, 32, Scenario::Idle, 42);
+
+        assert_eq!(maximum_controller_load(&plans, 32), 100);
+        assert_eq!(
+            controller_groups(32, 8),
+            vec![
+                (0..8).collect::<Vec<_>>(),
+                (8..16).collect::<Vec<_>>(),
+                (16..24).collect::<Vec<_>>(),
+                (24..32).collect::<Vec<_>>(),
+            ]
+        );
     }
 
     #[test]

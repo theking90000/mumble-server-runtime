@@ -4,7 +4,9 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
+import be.theking90000.mumble.controller.core.ControllerId;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 
@@ -42,5 +44,19 @@ final class JsonLineTest {
                 "{\"kind\":\"participant_status\",\"message\":\"line one\\nline two\"}",
                 encoded);
         assertFalse(encoded.contains("credential"));
+    }
+
+    @Test
+    void parsesDistinctControllerIdsForOneDriverProcess() {
+        List<ControllerId> controllers = DriverMain.parseControllerIds(
+                "load-controller-0,load-controller-1");
+
+        assertEquals(2, controllers.size());
+        assertEquals("load-controller-0", controllers.get(0).value());
+        assertEquals("load-controller-1", controllers.get(1).value());
+        assertThrows(IllegalArgumentException.class,
+                () -> DriverMain.parseControllerIds("load-controller-0,load-controller-0"));
+        assertThrows(IllegalArgumentException.class,
+                () -> DriverMain.parseControllerIds("load-controller-0,"));
     }
 }

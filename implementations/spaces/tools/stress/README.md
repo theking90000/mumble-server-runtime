@@ -50,6 +50,16 @@ unsolicited Space snapshots are suppressed. Each driver publishes a final
 counters. Use `--driver-event-mode full` only when debugging every SDK callback,
 because that mode intentionally restores the much heavier event stream.
 
+`--controllers` is the number of logical SDK Controller sessions, not the JVM
+count. Balanced runs accept at most 100 participants per Controller by default;
+`--max-participants-per-controller` can lower that target or raise it up to the
+hard limit of 200. Normal capacity runs pack up to eight sessions into each JVM
+(`--controllers-per-driver-process`) while retaining one callback executor per
+session. The manifest records logical Controllers, actual Java processes, and
+the effective packing. Resilience faults and Linux driver namespaces always
+force one Controller per JVM so that crash, freeze, and partition targets remain
+independent.
+
 Generate a standalone HTML report from an existing run without repeating it:
 
 ```sh
@@ -83,8 +93,8 @@ python3 implementations/spaces/tools/stress/campaign.py plan \
 ```
 
 Before a real campaign, raise the open-file limit in the same shell. The runner
-checks it before launching the first point and also ensures that no Java driver
-receives more than its 512-operation window:
+checks it before launching the first point and derives enough logical
+Controllers to stay below 100 participants per Controller:
 
 ```sh
 ulimit -n 65536
@@ -101,7 +111,11 @@ silent matrix point, and `full` runs all three official audio levels. Audio
 points use deterministic speaker sets: exactly one participant per Space or
 every twentieth participant for the 5% load. Add seeds with `--seeds 42,43,44`
 for repeated runs. Controller count defaults to `auto`; a fixed value is
-rejected before the campaign if it would saturate the Java operation window.
+rejected before the campaign if it exceeds the selected per-Controller target.
+For example, 3,200 participants produce 32 logical Controllers and four JVMs
+with the defaults. Use `--controllers-per-driver-process 1` to reproduce a
+deployment with one Java process per Controller, or a larger packing value when
+the load host has limited memory.
 
 Loads above 4,096 participants require both `--max-participants` and the
 explicit `--ack-large-load` acknowledgement. They are intended for a dedicated
