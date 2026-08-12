@@ -286,6 +286,48 @@ impl MaterializedSpace {
     }
 }
 
+/// Complete mutable business state owned by the built-in Spaces profile.
+///
+/// Coordination owns sessions and fencing while the runtime adapter owns
+/// Mumble connections. This aggregate keeps the remaining Spaces-specific
+/// state and its monotonically increasing application revision together.
+pub struct SpacesState {
+    pub participants: BTreeMap<String, ParticipantState>,
+    pub materialized: BTreeMap<String, MaterializedSpace>,
+    next_application_revision: u64,
+}
+
+impl SpacesState {
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            participants: BTreeMap::new(),
+            materialized: BTreeMap::new(),
+            next_application_revision: 1,
+        }
+    }
+
+    /// Allocate the next revision used to correlate a render with its report.
+    pub fn take_application_revision(&mut self) -> u64 {
+        let revision = self.next_application_revision;
+        // Saturation is an explicit terminal watermark: it preserves ordering instead of wrapping.
+        self.next_application_revision = self.next_application_revision.saturating_add(1);
+        revision
+    }
+
+    /// Return the most recently allocated application revision.
+    #[must_use]
+    pub fn latest_application_revision(&self) -> u64 {
+        self.next_application_revision.saturating_sub(1)
+    }
+}
+
+impl Default for SpacesState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SpaceReconciliation {
     pub revisions: BTreeMap<String, u64>,
@@ -546,6 +588,15 @@ mod tests {
         );
         assert!(state.observes("lobby"));
         assert!(!state.observes("arena"));
+    }
+
+    #[test]
+    fn application_revisions_are_allocated_by_spaces_state() {
+        let mut state = SpacesState::new();
+        assert_eq!(state.latest_application_revision(), 0);
+        assert_eq!(state.take_application_revision(), 1);
+        assert_eq!(state.take_application_revision(), 2);
+        assert_eq!(state.latest_application_revision(), 2);
     }
 
     #[derive(Clone)]
