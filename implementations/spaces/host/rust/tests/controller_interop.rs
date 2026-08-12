@@ -27,9 +27,11 @@ struct JavaController {
 
 impl JavaController {
     async fn start(endpoint: String, token_file: &std::path::Path) -> Self {
-        let controller_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .expect("server-rust has a controller parent");
+        let repository_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .ancestors()
+            .nth(4)
+            .expect("Spaces host is four levels below the repository root");
+        let controller_dir = repository_root.join("control-plane");
         let mut command = Command::new(controller_dir.join("gradlew"));
         command.current_dir(controller_dir).arg("--no-daemon");
         if let (Ok(java_home), Ok(java8_home)) =

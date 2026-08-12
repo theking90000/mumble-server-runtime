@@ -74,8 +74,9 @@ published -> the Mumble generation produced by that render
 ## Repository layout
 
 The generic integration lives under `control/`. The Spaces protocol, Rust
-model, and Java SDK live in the sibling implementation tree; only the runnable
-host and Bukkit example still have transitional paths:
+model, Java SDK, and runnable host live in the sibling implementation tree;
+only the Bukkit example and Gradle composition build still have transitional
+paths:
 
 ```text
 control/                    reusable coordination and runtime adaptation
@@ -89,9 +90,8 @@ snapshots and their materialization over the Runtime Adapter.
 
 The Core and Spaces descriptor digests are pinned independently in CI, so a
 wire-incompatible edit fails the build rather than reaching a release. The
-current `server-rust` path contains the Spaces host described in
-[Reference: the Spaces Rust host](server.md); its target path is
-`implementations/spaces/host/rust`.
+Spaces host lives under `implementations/spaces/host/rust` and is described in
+[Reference: the Spaces Rust host](server.md).
 
 See [Reference: lifecycles](java.md) for the session and participant state
 machines.
