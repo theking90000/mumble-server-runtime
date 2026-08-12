@@ -373,6 +373,29 @@ async fn real_java_session_drives_real_mumble_clients() {
         .expect("connection survives ownership transfer");
     assert_eq!(alice.self_session(), Some(replacement_session));
 
+    let mut stale_credential = SimulatedMumbleClient::connect_with_credential(
+        server.mumble_address(),
+        "stale-transfer-credential",
+        &alice_token,
+    )
+    .await
+    .expect("connect with the rotated credential");
+    let stale_error = stale_credential
+        .drive_handshake()
+        .await
+        .expect_err("the previous owner's Mumble credential must be revoked");
+    assert!(
+        !format!("{stale_error:#}").contains("timed out"),
+        "the rotated credential was not rejected explicitly: {stale_error:#}"
+    );
+
+    java.command("STOP_PRIMARY", "CONTROLLER_INTEROP_PRIMARY_STOPPED")
+        .await;
+    alice
+        .associate_udp(server.mumble_address(), DEADLINE)
+        .await
+        .expect("closing the replaced Controller session preserves the Mumble connection");
+
     java.command("RELEASE", "CONTROLLER_INTEROP_RELEASED").await;
     assert_closed(&mut alice, "release must close the participant connection").await;
     java.finish().await;
