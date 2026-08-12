@@ -1501,34 +1501,12 @@ impl ControllerActor {
     }
 
     fn reconciled(&mut self, space_key: &str, application_revision: u64, report: ReconcileReport) {
-        let Some(space) = self.spaces_state.materialized.get_mut(space_key) else {
+        let Some(participant_ids) =
+            self.spaces_state
+                .reconcile(space_key, application_revision, &report)
+        else {
             return;
         };
-        let Some(reconciliation) = space.reconcile(application_revision, &report) else {
-            return;
-        };
-        let participant_ids: Vec<String> = reconciliation.revisions.keys().cloned().collect();
-        for (participant_id, applied_revision) in reconciliation.revisions {
-            if let Some(participant) = self.spaces_state.participants.get_mut(&participant_id) {
-                // Each Space reports through its own bridge task, so a report rendered
-                // before a move can reach the actor after the destination Space has
-                // already reported. Applying it would publish a Space the participant
-                // has left, and nothing would correct it until the next render there.
-                if participant.spec.space_key().as_str() != space_key {
-                    continue;
-                }
-                match &reconciliation.refusal {
-                    Some(error) => participant.application_error = error.clone(),
-                    None => {
-                        participant.applied_spec_revision =
-                            participant.applied_spec_revision.max(applied_revision);
-                        participant.applied_space_key = Some(space_key.to_owned());
-                        participant.published_generation = reconciliation.published_generation;
-                        participant.application_error.clear();
-                    }
-                }
-            }
-        }
         for participant_id in participant_ids {
             self.send_status(&participant_id);
         }
