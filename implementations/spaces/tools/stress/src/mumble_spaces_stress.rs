@@ -44,8 +44,15 @@ pub struct Command {
 #[derive(Debug, Subcommand)]
 enum Subcommands {
     Run(RunArguments),
+    Matrix(MatrixArguments),
     #[command(hide = true)]
     Worker(WorkerArguments),
+}
+
+#[derive(Debug, Args)]
+struct MatrixArguments {
+    #[arg(long, default_value = "spaces-load-matrix.json")]
+    output: PathBuf,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, Serialize)]
@@ -67,6 +74,42 @@ pub enum Scenario {
     Migration,
     MuteDeaf,
     Voice,
+    MultiSharedSpaces,
+    MultiIsolatedSpaces,
+    #[value(name = "skew-90-10")]
+    #[serde(rename = "skew-90-10")]
+    Skew90_10,
+    BatchTakeover,
+    SimultaneousClaim,
+    CrossedTakeover,
+    PingPong,
+    StaleReconnect,
+    IdentityBoundary,
+    OverloadRecovery,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ProcessFault {
+    None,
+    GracefulStop,
+    Crash,
+    FreezeShort,
+    FreezeLong,
+    HostRestart,
+    MumbleCut,
+    ControlledLimit,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum FailurePhase {
+    Stable,
+    Injection,
+    DegradedLoad,
+    Healing,
+    Reconciliation,
+    FinalAudit,
 }
 
 #[derive(Debug, Args)]
@@ -96,6 +139,10 @@ struct RunArguments {
     duration: Duration,
     #[arg(long, default_value = "0s", value_parser = parse_duration)]
     ramp: Duration,
+    #[arg(long, value_enum, default_value = "none")]
+    fault: ProcessFault,
+    #[arg(long, default_value = "2s", value_parser = parse_duration)]
+    fault_duration: Duration,
     #[arg(long)]
     voice_file: Option<PathBuf>,
     #[arg(long, default_value = "spaces-stress-results")]
@@ -132,6 +179,7 @@ struct Manifest<'a> {
     available_parallelism: usize,
     mode: Mode,
     scenario: Scenario,
+    fault: ProcessFault,
     controllers: u16,
     participants: usize,
     participants_per_space: usize,
@@ -148,6 +196,10 @@ struct Summary {
     workers: usize,
     driver_events: u64,
     credential_rotations: u64,
+    ownership_losses: u64,
+    ownership_violations: u64,
+    stale_credential_rejections: u64,
+    recovery_audits: u64,
     errors: u64,
     elapsed_millis: u64,
 }
@@ -165,6 +217,8 @@ struct Ledger {
     active_sessions: BTreeSet<String>,
     expected_spaces: BTreeSet<String>,
     participants: BTreeMap<String, LedgerParticipant>,
+    seen_credentials: BTreeSet<String>,
+    credential_reuse_violations: u64,
 }
 
 #[derive(Debug)]
@@ -178,6 +232,58 @@ struct LedgerParticipant {
     accepted_revision: String,
     applied_revision: String,
     published_generation: String,
+    current_owner: String,
+    previous_owner: String,
+    ownership_losses: u64,
+}
+
+#[derive(Debug)]
+struct CredentialRotation {
+    participant_id: String,
+    credential: String,
+}
+
+#[derive(Debug, Default)]
+struct ScenarioOutcome {
+    expected_rotations: usize,
+}
+
+#[derive(Debug, Serialize)]
+struct LoadMatrix {
+    schema_version: u8,
+    points: Vec<LoadPoint>,
+    fixed_totals: [usize; 2],
+    resilience_capacity_percent: [u8; 3],
+    full_fault_cardinalities: [usize; 2],
+    edge_fault_cardinalities: [usize; 2],
+    healthy_thresholds: HealthyThresholds,
+}
+
+#[derive(Debug, Serialize)]
+struct LoadPoint {
+    participants_per_space: usize,
+    participants: usize,
+    spaces: usize,
+    audio: AudioLevel,
+}
+
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum AudioLevel {
+    None,
+    OnePerSpace,
+    FivePercent,
+}
+
+#[derive(Debug, Serialize)]
+struct HealthyThresholds {
+    maximum_server_cpu_percent: u8,
+    maximum_generator_cpu_percent: u8,
+    synchronization_p99_millis: u16,
+    migration_p99_millis: u16,
+    mute_p99_millis: u16,
+    ping_p99_millis: u16,
+    minimum_audio_delivery_percent: f64,
 }
 
 struct Driver {
@@ -219,6 +325,7 @@ enum CampaignError {
 pub async fn run(command: Command) -> Result<()> {
     match command.command {
         Subcommands::Run(arguments) => run_campaign(arguments).await,
+        Subcommands::Matrix(arguments) => write_load_matrix(&arguments.output),
         Subcommands::Worker(arguments) => run_worker(arguments).await,
     }
 }
@@ -239,6 +346,7 @@ async fn run_campaign(arguments: RunArguments) -> Result<()> {
     server_log.flush()?;
 
     let (driver_events, mut event_receiver) = mpsc::channel(8192);
+    let coordinator_events = driver_events.clone();
     let mut drivers = spawn_drivers(
         &arguments,
         &environment.controller_endpoint,
@@ -302,6 +410,7 @@ async fn run_campaign(arguments: RunArguments) -> Result<()> {
         .await?;
     }
 
+    let known_credentials = credentials.clone();
     let mut workers = if credentials.is_empty() {
         Vec::new()
     } else {
@@ -310,6 +419,7 @@ async fn run_campaign(arguments: RunArguments) -> Result<()> {
             environment.mumble_server,
             &result_directory,
             credentials,
+            0,
         )
         .await?
     };
@@ -332,24 +442,69 @@ async fn run_campaign(arguments: RunArguments) -> Result<()> {
         result_directory.join("process-metrics.csv"),
         sampled_processes,
     );
+    let (rotation_sender, mut rotation_receiver) = mpsc::channel(8192);
     let recorder = tokio::spawn(async move {
         while let Some((_, event)) = event_receiver.recv().await {
-            record_driver_event(
+            if let Some(rotation) = record_driver_event(
                 event,
                 &mut BTreeMap::new(),
                 &mut events,
                 &mut summary,
                 &mut ledger,
-            )?;
+            )? {
+                rotation_sender
+                    .send(rotation)
+                    .await
+                    .context("credential rotation consumer stopped")?;
+            }
         }
         Ok::<_, anyhow::Error>((summary, ledger))
     });
 
     tokio::time::sleep(arguments.ramp + Duration::from_millis(250)).await;
-    apply_scenario(&arguments, &plans, &mut drivers).await?;
+    record_failure_phase(&coordinator_events, FailurePhase::Stable).await?;
+    let outcome = apply_scenario(&arguments, &plans, &mut drivers, &coordinator_events).await?;
+    let replacement_credentials =
+        collect_rotated_credentials(outcome.expected_rotations, &mut rotation_receiver).await?;
+    if !replacement_credentials.is_empty() {
+        let replacements = spawn_workers(
+            &arguments,
+            environment.mumble_server,
+            &result_directory,
+            replacement_credentials,
+            workers.len(),
+        )
+        .await?;
+        workers.extend(replacements);
+    }
+    if outcome.expected_rotations > 0 {
+        record_failure_phase(&coordinator_events, FailurePhase::DegradedLoad).await?;
+        tokio::time::sleep(Duration::from_millis(250)).await;
+        record_failure_phase(&coordinator_events, FailurePhase::Healing).await?;
+        record_failure_phase(&coordinator_events, FailurePhase::Reconciliation).await?;
+    }
+    apply_process_fault(
+        &arguments,
+        &plans,
+        &mut drivers,
+        &mut workers,
+        &known_credentials,
+        &result_directory,
+        &environment.controller_endpoint,
+        environment.mumble_server,
+        &coordinator_events,
+        &mut rotation_receiver,
+    )
+    .await?;
+    record_failure_phase(&coordinator_events, FailurePhase::FinalAudit).await?;
     for worker in &mut workers {
         let status = worker.wait().await.context("waiting for Mumble worker")?;
-        ensure!(status.success(), "Mumble worker exited with {status}");
+        ensure!(
+            status.success()
+                || is_resilience_scenario(arguments.scenario)
+                || !matches!(arguments.fault, ProcessFault::None),
+            "Mumble worker exited with {status}"
+        );
     }
 
     for driver in &mut drivers {
@@ -378,8 +533,11 @@ async fn run_campaign(arguments: RunArguments) -> Result<()> {
         server.shutdown().await;
     }
     sampler.stop().await?;
+    drop(coordinator_events);
     let (mut summary, ledger) = recorder.await.context("joining driver event recorder")??;
-    audit_ledger(&plans, &ledger)?;
+    audit_ledger(&plans, &ledger, arguments.scenario)?;
+    summary.ownership_violations = ledger.credential_reuse_violations;
+    summary.recovery_audits = 1;
     summary.elapsed_millis = duration_millis(started.elapsed());
     write_summary(&result_directory, &summary)?;
     Ok(())
@@ -404,6 +562,18 @@ fn validate_run_arguments(arguments: &RunArguments) -> Result<()> {
     if matches!(arguments.mode, Mode::Managed) && arguments.participants > 10_000 {
         return Err(CampaignError::TooManyManagedConnections(arguments.participants).into());
     }
+    if is_resilience_scenario(arguments.scenario) {
+        ensure!(
+            arguments.controllers >= 2,
+            "resilience scenarios require at least two Controller IDs"
+        );
+    }
+    if !matches!(arguments.fault, ProcessFault::None) {
+        ensure!(
+            arguments.controllers >= 2,
+            "process faults require at least two Controller IDs"
+        );
+    }
     Ok(())
 }
 
@@ -423,8 +593,20 @@ async fn start_environment(
     }
     let identity = Identity::self_signed(vec!["localhost".to_owned()])
         .context("generating managed Mumble identity")?;
-    let maximum_connections = u32::try_from(arguments.participants.max(1))
-        .context("managed connection limit exceeds u32")?;
+    let connection_multiplier = if is_resilience_scenario(arguments.scenario)
+        || !matches!(arguments.fault, ProcessFault::None)
+    {
+        2
+    } else {
+        1
+    };
+    let maximum_connections = u32::try_from(
+        arguments
+            .participants
+            .max(1)
+            .saturating_mul(connection_multiplier),
+    )
+    .context("managed connection limit exceeds u32")?;
     let config = ControllerConfig {
         controller_bind: "127.0.0.1:0".parse()?,
         mumble_bind: "127.0.0.1:0".parse()?,
@@ -435,6 +617,13 @@ async fn start_environment(
         max_observations_per_session: arguments.participants.max(1),
         queue_capacity: arguments.participants.saturating_mul(2).max(1024),
         max_mumble_connections: maximum_connections,
+        lease_duration: if is_resilience_scenario(arguments.scenario)
+            || !matches!(arguments.fault, ProcessFault::None)
+        {
+            Duration::from_secs(3)
+        } else {
+            ControllerConfig::default().lease_duration
+        },
         ..ControllerConfig::default()
     };
     let server = RunningControllerServer::start_with_metrics(
@@ -463,46 +652,63 @@ async fn spawn_drivers(
 ) -> Result<Vec<Driver>> {
     let mut drivers = Vec::new();
     for index in 0..usize::from(arguments.controllers) {
-        let controller_id = format!("load-controller-{index}");
-        let stderr = File::create(result_directory.join(format!("driver-{index}.log")))?;
-        let mut child = ProcessCommand::new(&arguments.driver)
-            .arg(endpoint)
-            .arg(&controller_id)
-            .arg("512")
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::from(stderr))
-            .kill_on_drop(true)
-            .spawn()
-            .with_context(|| format!("starting Java driver {}", arguments.driver.display()))?;
-        let input = child.stdin.take().context("Java driver stdin")?;
-        let output = child.stdout.take().context("Java driver stdout")?;
-        let events = events.clone();
-        let reader = tokio::spawn(async move {
-            let mut lines = AsyncBufReader::new(output).lines();
-            loop {
-                match lines.next_line().await {
-                    Ok(Some(line)) => match serde_json::from_str::<Value>(&line) {
-                        Ok(event) => {
-                            if events.send((index, event)).await.is_err() {
-                                return;
-                            }
-                        }
-                        Err(_) => return,
-                    },
-                    Ok(None) | Err(_) => return,
-                }
-            }
-        });
-        drivers.push(Driver {
-            controller_id,
-            input,
-            child,
-            reader,
-        });
+        drivers.push(spawn_driver(
+            &arguments.driver,
+            endpoint,
+            index,
+            result_directory,
+            "",
+            events.clone(),
+        )?);
     }
     drop(events);
     Ok(drivers)
+}
+
+fn spawn_driver(
+    executable: &Path,
+    endpoint: &str,
+    index: usize,
+    result_directory: &Path,
+    log_suffix: &str,
+    events: mpsc::Sender<(usize, Value)>,
+) -> Result<Driver> {
+    let controller_id = format!("load-controller-{index}");
+    let stderr = File::create(result_directory.join(format!("driver-{index}{log_suffix}.log")))?;
+    let mut child = ProcessCommand::new(executable)
+        .arg(endpoint)
+        .arg(&controller_id)
+        .arg("512")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::from(stderr))
+        .kill_on_drop(true)
+        .spawn()
+        .with_context(|| format!("starting Java driver {}", executable.display()))?;
+    let input = child.stdin.take().context("Java driver stdin")?;
+    let output = child.stdout.take().context("Java driver stdout")?;
+    let reader = tokio::spawn(async move {
+        let mut lines = AsyncBufReader::new(output).lines();
+        loop {
+            match lines.next_line().await {
+                Ok(Some(line)) => match serde_json::from_str::<Value>(&line) {
+                    Ok(event) => {
+                        if events.send((index, event)).await.is_err() {
+                            return;
+                        }
+                    }
+                    Err(_) => return,
+                },
+                Ok(None) | Err(_) => return,
+            }
+        }
+    });
+    Ok(Driver {
+        controller_id,
+        input,
+        child,
+        reader,
+    })
 }
 
 async fn send_driver_command(driver: &mut Driver, value: Value) -> Result<()> {
@@ -568,9 +774,10 @@ fn record_driver_event(
     output: &mut BufWriter<File>,
     summary: &mut Summary,
     ledger: &mut Ledger,
-) -> Result<()> {
+) -> Result<Option<CredentialRotation>> {
     summary.driver_events = summary.driver_events.saturating_add(1);
     let kind = event.get("kind").and_then(Value::as_str).unwrap_or("");
+    let mut rotation = None;
     if kind == "credential" {
         let participant = event
             .get("participant_id")
@@ -585,15 +792,22 @@ fn record_driver_event(
             .as_str()
             .context("credential value")?
             .to_owned();
-        credentials.insert(participant, credential);
-        summary.credentials_received = credentials.len();
+        ledger.record_credential(&participant, &credential);
+        credentials.insert(participant.clone(), credential.clone());
+        summary.credentials_received = summary.credentials_received.max(credentials.len());
         summary.credential_rotations = summary.credential_rotations.saturating_add(1);
+        rotation = Some(CredentialRotation {
+            participant_id: participant,
+            credential,
+        });
         event["kind"] = Value::String("credential_rotated".to_owned());
         if let Some(object) = event.as_object_mut() {
             object.remove("credential");
         }
     } else if kind == "error" {
         summary.errors = summary.errors.saturating_add(1);
+    } else if kind == "ownership_lost" {
+        summary.ownership_losses = summary.ownership_losses.saturating_add(1);
     }
     ledger.record(&event);
     if let Some(object) = event.as_object_mut() {
@@ -605,7 +819,7 @@ fn record_driver_event(
     serde_json::to_writer(&mut *output, &event)?;
     output.write_all(b"\n")?;
     output.flush()?;
-    Ok(())
+    Ok(rotation)
 }
 
 async fn spawn_workers(
@@ -613,11 +827,13 @@ async fn spawn_workers(
     mumble_server: SocketAddr,
     result_directory: &Path,
     credentials: BTreeMap<String, String>,
+    worker_offset: usize,
 ) -> Result<Vec<Child>> {
     let executable = std::env::current_exe()?;
     let entries: Vec<_> = credentials.into_iter().collect();
     let mut workers = Vec::new();
-    for (index, chunk) in entries.chunks(MAX_CLIENTS_PER_WORKER).enumerate() {
+    for (relative_index, chunk) in entries.chunks(MAX_CLIENTS_PER_WORKER).enumerate() {
+        let index = worker_offset.saturating_add(relative_index);
         let stdout = File::create(result_directory.join(format!("worker-{index}.jsonl")))?;
         let stderr = File::create(result_directory.join(format!("worker-{index}.log")))?;
         let mut command = ProcessCommand::new(&executable);
@@ -734,7 +950,9 @@ async fn apply_scenario(
     arguments: &RunArguments,
     plans: &[ParticipantPlan],
     drivers: &mut [Driver],
-) -> Result<()> {
+    events: &mpsc::Sender<(usize, Value)>,
+) -> Result<ScenarioOutcome> {
+    let mut outcome = ScenarioOutcome::default();
     match arguments.scenario {
         Scenario::Migration => {
             for plan in plans {
@@ -776,9 +994,346 @@ async fn apply_scenario(
                 .await?;
             }
         }
+        Scenario::BatchTakeover => {
+            record_failure_phase(events, FailurePhase::Injection).await?;
+            for plan in plans {
+                let target = (plan.controller + 1) % drivers.len();
+                register_on(drivers, plan, target, "batch-takeover").await?;
+                record_expected_owner(events, plan, target).await?;
+                outcome.expected_rotations = outcome.expected_rotations.saturating_add(1);
+            }
+        }
+        Scenario::SimultaneousClaim => {
+            record_failure_phase(events, FailurePhase::Injection).await?;
+            let plan = plans.first().context("simultaneous claim participant")?;
+            let target = (plan.controller + 1) % drivers.len();
+            register_on(drivers, plan, target, "simultaneous-claim").await?;
+            record_expected_owner(events, plan, target).await?;
+            outcome.expected_rotations = 1;
+        }
+        Scenario::CrossedTakeover => {
+            record_failure_phase(events, FailurePhase::Injection).await?;
+            for plan in plans.iter().take(2) {
+                let target = (plan.controller + 1) % drivers.len();
+                register_on(drivers, plan, target, "crossed-takeover").await?;
+                record_expected_owner(events, plan, target).await?;
+                outcome.expected_rotations = outcome.expected_rotations.saturating_add(1);
+            }
+        }
+        Scenario::PingPong => {
+            record_failure_phase(events, FailurePhase::Injection).await?;
+            let plan = plans.first().context("ping-pong participant")?;
+            let first_target = (plan.controller + 1) % drivers.len();
+            register_on(drivers, plan, first_target, "ping-pong-1").await?;
+            record_expected_owner(events, plan, first_target).await?;
+            outcome.expected_rotations = 1;
+        }
+        Scenario::StaleReconnect | Scenario::IdentityBoundary | Scenario::OverloadRecovery => {
+            // Their named fault is injected below, after the stable load is established.
+        }
         _ => {}
     }
+    Ok(outcome)
+}
+
+async fn register_on(
+    drivers: &mut [Driver],
+    plan: &ParticipantPlan,
+    target: usize,
+    correlation: &str,
+) -> Result<()> {
+    send_driver_command(
+        drivers.get_mut(target).context("takeover driver")?,
+        json!({
+            "schema_version": PROTOCOL_VERSION,
+            "kind": "register",
+            "correlation_id": format!("{correlation}-{}", plan.participant_id),
+            "participant_id": plan.participant_id,
+            "space_key": plan.space_key,
+            "display_name": plan.display_name,
+            "server_mute": false,
+            "server_deaf": false,
+        }),
+    )
+    .await
+}
+
+async fn record_expected_owner(
+    events: &mpsc::Sender<(usize, Value)>,
+    plan: &ParticipantPlan,
+    controller: usize,
+) -> Result<()> {
+    events
+        .send((
+            controller,
+            json!({
+                "schema_version": PROTOCOL_VERSION,
+                "kind": "expected_owner",
+                "correlation_id": "coordinator-ledger",
+                "controller_id": format!("load-controller-{controller}"),
+                "participant_id": plan.participant_id,
+                "coordinator_unix_nanos": unix_nanos().to_string(),
+            }),
+        ))
+        .await
+        .context("event recorder stopped")
+}
+
+async fn record_failure_phase(
+    events: &mpsc::Sender<(usize, Value)>,
+    phase: FailurePhase,
+) -> Result<()> {
+    events
+        .send((
+            usize::MAX,
+            json!({
+                "schema_version": PROTOCOL_VERSION,
+                "kind": "failure_phase",
+                "phase": phase,
+                "correlation_id": "failure-phase",
+                "controller_id": "coordinator",
+                "participant_id": "",
+                "coordinator_unix_nanos": unix_nanos().to_string(),
+            }),
+        ))
+        .await
+        .context("event recorder stopped")
+}
+
+async fn collect_rotated_credentials(
+    expected: usize,
+    rotations: &mut mpsc::Receiver<CredentialRotation>,
+) -> Result<BTreeMap<String, String>> {
+    if expected == 0 {
+        return Ok(BTreeMap::new());
+    }
+    timeout(OPERATION_DEADLINE, async {
+        let mut received = 0usize;
+        let mut credentials = BTreeMap::new();
+        while received < expected {
+            let rotation = rotations
+                .recv()
+                .await
+                .context("credential rotation recorder stopped")?;
+            credentials.insert(rotation.participant_id, rotation.credential);
+            received = received.saturating_add(1);
+        }
+        Ok::<_, anyhow::Error>(credentials)
+    })
+    .await
+    .context("credential rotation timeout")?
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn apply_process_fault(
+    arguments: &RunArguments,
+    plans: &[ParticipantPlan],
+    drivers: &mut [Driver],
+    workers: &mut Vec<Child>,
+    known_credentials: &BTreeMap<String, String>,
+    result_directory: &Path,
+    controller_endpoint: &str,
+    mumble_server: SocketAddr,
+    events: &mpsc::Sender<(usize, Value)>,
+    rotations: &mut mpsc::Receiver<CredentialRotation>,
+) -> Result<()> {
+    let fault = effective_fault(arguments);
+    if matches!(fault, ProcessFault::None) {
+        return Ok(());
+    }
+    record_failure_phase(events, FailurePhase::Injection).await?;
+    let mut expected_rotations = 0usize;
+    let mut restart_workers = false;
+    match fault {
+        ProcessFault::None => {}
+        ProcessFault::GracefulStop | ProcessFault::Crash => {
+            terminate_workers(workers).await?;
+            restart_workers = true;
+            restart_driver(
+                arguments,
+                plans,
+                drivers,
+                0,
+                result_directory,
+                controller_endpoint,
+                events,
+                matches!(fault, ProcessFault::GracefulStop),
+            )
+            .await?;
+            expected_rotations = plans.iter().filter(|plan| plan.controller == 0).count();
+        }
+        ProcessFault::FreezeShort | ProcessFault::FreezeLong => {
+            let duration = if matches!(fault, ProcessFault::FreezeLong) {
+                arguments.fault_duration.max(Duration::from_secs(4))
+            } else {
+                arguments.fault_duration.min(Duration::from_secs(1))
+            };
+            signal_driver(drivers.first().context("fault target driver")?, "STOP").await?;
+            record_failure_phase(events, FailurePhase::DegradedLoad).await?;
+            tokio::time::sleep(duration).await;
+            record_failure_phase(events, FailurePhase::Healing).await?;
+            signal_driver(drivers.first().context("fault target driver")?, "CONT").await?;
+            if matches!(fault, ProcessFault::FreezeLong) {
+                terminate_workers(workers).await?;
+                restart_workers = true;
+                expected_rotations = plans.iter().filter(|plan| plan.controller == 0).count();
+            }
+        }
+        ProcessFault::HostRestart => {
+            terminate_workers(workers).await?;
+            restart_workers = true;
+            for index in 0..drivers.len() {
+                restart_driver(
+                    arguments,
+                    plans,
+                    drivers,
+                    index,
+                    result_directory,
+                    controller_endpoint,
+                    events,
+                    false,
+                )
+                .await?;
+            }
+            expected_rotations = plans.len();
+        }
+        ProcessFault::MumbleCut => {
+            terminate_workers(workers).await?;
+            restart_workers = true;
+        }
+        ProcessFault::ControlledLimit => {
+            record_failure_phase(events, FailurePhase::DegradedLoad).await?;
+            let operations = 1_024usize.max(plans.len().saturating_mul(4));
+            for index in 0..operations {
+                let plan = &plans[index % plans.len()];
+                send_spec(
+                    drivers,
+                    plan,
+                    plan.space_key.clone(),
+                    index.is_multiple_of(2),
+                    false,
+                )
+                .await?;
+            }
+            tokio::time::sleep(arguments.fault_duration).await;
+            record_failure_phase(events, FailurePhase::Healing).await?;
+            for index in 0..operations.saturating_mul(4) / 5 {
+                let plan = &plans[index % plans.len()];
+                send_spec(drivers, plan, plan.space_key.clone(), false, false).await?;
+            }
+        }
+    }
+    if !matches!(
+        fault,
+        ProcessFault::FreezeShort | ProcessFault::ControlledLimit
+    ) {
+        record_failure_phase(events, FailurePhase::DegradedLoad).await?;
+        tokio::time::sleep(Duration::from_millis(250)).await;
+        record_failure_phase(events, FailurePhase::Healing).await?;
+    }
+    if restart_workers {
+        let mut credentials = known_credentials.clone();
+        credentials.extend(collect_rotated_credentials(expected_rotations, rotations).await?);
+        let replacements = spawn_workers(
+            arguments,
+            mumble_server,
+            result_directory,
+            credentials,
+            workers.len().saturating_add(1000),
+        )
+        .await?;
+        workers.extend(replacements);
+    }
+    record_failure_phase(events, FailurePhase::Reconciliation).await?;
+    tokio::time::sleep(Duration::from_millis(500)).await;
     Ok(())
+}
+
+fn effective_fault(arguments: &RunArguments) -> ProcessFault {
+    if !matches!(arguments.fault, ProcessFault::None) {
+        return arguments.fault;
+    }
+    match arguments.scenario {
+        Scenario::StaleReconnect => ProcessFault::FreezeLong,
+        Scenario::IdentityBoundary => ProcessFault::Crash,
+        Scenario::OverloadRecovery => ProcessFault::ControlledLimit,
+        _ => ProcessFault::None,
+    }
+}
+
+async fn terminate_workers(workers: &mut Vec<Child>) -> Result<()> {
+    for worker in &mut *workers {
+        worker.kill().await.context("cutting Mumble worker")?;
+    }
+    workers.clear();
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn restart_driver(
+    arguments: &RunArguments,
+    plans: &[ParticipantPlan],
+    drivers: &mut [Driver],
+    index: usize,
+    result_directory: &Path,
+    endpoint: &str,
+    events: &mpsc::Sender<(usize, Value)>,
+    graceful: bool,
+) -> Result<()> {
+    let driver = drivers.get_mut(index).context("fault target driver")?;
+    if graceful {
+        send_driver_command(
+            driver,
+            json!({
+                "schema_version": PROTOCOL_VERSION,
+                "kind": "shutdown",
+                "correlation_id": format!("fault-shutdown-{index}"),
+            }),
+        )
+        .await?;
+        timeout(OPERATION_DEADLINE, driver.child.wait())
+            .await
+            .context("graceful driver stop timeout")??;
+    } else {
+        driver.child.kill().await.context("crashing Java driver")?;
+    }
+    (&mut driver.reader)
+        .await
+        .context("joining stopped Java driver reader")?;
+    let replacement = spawn_driver(
+        &arguments.driver,
+        endpoint,
+        index,
+        result_directory,
+        "-restarted",
+        events.clone(),
+    )?;
+    drivers[index] = replacement;
+    tokio::time::sleep(Duration::from_millis(250)).await;
+    for plan in plans.iter().filter(|plan| plan.controller == index) {
+        register_on(drivers, plan, index, "recovery-register").await?;
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+async fn signal_driver(driver: &Driver, signal: &str) -> Result<()> {
+    let pid = driver.child.id().context("Java driver has no pid")?;
+    let status = ProcessCommand::new("kill")
+        .arg(format!("-{signal}"))
+        .arg(pid.to_string())
+        .status()
+        .await?;
+    ensure!(
+        status.success(),
+        "kill -{signal} {pid} exited with {status}"
+    );
+    Ok(())
+}
+
+#[cfg(not(unix))]
+async fn signal_driver(_driver: &Driver, _signal: &str) -> Result<()> {
+    anyhow::bail!("freeze faults require a Unix host")
 }
 
 async fn send_spec(
@@ -815,20 +1370,47 @@ fn participant_plans(
 ) -> Vec<ParticipantPlan> {
     (0..participants)
         .map(|index| {
+            let shuffled = index.wrapping_add(usize::try_from(seed).unwrap_or(0));
+            let controller = if matches!(scenario, Scenario::Skew90_10) {
+                let primary = participants.saturating_mul(9) / 10;
+                if index < primary {
+                    0
+                } else {
+                    1 + shuffled % controllers.saturating_sub(1).max(1)
+                }
+            } else {
+                shuffled % controllers
+            };
             let space = match scenario {
-                Scenario::OneSpace => 0,
+                Scenario::OneSpace | Scenario::MultiSharedSpaces => 0,
                 Scenario::ManySpaces => index,
+                Scenario::MultiIsolatedSpaces => controller,
                 _ => index / participants_per_space,
             };
-            let shuffled = index.wrapping_add(usize::try_from(seed).unwrap_or(0));
             ParticipantPlan {
                 participant_id: format!("load-participant-{index}"),
                 display_name: format!("Load participant {index}"),
                 space_key: format!("load-space-{space}"),
-                controller: shuffled % controllers,
+                controller,
             }
         })
         .collect()
+}
+
+fn is_resilience_scenario(scenario: Scenario) -> bool {
+    matches!(
+        scenario,
+        Scenario::MultiSharedSpaces
+            | Scenario::MultiIsolatedSpaces
+            | Scenario::Skew90_10
+            | Scenario::BatchTakeover
+            | Scenario::SimultaneousClaim
+            | Scenario::CrossedTakeover
+            | Scenario::PingPong
+            | Scenario::StaleReconnect
+            | Scenario::IdentityBoundary
+            | Scenario::OverloadRecovery
+    )
 }
 
 fn create_result_directory(arguments: &RunArguments) -> Result<PathBuf> {
@@ -839,6 +1421,54 @@ fn create_result_directory(arguments: &RunArguments) -> Result<PathBuf> {
     ));
     std::fs::create_dir_all(&path)?;
     Ok(path)
+}
+
+fn write_load_matrix(path: &Path) -> Result<()> {
+    let cardinalities = [8usize, 32, 64, 128, 256];
+    let requested_totals = [25usize, 50, 100, 200, 400, 800, 1_600, 3_200, 6_400, 10_000];
+    let audio_levels = [
+        AudioLevel::None,
+        AudioLevel::OnePerSpace,
+        AudioLevel::FivePercent,
+    ];
+    let mut points = Vec::new();
+    for participants_per_space in cardinalities {
+        let mut totals = BTreeSet::from([participants_per_space, 2_048, 4_096]);
+        for requested in requested_totals {
+            if requested > participants_per_space {
+                totals.insert(requested / participants_per_space * participants_per_space);
+            }
+        }
+        for participants in totals {
+            for audio in audio_levels {
+                points.push(LoadPoint {
+                    participants_per_space,
+                    participants,
+                    spaces: participants / participants_per_space,
+                    audio,
+                });
+            }
+        }
+    }
+    let matrix = LoadMatrix {
+        schema_version: PROTOCOL_VERSION,
+        points,
+        fixed_totals: [2_048, 4_096],
+        resilience_capacity_percent: [50, 70, 90],
+        full_fault_cardinalities: [32, 128],
+        edge_fault_cardinalities: [8, 256],
+        healthy_thresholds: HealthyThresholds {
+            maximum_server_cpu_percent: 85,
+            maximum_generator_cpu_percent: 60,
+            synchronization_p99_millis: 2_000,
+            migration_p99_millis: 500,
+            mute_p99_millis: 500,
+            ping_p99_millis: 100,
+            minimum_audio_delivery_percent: 99.9,
+        },
+    };
+    serde_json::to_writer_pretty(File::create(path)?, &matrix)?;
+    Ok(())
 }
 
 fn write_manifest(directory: &Path, arguments: &RunArguments) -> Result<()> {
@@ -854,6 +1484,7 @@ fn write_manifest(directory: &Path, arguments: &RunArguments) -> Result<()> {
         available_parallelism: std::thread::available_parallelism()?.get(),
         mode: arguments.mode,
         scenario: arguments.scenario,
+        fault: arguments.fault,
         controllers: arguments.controllers,
         participants: arguments.participants,
         participants_per_space: arguments.participants_per_space,
@@ -869,11 +1500,11 @@ fn write_summary(directory: &Path, summary: &Summary) -> Result<()> {
     let mut csv = BufWriter::new(File::create(directory.join("summary.csv"))?);
     writeln!(
         csv,
-        "scenario,controllers,participants,credentials,workers,driver_events,credential_rotations,errors,elapsed_millis"
+        "scenario,controllers,participants,credentials,workers,driver_events,credential_rotations,ownership_losses,ownership_violations,stale_credential_rejections,recovery_audits,errors,elapsed_millis"
     )?;
     writeln!(
         csv,
-        "{},{},{},{},{},{},{},{},{}",
+        "{},{},{},{},{},{},{},{},{},{},{},{},{}",
         summary.scenario,
         summary.controllers,
         summary.participants_requested,
@@ -881,6 +1512,10 @@ fn write_summary(directory: &Path, summary: &Summary) -> Result<()> {
         summary.workers,
         summary.driver_events,
         summary.credential_rotations,
+        summary.ownership_losses,
+        summary.ownership_violations,
+        summary.stale_credential_rejections,
+        summary.recovery_audits,
         summary.errors,
         summary.elapsed_millis
     )?;
@@ -1031,6 +1666,9 @@ impl Ledger {
                     accepted_revision: String::new(),
                     applied_revision: String::new(),
                     published_generation: String::new(),
+                    current_owner: String::new(),
+                    previous_owner: String::new(),
+                    ownership_losses: 0,
                 },
             );
         }
@@ -1054,7 +1692,22 @@ impl Ledger {
             return;
         };
         match kind {
-            "owned" => participant.owned = true,
+            "owned" => {
+                if participant.current_owner != controller {
+                    participant.previous_owner = participant.current_owner.clone();
+                    participant.current_owner = controller.to_owned();
+                }
+                participant.owned = true;
+            }
+            "ownership_lost" => {
+                participant.ownership_losses = participant.ownership_losses.saturating_add(1);
+                if participant.current_owner == controller {
+                    participant.previous_owner = participant.current_owner.clone();
+                }
+            }
+            "expected_owner" => {
+                participant.expected_controller = controller.to_owned();
+            }
             "credential_rotated" => {
                 participant.credential_rotations =
                     participant.credential_rotations.saturating_add(1);
@@ -1074,9 +1727,15 @@ impl Ledger {
             _ => {}
         }
     }
+
+    fn record_credential(&mut self, _participant_id: &str, credential: &str) {
+        if !self.seen_credentials.insert(credential.to_owned()) {
+            self.credential_reuse_violations = self.credential_reuse_violations.saturating_add(1);
+        }
+    }
 }
 
-fn audit_ledger(plans: &[ParticipantPlan], ledger: &Ledger) -> Result<()> {
+fn audit_ledger(plans: &[ParticipantPlan], ledger: &Ledger, scenario: Scenario) -> Result<()> {
     ensure!(
         ledger.participants.len() == plans.len(),
         "ledger participant count diverged"
@@ -1086,12 +1745,23 @@ fn audit_ledger(plans: &[ParticipantPlan], ledger: &Ledger) -> Result<()> {
             .participants
             .get(&plan.participant_id)
             .context("participant missing from ledger")?;
-        ensure!(
-            participant.expected_controller == format!("load-controller-{}", plan.controller),
-            "ledger controller assignment diverged for {}",
-            plan.participant_id
-        );
+        if !is_resilience_scenario(scenario) {
+            ensure!(
+                participant.expected_controller == format!("load-controller-{}", plan.controller),
+                "ledger controller assignment diverged for {}",
+                plan.participant_id
+            );
+        }
         ensure!(participant.owned, "{} was never owned", plan.participant_id);
+        if !matches!(scenario, Scenario::Churn) {
+            ensure!(
+                participant.current_owner == participant.expected_controller,
+                "{} expected owner {}, observed {}",
+                plan.participant_id,
+                participant.expected_controller,
+                participant.current_owner
+            );
+        }
         ensure!(
             participant.credential_rotations > 0,
             "{} never received a credential",
@@ -1103,6 +1773,10 @@ fn audit_ledger(plans: &[ParticipantPlan], ledger: &Ledger) -> Result<()> {
             plan.participant_id
         );
     }
+    ensure!(
+        ledger.credential_reuse_violations == 0,
+        "a connection credential was reused"
+    );
     Ok(())
 }
 
@@ -1194,6 +1868,55 @@ mod tests {
         );
         assert!(!persisted.contains("secret-token"));
         assert!(!persisted.contains("\"credential\""));
+        Ok(())
+    }
+
+    #[test]
+    fn load_matrix_keeps_spaces_full_for_every_cardinality() -> Result<()> {
+        let temporary = std::env::temp_dir().join(format!(
+            "mumble-spaces-load-matrix-test-{}.json",
+            std::process::id()
+        ));
+        write_load_matrix(&temporary)?;
+        let matrix: Value = serde_json::from_reader(File::open(&temporary)?)?;
+        std::fs::remove_file(&temporary)?;
+        let points = matrix["points"].as_array().context("matrix points")?;
+        assert!(points.iter().all(|point| {
+            let participants = point["participants"].as_u64().unwrap_or(0);
+            let per_space = point["participants_per_space"].as_u64().unwrap_or(1);
+            participants.is_multiple_of(per_space)
+        }));
+        for cardinality in [8u64, 32, 64, 128, 256] {
+            for fixed in [2_048u64, 4_096] {
+                assert!(points.iter().any(|point| {
+                    point["participants_per_space"] == cardinality && point["participants"] == fixed
+                }));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn skew_plan_is_deterministic_and_approximately_ninety_ten() {
+        let plans = participant_plans(100, 8, 2, Scenario::Skew90_10, 9);
+        assert_eq!(plans.iter().filter(|plan| plan.controller == 0).count(), 90);
+        assert_eq!(plans.iter().filter(|plan| plan.controller == 1).count(), 10);
+    }
+
+    #[test]
+    fn failure_phases_are_stable_and_ordered() -> Result<()> {
+        let phases = [
+            FailurePhase::Stable,
+            FailurePhase::Injection,
+            FailurePhase::DegradedLoad,
+            FailurePhase::Healing,
+            FailurePhase::Reconciliation,
+            FailurePhase::FinalAudit,
+        ];
+        assert_eq!(
+            serde_json::to_string(&phases)?,
+            "[\"stable\",\"injection\",\"degraded_load\",\"healing\",\"reconciliation\",\"final_audit\"]"
+        );
         Ok(())
     }
 }
