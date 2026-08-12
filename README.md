@@ -214,19 +214,20 @@ remains readable at the `legacy-p7-final` tag.
   to write one.
   [Mumble compatibility](https://theking90000.github.io/mumble-server-runtime/mumble/)
   states what an unmodified client gets, and how that claim is checked.
-- **[API documentation](https://theking90000.github.io/mumble-server-runtime/api/)**:
+- **[Rust API documentation](https://theking90000.github.io/mumble-server-runtime/api/)**:
   generated from the doc comments, every public item of every crate.
-- **[Mumble Controller JavaDoc](https://theking90000.github.io/mumble-server-runtime/controller/)**:
-  the Java 8 SDK data model, lifecycle and complete public API.
+- **[Spaces JavaDoc](https://theking90000.github.io/mumble-server-runtime/api/java/controller-spaces/)**:
+  the application-facing Java 8 SDK data model and complete public API.
+- **[Controller Core JavaDoc](https://theking90000.github.io/mumble-server-runtime/api/java/controller-core/)**:
+  the profile-neutral session, ownership and synchronization lifecycle.
 - **[`runtime/reference/arena/`](runtime/reference/arena)**:
   the worked example, about 1200 lines. Every fragment in the book comes from it.
 
-The first two are published from `main` by the `Pages` workflow. To build them
-locally:
+The generated site is published from `main` by the `Pages` workflow. Build and
+check the exact same tree locally with:
 
 ```sh
-mdbook serve --open                                    # the book
-cargo doc --workspace --no-deps --all-features --open  # the API
+GRADLE_USER_HOME=.gradle ci/docs-site.sh
 ```
 
 ## Development

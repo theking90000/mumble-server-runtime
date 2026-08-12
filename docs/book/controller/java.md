@@ -80,5 +80,7 @@ set. Streamed `SpaceSnapshot` values replace the cached incarnation and
 revision. `fetchSpace` returns a point-in-time result without changing the
 cache or future observations.
 
-The generated [Java API documentation](https://theking90000.github.io/mumble-server-runtime/controller/)
-contains the complete public surface.
+The generated [Spaces Java API documentation](../api/java/controller-spaces/index.html)
+contains the application-facing public surface. The lower-level synchronization
+types are in the
+[Controller Core JavaDoc](../api/java/controller-core/index.html).

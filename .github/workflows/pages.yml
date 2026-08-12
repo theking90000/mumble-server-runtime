@@ -1,15 +1,16 @@
 name: Pages
 
 # Publie un seul artefact : le livre mdBook à la racine, la doc rustdoc générée
-# sous /api/ et la JavaDoc de Mumble Controller sous /controller/. Le contenu du
-# livre y renvoie par des liens relatifs, donc tout doit rester dans le même
-# déploiement.
+# sous /api/ et les JavaDocs Spaces et Core sous /api/java/. Le même artefact
+# est construit et vérifié sur chaque PR, sans écraser le chapitre mdBook
+# publié sous /controller/.
 #
 # Prérequis côté dépôt : Settings > Pages > Source = "GitHub Actions".
 
 on:
   push:
     branches: [main]
+  pull_request:
   workflow_dispatch:
 
 permissions:
@@ -27,7 +28,7 @@ env:
 
 jobs:
   build:
-    name: build book + rustdoc + javadoc
+    name: build and check site
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -36,12 +37,6 @@ jobs:
       - uses: peaceiris/actions-mdbook@v2
         with:
           mdbook-version: "0.5.4"
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: "8"
-      - name: Remember Java 8 toolchain
-        run: echo "JAVA8_HOME=$JAVA_HOME" >> "$GITHUB_ENV"
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -54,47 +49,17 @@ jobs:
             control/**/*.gradle.kts
             implementations/**/*.gradle.kts
 
-      - name: mdbook build
-        run: mdbook build
-
-      - name: cargo doc
-        env:
-          RUSTDOCFLAGS: "-D warnings"
-        run: cargo doc --workspace --no-deps --all-features
-
-      - name: Controller JavaDoc
-        run: ./gradlew --no-daemon -Dorg.gradle.java.installations.paths="$JAVA_HOME,$JAVA8_HOME" :implementations:spaces:sdk:controller-spaces:javadoc
-
-      - name: Assembler le site
-        run: |
-          set -euo pipefail
-          mkdir -p site
-          cp -r target/book/. site/
-          mkdir -p site/api
-          cp -r target/doc/. site/api/
-          mkdir -p site/controller
-          cp -r implementations/spaces/sdk/java/build/docs/javadoc/. site/controller/
-          # `cargo doc` sur un workspace multi-crates ne produit pas d'index
-          # racine : sans redirection, /api/ renvoie un 404.
-          if [ ! -f site/api/index.html ]; then
-            cat > site/api/index.html <<'HTML'
-          <!doctype html>
-          <meta charset="utf-8">
-          <title>Mumble Server Runtime API</title>
-          <meta http-equiv="refresh" content="0; url=mumble_server_runtime_shard/index.html">
-          <a href="mumble_server_runtime_shard/index.html">Mumble Server Runtime API documentation</a>
-          HTML
-          fi
-          test -f site/index.html
-          test -f site/api/index.html
-          test -f site/controller/index.html
+      - name: Build and check documentation site
+        run: ci/docs-site.sh
 
       - uses: actions/upload-pages-artifact@v3
+        if: github.event_name != 'pull_request'
         with:
-          path: site
+          path: target/site
 
   deploy:
     name: deploy
+    if: github.event_name != 'pull_request'
     needs: build
     runs-on: ubuntu-latest
     environment:
