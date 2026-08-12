@@ -3,9 +3,9 @@
 A buildable version of the plugin described in
 [`A Minecraft plugin`](../../../docs/book/controller/minecraft.md). It opens
 one controller session, registers a participant per online player, keys the
-Space on the player's world, sends a copyable `mumble://` join link, and releases
-the participant on quit. A `/voice` command and a live sidebar expose the state the
-SDK reports.
+Space as `<server-name>-<world>`, sends a copyable `mumble://` join link, and
+releases the participant on quit. A `/voice` command and a live sidebar expose
+the state the SDK reports.
 
 It exists to prove the shading recipe and the Java 8 target, not to be deployed
 as-is. The SDK has no Minecraft dependency, and nothing here is required by it.
@@ -92,7 +92,8 @@ Always logged:
   error;
 - ownership losses, which require the player to rejoin;
 - participant statuses carrying an application error;
-- failed `setSpec` and `unregister` futures.
+- failed `setSpec` and unexpected `unregister` operations. A quit after ownership
+  was already revoked is only a debug trace.
 
 Logged only when `debug` is set:
 
