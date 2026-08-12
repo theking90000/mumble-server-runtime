@@ -1,0 +1,32 @@
+[package]
+name = "mumble-spaces-stress"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Headless Spaces load and resilience campaign coordinator"
+publish = false
+
+[lib]
+name = "mumble_spaces_stress"
+path = "src/mumble_spaces_stress.rs"
+
+[[bin]]
+name = "mumble-spaces-stress"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+mumble-server-runtime-gateway = { path = "../../../../runtime/crates/gateway" }
+mumble-server-runtime-stress = { path = "../../../../runtime/tools/stress" }
+mumble-spaces-server = { path = "../../host/rust" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tokio = { version = "1", features = ["fs", "io-util", "macros", "process", "rt-multi-thread", "sync", "time"] }
+
+[lints]
+workspace = true

@@ -897,6 +897,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "mumble-spaces-stress"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "mumble-server-runtime-gateway",
+ "mumble-server-runtime-stress",
+ "mumble-spaces-server",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.19",
+ "tokio",
+]
+
+[[package]]
 name = "num-conv"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"

@@ -30,6 +30,8 @@ members = [
     "implementations/spaces/verification/spaces-interop",
     # Application Controller : gRPC declaratif compose au-dessus du runtime.
     "implementations/spaces/host/rust",
+    # Coordinateur headless Java Spaces -> vrais clients Mumble.
+    "implementations/spaces/tools/stress",
 ]
 
 [workspace.package]
