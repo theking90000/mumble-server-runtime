@@ -53,6 +53,14 @@ if find "$RESULTS" -name summary.json -type f -exec grep -L '"clients_completed"
   echo "spaces-stress-smoke: a fixed scenario did not complete all Mumble clients" >&2
   exit 1
 fi
+if find "$RESULTS" -name process-metrics.csv -type f -exec grep -L ',server,' {} + | grep -q .; then
+  echo "spaces-stress-smoke: managed server process metrics are missing" >&2
+  exit 1
+fi
+if find "$RESULTS" -name process-metrics.csv -type f -exec grep -L ',coordinator,' {} + | grep -q .; then
+  echo "spaces-stress-smoke: coordinator process metrics are missing" >&2
+  exit 1
+fi
 grep -R -q '"channel":"load-space-0-migrated"' "$RESULTS/migration"
 grep -R -q -E '"mute":true|"deaf":true' "$RESULTS/mute-deaf"
 grep -q -E '"audio_ingress_packets":[1-9][0-9]*' \

@@ -8,7 +8,7 @@ use std::net::{IpAddr, SocketAddr};
 use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 use std::process::{ExitStatus, Stdio};
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, ensure};
@@ -49,6 +49,8 @@ enum Subcommands {
     Matrix(MatrixArguments),
     #[command(hide = true)]
     Worker(WorkerArguments),
+    #[command(hide = true)]
+    ManagedServer(ManagedServerArguments),
 }
 
 #[derive(Debug, Args)]
@@ -179,6 +181,20 @@ struct WorkerArguments {
     talk_percent: u8,
 }
 
+#[derive(Debug, Args)]
+struct ManagedServerArguments {
+    #[arg(long)]
+    bind_ip: IpAddr,
+    #[arg(long)]
+    controllers: u16,
+    #[arg(long)]
+    participants: usize,
+    #[arg(long)]
+    resilience: bool,
+    #[arg(long)]
+    metrics_output: Option<PathBuf>,
+}
+
 #[derive(Debug, Deserialize)]
 struct WorkerCredential {
     participant_id: String,
@@ -192,6 +208,13 @@ struct WorkerReport {
     worker_index: usize,
     clients_expected: usize,
     stats: StatsSummary,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct ManagedServerReady {
+    schema_version: u8,
+    controller_endpoint: String,
+    mumble_server: SocketAddr,
 }
 
 #[derive(Debug, Serialize)]
@@ -357,17 +380,39 @@ struct WorkerProcess {
 }
 
 struct ManagedEnvironment {
-    server: Option<RunningControllerServer>,
+    server: Option<ManagedServerProcess>,
     controller_endpoint: String,
     mumble_server: SocketAddr,
+}
+
+struct ManagedServerProcess {
+    input: ChildStdin,
+    child: Child,
 }
 
 struct ProcessSampler {
     stop: oneshot::Sender<()>,
     task: JoinHandle<Result<()>>,
+    processes: Arc<RwLock<BTreeMap<u32, String>>>,
 }
 
 impl ProcessSampler {
+    fn register(&self, pid: u32, role: impl Into<String>) -> Result<()> {
+        self.processes
+            .write()
+            .map_err(|_| anyhow::anyhow!("process sampler registry is poisoned"))?
+            .insert(pid, role.into());
+        Ok(())
+    }
+
+    fn unregister(&self, pid: u32) -> Result<()> {
+        self.processes
+            .write()
+            .map_err(|_| anyhow::anyhow!("process sampler registry is poisoned"))?
+            .remove(&pid);
+        Ok(())
+    }
+
     async fn stop(self) -> Result<()> {
         let _receiver_gone = self.stop.send(());
         self.task
@@ -390,6 +435,7 @@ pub async fn run(command: Command) -> Result<()> {
         Subcommands::Run(arguments) => run_campaign(arguments).await,
         Subcommands::Matrix(arguments) => write_load_matrix(&arguments.output),
         Subcommands::Worker(arguments) => run_worker(arguments).await,
+        Subcommands::ManagedServer(arguments) => run_managed_server(arguments).await,
     }
 }
 
@@ -399,14 +445,17 @@ async fn run_campaign(arguments: RunArguments) -> Result<()> {
     let result_directory = create_result_directory(&arguments)?;
     write_manifest(&result_directory, &arguments)?;
     let mut events = event_writer(&result_directory)?;
-    let mut server_log = BufWriter::new(File::create(result_directory.join("server.log"))?);
     let environment = start_environment(&arguments, &result_directory).await?;
-    writeln!(
-        server_log,
-        "controller_endpoint={} mumble_server={}",
-        environment.controller_endpoint, environment.mumble_server
-    )?;
-    server_log.flush()?;
+    let mut initial_processes = BTreeMap::from([(std::process::id(), "coordinator".to_owned())]);
+    if let Some(server) = &environment.server
+        && let Some(pid) = server.child.id()
+    {
+        initial_processes.insert(pid, "server".to_owned());
+    }
+    let sampler = spawn_process_sampler(
+        result_directory.join("process-metrics.csv"),
+        initial_processes,
+    );
 
     let (driver_events, mut event_receiver) = mpsc::channel(8192);
     let coordinator_events = driver_events.clone();
@@ -417,6 +466,7 @@ async fn run_campaign(arguments: RunArguments) -> Result<()> {
         driver_events,
     )
     .await?;
+    register_drivers(&sampler, &drivers)?;
     let plans = participant_plans(
         arguments.participants,
         arguments.participants_per_space,
@@ -486,26 +536,9 @@ async fn run_campaign(arguments: RunArguments) -> Result<()> {
         )
         .await?
     };
+    register_workers(&sampler, &workers)?;
     summary.credentials_received = plans.len().min(summary.credentials_received);
     summary.workers = workers.len();
-    let mut sampled_processes = vec![(std::process::id(), "coordinator".to_owned())];
-    sampled_processes.extend(drivers.iter().filter_map(|driver| {
-        driver
-            .child
-            .id()
-            .map(|pid| (pid, format!("driver-{}", driver.controller_id)))
-    }));
-    sampled_processes.extend(workers.iter().filter_map(|worker| {
-        worker.child.as_ref().and_then(|child| {
-            child
-                .id()
-                .map(|pid| (pid, format!("worker-{}", worker.index)))
-        })
-    }));
-    let sampler = spawn_process_sampler(
-        result_directory.join("process-metrics.csv"),
-        sampled_processes,
-    );
     let (rotation_sender, mut rotation_receiver) = mpsc::channel(8192);
     let recorder = tokio::spawn(async move {
         while let Some((_, event)) = event_receiver.recv().await {
@@ -540,6 +573,7 @@ async fn run_campaign(arguments: RunArguments) -> Result<()> {
             workers.len(),
         )
         .await?;
+        register_workers(&sampler, &replacements)?;
         workers.extend(replacements);
     }
     if outcome.expected_rotations > 0 {
@@ -559,6 +593,7 @@ async fn run_campaign(arguments: RunArguments) -> Result<()> {
         environment.mumble_server,
         &coordinator_events,
         &mut rotation_receiver,
+        &sampler,
     )
     .await?;
     record_failure_phase(&coordinator_events, FailurePhase::FinalAudit).await?;
@@ -589,7 +624,7 @@ async fn run_campaign(arguments: RunArguments) -> Result<()> {
             .context("joining Java driver output reader")?;
     }
     if let Some(server) = environment.server {
-        server.shutdown().await;
+        shutdown_managed_server(server).await?;
     }
     sampler.stop().await?;
     drop(coordinator_events);
@@ -682,7 +717,7 @@ fn validate_run_arguments(arguments: &RunArguments) -> Result<()> {
 
 async fn start_environment(
     arguments: &RunArguments,
-    _result_directory: &Path,
+    result_directory: &Path,
 ) -> Result<ManagedEnvironment> {
     if matches!(arguments.mode, Mode::External) {
         return Ok(ManagedEnvironment {
@@ -694,15 +729,55 @@ async fn start_environment(
             mumble_server: arguments.mumble_server.context("validated Mumble server")?,
         });
     }
+    let executable = std::env::current_exe()?;
+    let stderr = File::create(result_directory.join("server.log"))?;
+    let resilience = is_resilience_scenario(arguments.scenario)
+        || !matches!(arguments.fault, ProcessFault::None);
+    let mut command = ProcessCommand::new(executable);
+    command
+        .arg("managed-server")
+        .arg("--bind-ip")
+        .arg(arguments.managed_bind_ip.to_string())
+        .arg("--controllers")
+        .arg(arguments.controllers.to_string())
+        .arg("--participants")
+        .arg(arguments.participants.to_string())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::from(stderr))
+        .kill_on_drop(true);
+    if resilience {
+        command.arg("--resilience");
+    }
+    #[cfg(feature = "load-metrics")]
+    command
+        .arg("--metrics-output")
+        .arg(result_directory.join("server-metrics.jsonl"));
+    let mut child = command.spawn().context("starting managed Spaces server")?;
+    let input = child.stdin.take().context("managed server stdin")?;
+    let stdout = child.stdout.take().context("managed server stdout")?;
+    let mut reader = AsyncBufReader::new(stdout);
+    let mut line = String::new();
+    timeout(OPERATION_DEADLINE, reader.read_line(&mut line))
+        .await
+        .context("managed server readiness timeout")??;
+    let ready: ManagedServerReady =
+        serde_json::from_str(&line).context("decoding managed server readiness")?;
+    ensure!(
+        ready.schema_version == PROTOCOL_VERSION,
+        "managed server readiness schema mismatch"
+    );
+    Ok(ManagedEnvironment {
+        server: Some(ManagedServerProcess { input, child }),
+        controller_endpoint: ready.controller_endpoint,
+        mumble_server: ready.mumble_server,
+    })
+}
+
+async fn run_managed_server(arguments: ManagedServerArguments) -> Result<()> {
     let identity = Identity::self_signed(vec!["localhost".to_owned()])
         .context("generating managed Mumble identity")?;
-    let connection_multiplier = if is_resilience_scenario(arguments.scenario)
-        || !matches!(arguments.fault, ProcessFault::None)
-    {
-        2
-    } else {
-        1
-    };
+    let connection_multiplier = if arguments.resilience { 2 } else { 1 };
     let maximum_connections = u32::try_from(
         arguments
             .participants
@@ -711,8 +786,8 @@ async fn start_environment(
     )
     .context("managed connection limit exceeds u32")?;
     let config = ControllerConfig {
-        controller_bind: SocketAddr::new(arguments.managed_bind_ip, 0),
-        mumble_bind: SocketAddr::new(arguments.managed_bind_ip, 0),
+        controller_bind: SocketAddr::new(arguments.bind_ip, 0),
+        mumble_bind: SocketAddr::new(arguments.bind_ip, 0),
         max_sessions: usize::from(arguments.controllers).max(1),
         max_participants: arguments.participants.max(1),
         max_participants_per_session: arguments.participants.max(1),
@@ -720,10 +795,8 @@ async fn start_environment(
         max_observations_per_session: arguments.participants.max(1),
         queue_capacity: arguments.participants.saturating_mul(2).max(1024),
         max_mumble_connections: maximum_connections,
-        allow_unauthenticated_controller_network: !arguments.managed_bind_ip.is_loopback(),
-        lease_duration: if is_resilience_scenario(arguments.scenario)
-            || !matches!(arguments.fault, ProcessFault::None)
-        {
+        allow_unauthenticated_controller_network: !arguments.bind_ip.is_loopback(),
+        lease_duration: if arguments.resilience {
             Duration::from_secs(3)
         } else {
             ControllerConfig::default().lease_duration
@@ -734,21 +807,70 @@ async fn start_environment(
     let server = RunningControllerServer::start_with_metrics(
         config,
         identity,
-        Some(MetricsOutput {
-            path: _result_directory.join("server-metrics.jsonl"),
+        arguments.metrics_output.map(|path| MetricsOutput {
+            path,
             interval: Duration::from_secs(1),
         }),
     )
     .await?;
     #[cfg(not(feature = "load-metrics"))]
-    let server = RunningControllerServer::start(config, identity).await?;
-    let controller_endpoint = format!("http://{}", server.controller_address());
-    let mumble_server = server.mumble_address();
-    Ok(ManagedEnvironment {
-        server: Some(server),
-        controller_endpoint,
-        mumble_server,
-    })
+    let server = {
+        ensure!(
+            arguments.metrics_output.is_none(),
+            "managed server metrics require the load-metrics feature"
+        );
+        RunningControllerServer::start(config, identity).await?
+    };
+    let ready = ManagedServerReady {
+        schema_version: PROTOCOL_VERSION,
+        controller_endpoint: format!("http://{}", server.controller_address()),
+        mumble_server: server.mumble_address(),
+    };
+    eprintln!(
+        "controller_endpoint={} mumble_server={}",
+        ready.controller_endpoint, ready.mumble_server
+    );
+    {
+        let stdout = std::io::stdout();
+        let mut output = stdout.lock();
+        serde_json::to_writer(&mut output, &ready)?;
+        output.write_all(b"\n")?;
+        output.flush()?;
+    }
+    let mut input = AsyncBufReader::new(tokio::io::stdin());
+    let mut line = String::new();
+    input.read_line(&mut line).await?;
+    ensure!(line.trim() == "shutdown", "invalid managed server command");
+    server.shutdown().await;
+    Ok(())
+}
+
+async fn shutdown_managed_server(mut server: ManagedServerProcess) -> Result<()> {
+    server.input.write_all(b"shutdown\n").await?;
+    server.input.shutdown().await?;
+    let status = timeout(OPERATION_DEADLINE, server.child.wait())
+        .await
+        .context("managed server shutdown timeout")??;
+    ensure!(status.success(), "managed server exited with {status}");
+    Ok(())
+}
+
+fn register_drivers(sampler: &ProcessSampler, drivers: &[Driver]) -> Result<()> {
+    for driver in drivers {
+        if let Some(pid) = driver.child.id() {
+            sampler.register(pid, format!("driver-{}", driver.controller_id))?;
+        }
+    }
+    Ok(())
+}
+
+fn register_workers(sampler: &ProcessSampler, workers: &[WorkerProcess]) -> Result<()> {
+    for worker in workers {
+        if let Some(pid) = worker.child.as_ref().and_then(Child::id) {
+            sampler.register(pid, format!("worker-{}", worker.index))?;
+        }
+    }
+    Ok(())
 }
 
 async fn spawn_drivers(
@@ -1309,6 +1431,7 @@ async fn apply_process_fault(
     mumble_server: SocketAddr,
     events: &mpsc::Sender<(usize, Value)>,
     rotations: &mut mpsc::Receiver<CredentialRotation>,
+    sampler: &ProcessSampler,
 ) -> Result<()> {
     let fault = effective_fault(arguments);
     if matches!(fault, ProcessFault::None) {
@@ -1320,7 +1443,7 @@ async fn apply_process_fault(
     match fault {
         ProcessFault::None => {}
         ProcessFault::GracefulStop | ProcessFault::Crash => {
-            terminate_workers(workers).await?;
+            terminate_workers(workers, sampler).await?;
             restart_workers = true;
             restart_driver(
                 arguments,
@@ -1331,6 +1454,7 @@ async fn apply_process_fault(
                 controller_endpoint,
                 events,
                 matches!(fault, ProcessFault::GracefulStop),
+                sampler,
             )
             .await?;
             expected_rotations = plans.iter().filter(|plan| plan.controller == 0).count();
@@ -1347,13 +1471,13 @@ async fn apply_process_fault(
             record_failure_phase(events, FailurePhase::Healing).await?;
             signal_driver(drivers.first().context("fault target driver")?, "CONT").await?;
             if matches!(fault, ProcessFault::FreezeLong) {
-                terminate_workers(workers).await?;
+                terminate_workers(workers, sampler).await?;
                 restart_workers = true;
                 expected_rotations = plans.iter().filter(|plan| plan.controller == 0).count();
             }
         }
         ProcessFault::HostRestart => {
-            terminate_workers(workers).await?;
+            terminate_workers(workers, sampler).await?;
             restart_workers = true;
             for index in 0..drivers.len() {
                 restart_driver(
@@ -1365,13 +1489,14 @@ async fn apply_process_fault(
                     controller_endpoint,
                     events,
                     false,
+                    sampler,
                 )
                 .await?;
             }
             expected_rotations = plans.len();
         }
         ProcessFault::MumbleCut => {
-            terminate_workers(workers).await?;
+            terminate_workers(workers, sampler).await?;
             restart_workers = true;
         }
         ProcessFault::ControlledLimit => {
@@ -1415,6 +1540,7 @@ async fn apply_process_fault(
             workers.len().saturating_add(1000),
         )
         .await?;
+        register_workers(sampler, &replacements)?;
         workers.extend(replacements);
     }
     record_failure_phase(events, FailurePhase::Reconciliation).await?;
@@ -1471,11 +1597,12 @@ fn speaker_enabled_for(
     }
 }
 
-async fn terminate_workers(workers: &mut [WorkerProcess]) -> Result<()> {
+async fn terminate_workers(workers: &mut [WorkerProcess], sampler: &ProcessSampler) -> Result<()> {
     for worker in &mut *workers {
         let Some(mut child) = worker.child.take() else {
             continue;
         };
+        let pid = child.id();
         let status = match child.try_wait().context("checking Mumble worker")? {
             Some(status) => status,
             None => {
@@ -1484,6 +1611,9 @@ async fn terminate_workers(workers: &mut [WorkerProcess]) -> Result<()> {
                 child.wait().await.context("reaping cut Mumble worker")?
             }
         };
+        if let Some(pid) = pid {
+            sampler.unregister(pid)?;
+        }
         worker.status = Some(status);
     }
     Ok(())
@@ -1637,8 +1767,10 @@ async fn restart_driver(
     endpoint: &str,
     events: &mpsc::Sender<(usize, Value)>,
     graceful: bool,
+    sampler: &ProcessSampler,
 ) -> Result<()> {
     let driver = drivers.get_mut(index).context("fault target driver")?;
+    let previous_pid = driver.child.id();
     if graceful {
         send_driver_command(
             driver,
@@ -1658,6 +1790,9 @@ async fn restart_driver(
     (&mut driver.reader)
         .await
         .context("joining stopped Java driver reader")?;
+    if let Some(pid) = previous_pid {
+        sampler.unregister(pid)?;
+    }
     let replacement = spawn_driver(
         &arguments.driver,
         endpoint,
@@ -1667,6 +1802,9 @@ async fn restart_driver(
         arguments.driver_netns_prefix.as_deref(),
         events.clone(),
     )?;
+    if let Some(pid) = replacement.child.id() {
+        sampler.register(pid, format!("driver-{}", replacement.controller_id))?;
+    }
     drivers[index] = replacement;
     tokio::time::sleep(Duration::from_millis(250)).await;
     for plan in plans.iter().filter(|plan| plan.controller == index) {
@@ -1936,8 +2074,13 @@ fn event_writer(directory: &Path) -> Result<BufWriter<File>> {
     ))
 }
 
-fn spawn_process_sampler(path: PathBuf, processes: Vec<(u32, String)>) -> ProcessSampler {
+fn spawn_process_sampler(
+    path: PathBuf,
+    initial_processes: BTreeMap<u32, String>,
+) -> ProcessSampler {
     let (stop, mut stopped) = oneshot::channel();
+    let processes = Arc::new(RwLock::new(initial_processes));
+    let sampled_processes = Arc::clone(&processes);
     let task = tokio::spawn(async move {
         let mut file = tokio::fs::File::create(path).await?;
         file.write_all(b"unix_millis,pid,role,rss_kib,cpu_percent\n")
@@ -1947,7 +2090,15 @@ fn spawn_process_sampler(path: PathBuf, processes: Vec<(u32, String)>) -> Proces
         loop {
             tokio::select! {
                 // Cancellation-safe: the next interval deadline remains owned by the interval.
-                _ = interval.tick() => sample_processes(&mut file, &processes).await?,
+                _ = interval.tick() => {
+                    let snapshot = sampled_processes
+                        .read()
+                        .map_err(|_| anyhow::anyhow!("process sampler registry is poisoned"))?
+                        .iter()
+                        .map(|(pid, role)| (*pid, role.clone()))
+                        .collect::<Vec<_>>();
+                    sample_processes(&mut file, &snapshot).await?;
+                },
                 // Cancellation-safe: the one-shot is consumed only when shutdown is requested.
                 _ = &mut stopped => {
                     file.flush().await?;
@@ -1956,31 +2107,50 @@ fn spawn_process_sampler(path: PathBuf, processes: Vec<(u32, String)>) -> Proces
             }
         }
     });
-    ProcessSampler { stop, task }
+    ProcessSampler {
+        stop,
+        task,
+        processes,
+    }
 }
 
 #[cfg(unix)]
 async fn sample_processes(file: &mut tokio::fs::File, processes: &[(u32, String)]) -> Result<()> {
     let timestamp = unix_nanos() / 1_000_000;
-    for (pid, role) in processes {
-        let pid_string = pid.to_string();
-        let output = ProcessCommand::new("ps")
-            .args(["-o", "rss=", "-o", "%cpu=", "-p", &pid_string])
-            .output()
-            .await?;
-        if !output.status.success() {
-            continue;
+    if processes.is_empty() {
+        return Ok(());
+    }
+    let pid_list = processes
+        .iter()
+        .map(|(pid, _)| pid.to_string())
+        .collect::<Vec<_>>()
+        .join(",");
+    let roles = processes
+        .iter()
+        .map(|(pid, role)| (*pid, role.as_str()))
+        .collect::<BTreeMap<_, _>>();
+    let output = ProcessCommand::new("ps")
+        .args(["-o", "pid=", "-o", "rss=", "-o", "%cpu=", "-p", &pid_list])
+        .output()
+        .await?;
+    if output.status.success() {
+        for line in String::from_utf8(output.stdout)?.lines() {
+            let mut values = line.split_whitespace();
+            let Some(pid) = values.next().and_then(|value| value.parse::<u32>().ok()) else {
+                continue;
+            };
+            let Some(rss) = values.next() else {
+                continue;
+            };
+            let Some(cpu) = values.next() else {
+                continue;
+            };
+            let Some(role) = roles.get(&pid) else {
+                continue;
+            };
+            file.write_all(format!("{timestamp},{pid},{role},{rss},{cpu}\n").as_bytes())
+                .await?;
         }
-        let text = String::from_utf8(output.stdout)?;
-        let mut values = text.split_whitespace();
-        let Some(rss) = values.next() else {
-            continue;
-        };
-        let Some(cpu) = values.next() else {
-            continue;
-        };
-        file.write_all(format!("{timestamp},{pid},{role},{rss},{cpu}\n").as_bytes())
-            .await?;
     }
     file.flush().await?;
     Ok(())

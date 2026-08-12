@@ -78,8 +78,10 @@ class ReportTest(unittest.TestCase):
             "unix_millis,pid,role,rss_kib,cpu_percent\n"
             "1000,1,coordinator,10240,50\n"
             "1000,2,driver-load-controller-0,20480,20\n"
+            "1000,3,server,16384,40\n"
             "2000,1,coordinator,12288,75\n"
-            "2000,2,driver-load-controller-0,24576,30\n",
+            "2000,2,driver-load-controller-0,24576,30\n"
+            "2000,3,server,18432,45\n",
             encoding="utf-8",
         )
         server_samples = [
@@ -168,8 +170,13 @@ class ReportTest(unittest.TestCase):
             self.assertEqual(data["server"]["maxima"]["queue_depth_max"], 7)
             self.assertEqual(data["status"]["code"], "pass")
             self.assertEqual(data["workers"]["aggregate"]["clients_completed"], 8)
+            self.assertTrue(
+                any(role["role"] == "server" for role in data["processes"]["roles"])
+            )
             document = output.read_text(encoding="utf-8")
             self.assertIn("Spaces headless load report", document)
+            self.assertIn("Spaces server", document)
+            self.assertNotIn("embedded server", document)
             self.assertNotIn("must-not-appear", document)
 
     def test_incomplete_run_reports_known_os_failure_without_log_contents(self) -> None:

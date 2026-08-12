@@ -30,7 +30,10 @@ is tracked separately from an unexpected missing report.
 Managed runs built with `--features load-metrics` also write one-second
 `server-metrics.jsonl` snapshots and a
 `process-metrics.csv` that keeps coordinator, Java driver, and Mumble worker
-resource usage separate. The standalone server exposes the same stream through
+resource usage separate. In managed mode the Spaces server is a dedicated
+subprocess as well, so its CPU and RSS are not attributed to the coordinator.
+Sampling starts before participant registration and follows replacement drivers
+and workers created during recovery. The standalone server exposes the same stream through
 `--metrics-output FILE --metrics-interval-seconds N` only when it is compiled
 with `--features load-metrics`. Production builds do not enable the feature.
 
