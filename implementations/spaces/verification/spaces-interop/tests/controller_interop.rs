@@ -202,6 +202,59 @@ async fn real_java_session_drives_real_mumble_clients() {
 
     java.command("MUTE", "CONTROLLER_INTEROP_MUTED").await;
     alice
+        .wait_until(DEADLINE, |model| {
+            model
+                .users
+                .get(&alice_session)
+                .is_some_and(|user| user.mute)
+        })
+        .await
+        .expect("Alice sees her server mute");
+    bob.wait_until(DEADLINE, |model| {
+        model
+            .users
+            .get(&alice_session)
+            .is_some_and(|user| user.mute)
+    })
+    .await
+    .expect("Bob sees Alice server muted");
+
+    // A participant event rebuilds the complete Space snapshot. The desired
+    // server mute must survive that later render instead of being momentary.
+    bob.send_control(&ControlMessage::UserState(tcp::UserState {
+        session: Some(bob_session),
+        self_mute: Some(true),
+        ..Default::default()
+    }))
+    .await
+    .expect("request Bob self mute");
+    alice
+        .wait_until(DEADLINE, |model| {
+            model
+                .users
+                .get(&bob_session)
+                .is_some_and(|user| user.self_mute)
+                && model
+                    .users
+                    .get(&alice_session)
+                    .is_some_and(|user| user.mute)
+        })
+        .await
+        .expect("Alice server mute survives a later Space render");
+    bob.wait_until(DEADLINE, |model| {
+        model
+            .users
+            .get(&bob_session)
+            .is_some_and(|user| user.self_mute)
+            && model
+                .users
+                .get(&alice_session)
+                .is_some_and(|user| user.mute)
+    })
+    .await
+    .expect("Bob sees Alice remain server muted after a later Space render");
+
+    alice
         .speak(server.mumble_address(), NORMAL_TARGET, 2, &[0xA2])
         .await
         .expect("muted Alice voice");
@@ -212,6 +265,14 @@ async fn real_java_session_drives_real_mumble_clients() {
             .is_none()
     );
     java.command("UNMUTE", "CONTROLLER_INTEROP_UNMUTED").await;
+    bob.wait_until(DEADLINE, |model| {
+        model
+            .users
+            .get(&alice_session)
+            .is_some_and(|user| !user.mute)
+    })
+    .await
+    .expect("Bob sees Alice server unmuted");
 
     java.command("DEAF_BOB", "CONTROLLER_INTEROP_BOB_DEAF")
         .await;
