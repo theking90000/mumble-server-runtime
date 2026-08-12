@@ -1,6 +1,6 @@
 //! Built-in Controller profile that renders one root channel and audio domain per named Space.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -88,6 +88,47 @@ pub struct ParticipantState {
     pub self_deaf: bool,
     /// Last rendering/application failure, empty after a successful application.
     pub application_error: String,
+}
+
+/// Spaces-owned observation state attached to one Coordination session.
+#[derive(Debug, Default)]
+pub struct SessionState {
+    observed_revision: u64,
+    explicit_observations: BTreeSet<String>,
+}
+
+impl SessionState {
+    /// Replace observations carried by a complete desired-state snapshot.
+    pub fn replace_snapshot_observations(&mut self, keys: impl IntoIterator<Item = String>) {
+        self.explicit_observations = keys.into_iter().collect();
+    }
+
+    /// Apply an explicitly revisioned observation set.
+    pub fn replace_observations(
+        &mut self,
+        revision: u64,
+        keys: BTreeSet<String>,
+    ) -> Result<(), ObservationRevisionError> {
+        if revision < self.observed_revision {
+            return Err(ObservationRevisionError::Stale);
+        }
+        self.observed_revision = revision;
+        self.explicit_observations = keys;
+        Ok(())
+    }
+
+    /// Whether this session explicitly observes a Space.
+    #[must_use]
+    pub fn observes(&self, space_key: &str) -> bool {
+        self.explicit_observations.contains(space_key)
+    }
+}
+
+/// Failure to apply a revisioned Spaces observation set.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum ObservationRevisionError {
+    #[error("observation revision moved backwards")]
+    Stale,
 }
 
 impl ParticipantSpec {
@@ -489,6 +530,22 @@ mod tests {
             Err(SpacesValidationError::InvalidDisplayName)
         );
         assert!(ParticipantSpec::new("lobby".to_owned(), "Alice".to_owned(), true, false).is_ok());
+    }
+
+    #[test]
+    fn observation_revisions_never_move_backwards() {
+        let mut state = SessionState::default();
+        assert_eq!(
+            state.replace_observations(4, BTreeSet::from(["lobby".to_owned()])),
+            Ok(())
+        );
+        assert!(state.observes("lobby"));
+        assert_eq!(
+            state.replace_observations(3, BTreeSet::from(["arena".to_owned()])),
+            Err(ObservationRevisionError::Stale)
+        );
+        assert!(state.observes("lobby"));
+        assert!(!state.observes("arena"));
     }
 
     #[derive(Clone)]
